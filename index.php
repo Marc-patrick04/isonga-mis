@@ -1,0 +1,1834 @@
+<?php
+session_start();
+require_once 'config/database.php';
+
+// Enhanced database handling with error logging
+function safeQuery($pdo, $sql, $params = []) {
+    try {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        // Log error but don't expose to user
+        error_log("Database error: " . $e->getMessage());
+        return [];
+    }
+}
+
+// Get announcements from database
+$announcements = safeQuery($pdo, 
+    "SELECT * FROM announcements 
+     WHERE status = 'published' 
+     ORDER BY created_at DESC LIMIT 3"
+);
+
+// Get news from database
+$news = safeQuery($pdo,
+    "SELECT * FROM news 
+     WHERE status = 'published' 
+     ORDER BY created_at DESC LIMIT 3"
+);
+
+// Get committee members
+$committee_members = safeQuery($pdo,
+    "SELECT * FROM committee_members 
+     WHERE status = 'active' 
+     ORDER BY role_order, name ASC LIMIT 4"
+);
+
+// Get upcoming events
+$events = safeQuery($pdo,
+    "SELECT * FROM events 
+     WHERE event_date >= CURDATE() 
+     AND status = 'published' 
+     ORDER BY event_date ASC LIMIT 3"
+);
+
+// Get statistics with caching consideration
+$stats = [];
+$stat_queries = [
+    'student_count' => "SELECT COUNT(*) as total FROM users WHERE role = 'student' AND status = 'active'",
+    'resolved_tickets' => "SELECT COUNT(*) as total FROM tickets WHERE status = 'resolved'",
+    'active_committees' => "SELECT COUNT(*) as total FROM committee_members WHERE status = 'active'",
+    'active_clubs' => "SELECT COUNT(*) as total FROM clubs WHERE status = 'active'"
+];
+
+foreach ($stat_queries as $key => $query) {
+    try {
+        $result = $pdo->query($query)->fetch();
+        $$key = $result['total'] ?? 0;
+    } catch (PDOException $e) {
+        $$key = $key === 'student_count' ? 2000 : 
+                ($key === 'resolved_tickets' ? 150 : 
+                ($key === 'active_committees' ? 18 : 12));
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="description" content="Isonga - RPSU Management System for Rwanda Polytechnic Musanze College. Empowering students through effective representation.">
+    <title>Isonga - RPSU Management System | RP Musanze College</title>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style">
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" as="style">
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" 
+          integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" 
+          crossorigin="anonymous" referrerpolicy="no-referrer" />
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- AOS Animation -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="assets/images/logo.png" type="image/png">
+    
+    <style>
+        /* CSS Variables - Enhanced */
+        :root {
+            /* Colors */
+            --primary: #0056b3;
+            --primary-dark: #003d82;
+            --primary-light: #4d8be6;
+            --secondary: #1e88e5;
+            --accent: #0d47a1;
+            --light: #f8fafc;
+            --white: #ffffff;
+            --gray-100: #f8f9fa;
+            --gray-200: #e9ecef;
+            --gray-300: #dee2e6;
+            --gray-600: #6c757d;
+            --gray-800: #343a40;
+            --gray-900: #212529;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            
+            /* Gradients */
+            --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            --gradient-secondary: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%);
+            --gradient-hero: linear-gradient(135deg, rgba(0, 86, 179, 0.92) 0%, rgba(13, 71, 161, 0.92) 100%);
+            
+            /* Shadows */
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.1);
+            --shadow-xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            
+            /* Border Radius */
+            --border-radius: 8px;
+            --border-radius-lg: 12px;
+            --border-radius-xl: 16px;
+            
+            /* Transitions */
+            --transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            
+            /* Spacing */
+            --space-xs: 0.5rem;
+            --space-sm: 1rem;
+            --space-md: 1.5rem;
+            --space-lg: 2rem;
+            --space-xl: 3rem;
+        }
+
+        /* Reset & Base Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        *:focus {
+            outline: 2px solid var(--primary-light);
+            outline-offset: 2px;
+        }
+
+        html {
+            scroll-behavior: smooth;
+            -webkit-text-size-adjust: 100%;
+            -moz-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+            color: var(--gray-900);
+            background: var(--white);
+            overflow-x: hidden;
+            font-size: 16px; /* Better for mobile readability */
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Typography */
+        h1, h2, h3, h4, h5, h6 {
+            line-height: 1.2;
+            font-weight: 700;
+        }
+
+        p {
+            margin-bottom: 1rem;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Utility Classes */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 var(--space-md);
+        }
+
+        /* Header & Navigation - Enhanced */
+        .header {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            padding: 0.75rem 0;
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 1000;
+            transition: var(--transition);
+        }
+
+        .header.scrolled {
+            box-shadow: var(--shadow-md);
+            padding: 0.5rem 0;
+        }
+
+        .nav-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: var(--space-md);
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: var(--space-sm);
+            min-width: 0;
+        }
+
+        .logos {
+            display: flex;
+            gap: var(--space-xs);
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            height: 40px;
+            width: auto;
+            transition: var(--transition);
+        }
+
+        .brand-text {
+            flex-shrink: 1;
+            min-width: 0;
+        }
+
+        .brand-text h1 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.025em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .brand-text p {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Desktop Navigation */
+        .desktop-nav {
+            display: flex;
+            align-items: center;
+            gap: var(--space-lg);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: var(--space-lg);
+        }
+
+        .nav-links a {
+            color: var(--gray-800);
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: var(--transition);
+            position: relative;
+            padding: var(--space-xs) 0;
+            white-space: nowrap;
+        }
+
+        .nav-links a::after {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 2px;
+            bottom: 0;
+            left: 0;
+            background: var(--gradient-primary);
+            transition: var(--transition);
+            border-radius: 1px;
+        }
+
+        .nav-links a:hover::after,
+        .nav-links a:focus::after {
+            width: 100%;
+        }
+
+        .nav-links a:hover,
+        .nav-links a:focus {
+            color: var(--primary);
+        }
+
+        .login-buttons {
+            display: flex;
+            gap: var(--space-xs);
+            align-items: center;
+        }
+
+        .login-btn {
+            padding: 0.6rem 1.25rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            border: none;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .btn-student {
+            background: var(--gradient-secondary);
+            color: white;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-committee {
+            background: var(--gradient-primary);
+            color: white;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .login-btn:hover,
+        .login-btn:focus {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* Mobile Navigation - Enhanced */
+        .mobile-menu-btn {
+            display: none;
+            background: none;
+            border: none;
+            width: 44px;
+            height: 44px;
+            font-size: 1.5rem;
+            color: var(--gray-800);
+            cursor: pointer;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--border-radius);
+            transition: var(--transition-fast);
+        }
+
+        .mobile-menu-btn:hover,
+        .mobile-menu-btn:focus {
+            background: var(--gray-100);
+        }
+
+        .mobile-menu {
+            display: none;
+            position: fixed;
+            top: 70px;
+            left: 0;
+            width: 100%;
+            height: calc(100vh - 70px);
+            background: var(--white);
+            z-index: 999;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .mobile-menu.active {
+            transform: translateX(0);
+        }
+
+        .mobile-nav {
+            padding: var(--space-md);
+        }
+
+        .mobile-nav .nav-links {
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .mobile-nav .nav-links a {
+            padding: 1rem;
+            border-bottom: 1px solid var(--gray-200);
+            font-size: 1rem;
+        }
+
+        .mobile-nav .nav-links a:last-child {
+            border-bottom: none;
+        }
+
+        .mobile-login-buttons {
+            padding: var(--space-md);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+        }
+
+        .mobile-login-buttons .login-btn {
+            width: 100%;
+            justify-content: center;
+            padding: 1rem;
+            font-size: 0.9rem;
+        }
+
+        /* Hero Section - Enhanced */
+        .hero {
+            margin-top: 70px;
+            min-height: 85vh;
+            display: flex;
+            align-items: center;
+            position: relative;
+            background: 
+                var(--gradient-hero),
+                url('assets/images/yesu.jpeg') center/cover no-repeat;
+            background-attachment: fixed;
+        }
+
+        @media (max-width: 768px) {
+            .hero {
+                background-attachment: scroll;
+            }
+        }
+
+        .hero-content {
+            width: 100%;
+            padding: var(--space-xl) var(--space-md);
+            color: white;
+            text-align: center;
+        }
+
+        .hero-text {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero-text h2 {
+            font-size: clamp(1.75rem, 5vw, 2.75rem);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 1.25rem;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .hero-text p {
+            font-size: clamp(1rem, 2.5vw, 1.1rem);
+            margin-bottom: 2rem;
+            opacity: 0.95;
+            font-weight: 300;
+            line-height: 1.6;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1.5rem;
+            margin-top: 2.5rem;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 1.25rem;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            transition: var(--transition);
+        }
+
+        .stat-item:hover {
+            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .stat-number {
+            font-size: clamp(1.25rem, 3vw, 1.75rem);
+            font-weight: 800;
+            display: block;
+            color: var(--warning);
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            font-size: clamp(0.7rem, 1.5vw, 0.8rem);
+            opacity: 0.9;
+            font-weight: 500;
+        }
+
+        .hero-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            margin-top: 2.5rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: clamp(0.75rem, 2vw, 0.875rem) clamp(1.5rem, 3vw, 2rem);
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: clamp(0.85rem, 2vw, 0.9rem);
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            min-height: 44px; /* Minimum touch target size */
+        }
+
+        .btn-primary {
+            background: var(--warning);
+            color: var(--gray-900);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: white;
+            border: 1.5px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        .btn-primary:hover,
+        .btn-primary:focus {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-secondary:hover,
+        .btn-secondary:focus {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: white;
+        }
+
+        /* Quick Links Section */
+        .quick-links {
+            padding: var(--space-xl) var(--space-md);
+            background: var(--light);
+        }
+
+        .section-header {
+            text-align: center;
+            max-width: 600px;
+            margin: 0 auto 3rem;
+        }
+
+        .section-badge {
+            display: inline-block;
+            background: var(--gradient-primary);
+            color: white;
+            padding: 0.4rem 1rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .section-title {
+            font-size: clamp(1.5rem, 4vw, 2rem);
+            font-weight: 800;
+            margin-bottom: 1rem;
+            color: var(--gray-900);
+        }
+
+        .section-subtitle {
+            font-size: clamp(0.9rem, 2vw, 1rem);
+            color: var(--gray-600);
+            line-height: 1.6;
+        }
+
+        .links-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .link-card {
+            background: var(--white);
+            border-radius: var(--border-radius-lg);
+            padding: 2rem;
+            text-align: center;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+            text-decoration: none;
+            color: inherit;
+            border: 1px solid var(--gray-200);
+            position: relative;
+            overflow: hidden;
+            height: 100%;
+        }
+
+        .link-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-primary);
+            transform: scaleX(0);
+            transition: var(--transition);
+        }
+
+        .link-card:hover,
+        .link-card:focus {
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--primary-light);
+        }
+
+        .link-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .link-icon {
+            width: 60px;
+            height: 60px;
+            background: var(--gradient-primary);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.25rem;
+            color: white;
+            font-size: 1.5rem;
+            transition: var(--transition);
+        }
+
+        .link-card:hover .link-icon {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        .link-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.75rem;
+            color: var(--gray-900);
+        }
+
+        .link-description {
+            color: var(--gray-600);
+            line-height: 1.5;
+            font-size: 0.875rem;
+        }
+
+        /* Highlights Section - Enhanced */
+        .highlights {
+            padding: var(--space-xl) var(--space-md);
+            background: var(--white);
+        }
+
+        .highlights-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .highlight-card {
+            background: var(--white);
+            border-radius: var(--border-radius-lg);
+            overflow: hidden;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .highlight-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .highlight-image {
+            height: 160px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .highlight-image-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 3rem;
+        }
+
+        /* Color-coded icons for each section */
+        .highlight-card:nth-child(1) .highlight-image {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+        }
+
+        .highlight-card:nth-child(2) .highlight-image {
+            background: linear-gradient(135deg, #1e88e5, #0d47a1);
+        }
+
+        .highlight-card:nth-child(3) .highlight-image {
+            background: linear-gradient(135deg, #4caf50, #2e7d32);
+        }
+
+        .highlight-content {
+            padding: 1.5rem;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .highlight-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--gray-900);
+        }
+
+        .highlight-items {
+            flex: 1;
+        }
+
+        .highlight-item {
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .highlight-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .highlight-date {
+            color: var(--primary);
+            font-weight: 600;
+            font-size: 0.8rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .highlight-item-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+        }
+
+        .highlight-excerpt {
+            color: var(--gray-600);
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+
+        .read-more {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: var(--transition);
+            font-size: 0.875rem;
+            margin-top: auto;
+            padding-top: 1rem;
+        }
+
+        .read-more:hover {
+            gap: 0.75rem;
+        }
+
+        /* Committee Preview */
+        .committee-preview {
+            padding: var(--space-xl) var(--space-md);
+            background: var(--light);
+        }
+
+        .committee-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+        }
+
+        .member-card {
+            background: var(--white);
+            border-radius: var(--border-radius-lg);
+            overflow: hidden;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+            text-align: center;
+            border: 1px solid var(--gray-200);
+        }
+
+        .member-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .member-image-container {
+            height: 200px;
+            position: relative;
+            overflow: hidden;
+            background: var(--gray-100);
+        }
+
+        .member-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: var(--transition);
+        }
+
+        .member-card:hover .member-image {
+            transform: scale(1.05);
+        }
+
+        .member-image-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 3rem;
+            background: var(--gradient-primary);
+        }
+
+        .member-content {
+            padding: 1.5rem;
+        }
+
+        .member-name {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--gray-900);
+        }
+
+        .member-role {
+            color: var(--primary);
+            font-weight: 600;
+            font-size: 0.8rem;
+            margin-bottom: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            background: var(--gray-100);
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        .member-bio {
+            color: var(--gray-600);
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+
+        .view-all {
+            text-align: center;
+            margin-top: 2.5rem;
+        }
+
+        /* Footer - Enhanced */
+        .footer {
+            background: var(--gray-900);
+            color: white;
+            padding: 3rem var(--space-md) 1.5rem;
+        }
+
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .footer-info {
+            grid-column: span 2;
+        }
+
+        .footer-logo {
+            margin-bottom: 1rem;
+        }
+
+        .footer-logo .logo {
+            height: 35px;
+            filter: brightness(0) invert(1);
+        }
+
+        .footer-description {
+            color: #9ca3af;
+            line-height: 1.5;
+            margin-bottom: 1.5rem;
+            font-size: 0.875rem;
+        }
+
+        .social-links {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .social-links a {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            text-decoration: none;
+            transition: var(--transition);
+            font-size: 0.875rem;
+        }
+
+        .social-links a:hover,
+        .social-links a:focus {
+            background: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .footer-heading {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--warning);
+        }
+
+        .footer-links {
+            list-style: none;
+        }
+
+        .footer-links li {
+            margin-bottom: 0.5rem;
+        }
+
+        .footer-links a {
+            color: #9ca3af;
+            text-decoration: none;
+            transition: var(--transition);
+            font-size: 0.875rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .footer-links a:hover,
+        .footer-links a:focus {
+            color: var(--warning);
+        }
+
+        .footer-bottom {
+            padding-top: 1.5rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.75rem;
+        }
+
+        /* Loading States */
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        /* Responsive Design - Mobile First Approach */
+        @media (max-width: 1024px) {
+            .hero-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .footer-content {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 2rem;
+            }
+            
+            .footer-info {
+                grid-column: span 2;
+            }
+        }
+
+        @media (max-width: 768px) {
+            /* Hide desktop nav, show mobile */
+            .desktop-nav {
+                display: none;
+            }
+            
+            .mobile-menu-btn {
+                display: flex;
+            }
+            
+            .mobile-menu {
+                display: block;
+            }
+            
+            /* Hero adjustments */
+            .hero {
+                min-height: 70vh;
+            }
+            
+            .hero-stats {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .hero-actions {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            /* Grid adjustments */
+            .links-grid,
+            .highlights-grid,
+            .committee-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            /* Footer adjustments */
+            .footer-content {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+            
+            .footer-info {
+                grid-column: span 1;
+            }
+            
+            .footer-description {
+                text-align: center;
+            }
+            
+            .social-links {
+                justify-content: center;
+            }
+            
+            /* Section padding */
+            .quick-links,
+            .highlights,
+            .committee-preview {
+                padding: var(--space-lg) var(--space-sm);
+            }
+        }
+
+        @media (max-width: 480px) {
+            /* Extra small devices */
+            .brand-text h1 {
+                font-size: 1.2rem;
+            }
+            
+            .brand-text p {
+                font-size: 0.7rem;
+            }
+            
+            .logo {
+                height: 35px;
+            }
+            
+            .hero-text h2 {
+                font-size: 1.75rem;
+            }
+            
+            .section-title {
+                font-size: 1.5rem;
+            }
+            
+            .link-card,
+            .highlight-card,
+            .member-card {
+                padding: 1.5rem;
+            }
+            
+            .link-icon {
+                width: 50px;
+                height: 50px;
+                font-size: 1.25rem;
+            }
+            
+            .highlight-image {
+                height: 140px;
+            }
+            
+            .highlight-card:nth-child(1) .highlight-image-placeholder i,
+            .highlight-card:nth-child(2) .highlight-image-placeholder i,
+            .highlight-card:nth-child(3) .highlight-image-placeholder i {
+                font-size: 2.5rem;
+            }
+            
+            .member-image-container {
+                height: 180px;
+            }
+        }
+
+        /* Tablet specific */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .hero-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .links-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .highlights-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .committee-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .link-card:hover,
+            .highlight-card:hover,
+            .member-card:hover {
+                transform: none;
+            }
+            
+            .nav-links a:hover::after {
+                width: 0;
+            }
+            
+            .btn:hover,
+            .login-btn:hover {
+                transform: none;
+            }
+            
+            /* Larger touch targets */
+            .nav-links a,
+            .footer-links a {
+                padding: 0.75rem 0;
+            }
+            
+            .btn,
+            .login-btn {
+                min-height: 44px;
+            }
+        }
+
+        /* High contrast mode support */
+        @media (prefers-contrast: high) {
+            :root {
+                --primary: #0047ab;
+                --primary-dark: #003078;
+                --warning: #b35900;
+            }
+        }
+
+        /* Reduced motion support */
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+            
+            .hero {
+                background-attachment: scroll;
+            }
+        }
+
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            .header {
+                background: rgba(15, 23, 42, 0.98);
+                border-bottom-color: rgba(255, 255, 255, 0.05);
+            }
+            
+            .nav-links a {
+                color: #e2e8f0;
+            }
+            
+            .link-card,
+            .highlight-card,
+            .member-card {
+                background: #1e293b;
+                border-color: #334155;
+            }
+            
+            .link-title,
+            .highlight-title,
+            .member-name {
+                color: #f1f5f9;
+            }
+            
+            .link-description,
+            .highlight-excerpt,
+            .member-bio {
+                color: #94a3b8;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header" id="header">
+        <div class="container nav-container">
+            <div class="logo-section">
+                <div class="logos">
+                    <img src="assets/images/logo.png" alt="RPSU Logo" class="logo logo-rpsu" loading="lazy">
+                </div>
+                <div class="brand-text">
+                    <h1>Isonga</h1>
+                    <p>RPSU Management System</p>
+                </div>
+            </div>
+            
+            <!-- Desktop Navigation -->
+            <div class="desktop-nav">
+                <nav class="nav-links" aria-label="Main Navigation">
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
+                </nav>
+                <div class="login-buttons">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
+                        <i class="fas fa-user-graduate"></i> Student
+                    </a>
+                    <a href="auth/login.php" class="login-btn btn-committee">
+                        <i class="fas fa-users"></i> Committee
+                    </a>
+                </div>
+            </div>
+            
+            <!-- Mobile Menu Button -->
+            <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle mobile menu" aria-expanded="false">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+        
+        <!-- Mobile Menu -->
+        <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
+            <div class="mobile-nav">
+                <nav class="nav-links" aria-label="Mobile Navigation">
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
+                </nav>
+            </div>
+            <div class="mobile-login-buttons">
+                <a href="auth/student_login.php" class="login-btn btn-student">
+                    <i class="fas fa-user-graduate"></i> Student Portal
+                </a>
+                <a href="auth/login.php" class="login-btn btn-committee">
+                    <i class="fas fa-users"></i> Committee Portal
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero" aria-labelledby="hero-title">
+        <div class="container hero-content">
+            <div class="hero-text" data-aos="fade-up" data-aos-duration="800">
+                <h2 id="hero-title">RPSU Musanze College</h2>
+                <p>Empowering students through effective representation and innovative solutions. Your voice, our priority.</p>
+                
+                <div class="hero-stats">
+                    <?php 
+                    $stats = [
+                        ['number' => $student_count, 'label' => 'Students'],
+                        ['number' => $resolved_tickets, 'label' => 'Issues Resolved'],
+                        ['number' => $active_committees, 'label' => 'Committee Members'],
+                        ['number' => $active_clubs, 'label' => 'Active Clubs']
+                    ];
+                    
+                    foreach ($stats as $index => $stat): ?>
+                        <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                            <span class="stat-number"><?= htmlspecialchars($stat['number']) ?><?= $stat['label'] === 'Students' || $stat['label'] === 'Issues Resolved' ? '+' : '' ?></span>
+                            <span class="stat-label"><?= htmlspecialchars($stat['label']) ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <div class="hero-actions">
+                    <a href="auth/student_login.php" class="btn btn-primary" data-aos="fade-up" data-aos-delay="500">
+                        <i class="fas fa-user-graduate"></i> Student Portal
+                    </a>
+                    <a href="auth/login.php" class="btn btn-secondary" data-aos="fade-up" data-aos-delay="600">
+                        <i class="fas fa-users"></i> Committee Portal
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Links Section -->
+    <section class="quick-links" aria-labelledby="quick-links-title">
+        <div class="container">
+            <div class="section-header" data-aos="fade-up">
+                <span class="section-badge">Quick Access</span>
+                <h2 id="quick-links-title" class="section-title">Explore Our Platform</h2>
+                <p class="section-subtitle">Everything you need to stay connected and informed about campus life</p>
+            </div>
+            <div class="links-grid">
+                <?php 
+                $quick_links = [
+                    [
+                        'href' => 'announcements.php',
+                        'icon' => 'fas fa-bullhorn',
+                        'title' => 'Announcements',
+                        'description' => 'Official communications from RPSU leadership and college administration'
+                    ],
+                    [
+                        'href' => 'news.php',
+                        'icon' => 'fas fa-newspaper',
+                        'title' => 'Campus News',
+                        'description' => 'Latest happenings, achievements, and stories from around campus'
+                    ],
+                    [
+                        'href' => 'events.php',
+                        'icon' => 'fas fa-calendar-alt',
+                        'title' => 'Events',
+                        'description' => 'Upcoming academic, cultural, and social events calendar'
+                    ],
+                    [
+                        'href' => 'committee.php',
+                        'icon' => 'fas fa-users',
+                        'title' => 'Committee',
+                        'description' => 'Meet your dedicated student representatives and leaders'
+                    ]
+                ];
+                
+                foreach ($quick_links as $index => $link): ?>
+                    <a href="<?= $link['href'] ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                        <div class="link-icon">
+                            <i class="<?= $link['icon'] ?>"></i>
+                        </div>
+                        <h3 class="link-title"><?= htmlspecialchars($link['title']) ?></h3>
+                        <p class="link-description"><?= htmlspecialchars($link['description']) ?></p>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </section>
+
+    <!-- Highlights Section -->
+    <section class="highlights" aria-labelledby="highlights-title">
+        <div class="container">
+            <div class="section-header" data-aos="fade-up">
+                <span class="section-badge">Latest Updates</span>
+                <h2 id="highlights-title" class="section-title">What's Happening</h2>
+                <p class="section-subtitle">Stay informed with the latest from RPSU and campus community</p>
+            </div>
+            
+            <div class="highlights-grid">
+                <!-- Announcements -->
+                <div class="highlight-card" data-aos="fade-up" data-aos-delay="100">
+                    <div class="highlight-image">
+                        <div class="highlight-image-placeholder">
+                            <i class="fas fa-bullhorn"></i>
+                        </div>
+                    </div>
+                    <div class="highlight-content">
+                        <h3 class="highlight-title">Announcements</h3>
+                        <div class="highlight-items">
+                            <?php if (empty($announcements)): ?>
+                                <p class="highlight-excerpt">No announcements at this time. Check back later for updates.</p>
+                            <?php else: ?>
+                                <?php foreach (array_slice($announcements, 0, 2) as $announcement): ?>
+                                    <div class="highlight-item">
+                                        <div class="highlight-date">
+                                            <i class="fas fa-calendar"></i>
+                                            <?= date('M j, Y', strtotime($announcement['created_at'])) ?>
+                                        </div>
+                                        <div class="highlight-item-title"><?= htmlspecialchars($announcement['title']) ?></div>
+                                        <p class="highlight-excerpt"><?= htmlspecialchars(substr($announcement['excerpt'] ?? $announcement['content'], 0, 80)) . '...' ?></p>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                        <a href="announcements.php" class="read-more">
+                            View All <i class="fas fa-arrow-right"></i>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- News -->
+                <div class="highlight-card" data-aos="fade-up" data-aos-delay="200">
+                    <div class="highlight-image">
+                        <div class="highlight-image-placeholder">
+                            <i class="fas fa-newspaper"></i>
+                        </div>
+                    </div>
+                    <div class="highlight-content">
+                        <h3 class="highlight-title">Campus News</h3>
+                        <div class="highlight-items">
+                            <?php if (empty($news)): ?>
+                                <p class="highlight-excerpt">No news articles at this time. Stay tuned for updates.</p>
+                            <?php else: ?>
+                                <?php foreach (array_slice($news, 0, 2) as $news_item): ?>
+                                    <div class="highlight-item">
+                                        <div class="highlight-date">
+                                            <i class="fas fa-calendar"></i>
+                                            <?= date('M j, Y', strtotime($news_item['created_at'])) ?>
+                                        </div>
+                                        <div class="highlight-item-title"><?= htmlspecialchars($news_item['title']) ?></div>
+                                        <p class="highlight-excerpt"><?= htmlspecialchars(substr($news_item['excerpt'] ?? $news_item['content'], 0, 80)) . '...' ?></p>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                        <a href="news.php" class="read-more">
+                            Read More <i class="fas fa-arrow-right"></i>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Events -->
+                <div class="highlight-card" data-aos="fade-up" data-aos-delay="300">
+                    <div class="highlight-image">
+                        <div class="highlight-image-placeholder">
+                            <i class="fas fa-calendar-check"></i>
+                        </div>
+                    </div>
+                    <div class="highlight-content">
+                        <h3 class="highlight-title">Upcoming Events</h3>
+                        <div class="highlight-items">
+                            <?php if (empty($events)): ?>
+                                <p class="highlight-excerpt">No upcoming events scheduled. Check back later for updates.</p>
+                            <?php else: ?>
+                                <?php foreach (array_slice($events, 0, 2) as $event): ?>
+                                    <div class="highlight-item">
+                                        <div class="highlight-date">
+                                            <i class="fas fa-calendar"></i>
+                                            <?= date('M j, Y', strtotime($event['event_date'])) ?>
+                                        </div>
+                                        <div class="highlight-item-title"><?= htmlspecialchars($event['title']) ?></div>
+                                        <p class="highlight-excerpt">
+                                            <i class="fas fa-clock"></i> <?= date('g:i A', strtotime($event['start_time'])) ?><br>
+                                            <i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($event['location']) ?>
+                                        </p>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                        <a href="events.php" class="read-more">
+                            View Calendar <i class="fas fa-arrow-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Committee Preview -->
+    <section class="committee-preview" aria-labelledby="committee-title">
+        <div class="container">
+            <div class="section-header" data-aos="fade-up">
+                <span class="section-badge">Leadership</span>
+                <h2 id="committee-title" class="section-title">Meet Your Committee</h2>
+                <p class="section-subtitle">Your dedicated student leaders working to enhance campus experience</p>
+            </div>
+            
+            <div class="committee-grid">
+                <?php if (empty($committee_members)): ?>
+                    <div class="member-card" data-aos="fade-up" data-aos-delay="100">
+                        <div class="member-image-container">
+                            <div class="member-image-placeholder">
+                                <i class="fas fa-user"></i>
+                            </div>
+                        </div>
+                        <div class="member-content">
+                            <h3 class="member-name">Committee Information</h3>
+                            <div class="member-role">Coming Soon</div>
+                            <p class="member-bio">Committee member information will be displayed here once available.</p>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <?php foreach ($committee_members as $index => $member): ?>
+                        <div class="member-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                            <div class="member-image-container">
+                                <?php if (!empty($member['photo_url'])): ?>
+                                    <img src="<?= htmlspecialchars($member['photo_url']) ?>" 
+                                         alt="<?= htmlspecialchars($member['name']) ?>" 
+                                         class="member-image"
+                                         loading="lazy"
+                                         style="object-position: top center;">
+                                <?php else: ?>
+                                    <div class="member-image-placeholder">
+                                        <i class="fas fa-user"></i>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                            <div class="member-content">
+                                <h3 class="member-name"><?= htmlspecialchars($member['name']) ?></h3>
+                                <div class="member-role"><?= htmlspecialchars($member['role']) ?></div>
+                                <p class="member-bio"><?= htmlspecialchars(substr($member['bio'] ?? 'Dedicated student representative working to improve campus life.', 0, 100)) . '...' ?></p>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+            
+            <div class="view-all">
+                <a href="committee.php" class="btn btn-primary" data-aos="fade-up">
+                    <i class="fas fa-users"></i> View Full Committee
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer" aria-labelledby="footer-heading">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-info">
+                    <div class="footer-logo">
+                        <img src="assets/images/rp_logo.png" alt="RP Musanze College" class="logo" loading="lazy">
+                    </div>
+                    <p class="footer-description">
+                        Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
+                    </p>
+                    <div class="social-links">
+                        <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
+                            <i class="fab fa-twitter"></i>
+                        </a>
+                        <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
+                            <i class="fab fa-facebook-f"></i>
+                        </a>
+                        <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+                            <i class="fab fa-linkedin-in"></i>
+                        </a>
+                        <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+                            <i class="fab fa-instagram"></i>
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="footer-links-group">
+                    <h4 class="footer-heading">Quick Links</h4>
+                    <ul class="footer-links">
+                        <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                        <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                        <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
+                        <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-links-group">
+                    <h4 class="footer-heading">Student Resources</h4>
+                    <ul class="footer-links">
+                        <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
+                        <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
+                        <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
+                        <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-links-group">
+                    <h4 class="footer-heading">Contact Info</h4>
+                    <ul class="footer-links">
+                        <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
+                        <li><i class="fas fa-phone"></i> +250 788 123 456</li>
+                        <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
+                        <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer-bottom">
+                <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.js"></script>
+    <script>
+        // Initialize AOS with reduced motion support
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check for reduced motion preference
+            const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            
+            AOS.init({
+                duration: 800,
+                once: true,
+                offset: 100,
+                disable: prefersReducedMotion
+            });
+
+            // Header scroll effect
+            const header = document.getElementById('header');
+            function updateHeader() {
+                if (window.scrollY > 50) {
+                    header.classList.add('scrolled');
+                } else {
+                    header.classList.remove('scrolled');
+                }
+            }
+            
+            // Throttle scroll events for performance
+            let ticking = false;
+            window.addEventListener('scroll', function() {
+                if (!ticking) {
+                    window.requestAnimationFrame(function() {
+                        updateHeader();
+                        ticking = false;
+                    });
+                    ticking = true;
+                }
+            });
+            
+            updateHeader(); // Initial check
+
+            // Mobile menu functionality
+            const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+            const mobileMenu = document.getElementById('mobileMenu');
+            const menuIcon = mobileMenuBtn.querySelector('i');
+            
+            function toggleMobileMenu() {
+                const isExpanded = mobileMenuBtn.getAttribute('aria-expanded') === 'true';
+                mobileMenuBtn.setAttribute('aria-expanded', !isExpanded);
+                mobileMenu.setAttribute('aria-hidden', isExpanded);
+                mobileMenu.classList.toggle('active');
+                
+                if (mobileMenu.classList.contains('active')) {
+                    menuIcon.classList.remove('fa-bars');
+                    menuIcon.classList.add('fa-times');
+                    document.body.style.overflow = 'hidden'; // Prevent scrolling
+                } else {
+                    menuIcon.classList.remove('fa-times');
+                    menuIcon.classList.add('fa-bars');
+                    document.body.style.overflow = ''; // Restore scrolling
+                }
+            }
+            
+            mobileMenuBtn.addEventListener('click', toggleMobileMenu);
+            
+            // Close mobile menu when clicking outside or pressing Escape
+            document.addEventListener('click', function(event) {
+                if (mobileMenu.classList.contains('active') && 
+                    !mobileMenu.contains(event.target) && 
+                    !mobileMenuBtn.contains(event.target)) {
+                    toggleMobileMenu();
+                }
+            });
+            
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && mobileMenu.classList.contains('active')) {
+                    toggleMobileMenu();
+                }
+            });
+
+            // Animated counters with intersection observer
+            const statNumbers = document.querySelectorAll('.stat-number');
+            const observerOptions = {
+                threshold: 0.5,
+                rootMargin: '0px 0px -100px 0px'
+            };
+            
+            const counterObserver = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && !entry.target.classList.contains('animated')) {
+                        const target = parseInt(entry.target.textContent);
+                        const hasPlus = entry.target.textContent.includes('+');
+                        let current = 0;
+                        const increment = target / 30;
+                        const duration = 1500; // 1.5 seconds
+                        const steps = 30;
+                        const stepDuration = duration / steps;
+                        
+                        const timer = setInterval(() => {
+                            current += increment;
+                            if (current >= target) {
+                                entry.target.textContent = target + (hasPlus ? '+' : '');
+                                entry.target.classList.add('animated');
+                                clearInterval(timer);
+                            } else {
+                                entry.target.textContent = Math.floor(current) + (hasPlus ? '+' : '');
+                            }
+                        }, stepDuration);
+                    }
+                });
+            }, observerOptions);
+            
+            statNumbers.forEach(stat => counterObserver.observe(stat));
+
+            // Smooth scrolling for anchor links
+            document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+                anchor.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const targetId = this.getAttribute('href');
+                    if (targetId === '#') return;
+                    
+                    const target = document.querySelector(targetId);
+                    if (target) {
+                        // Close mobile menu if open
+                        if (mobileMenu.classList.contains('active')) {
+                            toggleMobileMenu();
+                        }
+                        
+                        const headerHeight = header.offsetHeight;
+                        const targetPosition = target.getBoundingClientRect().top + window.pageYOffset;
+                        const offsetPosition = targetPosition - headerHeight - 20;
+                        
+                        window.scrollTo({
+                            top: offsetPosition,
+                            behavior: 'smooth'
+                        });
+                    }
+                });
+            });
+
+            // Lazy loading for images
+            if ('loading' in HTMLImageElement.prototype) {
+                // Native lazy loading supported
+                const images = document.querySelectorAll('img[loading="lazy"]');
+                images.forEach(img => {
+                    if (img.complete) {
+                        img.classList.add('loaded');
+                    } else {
+                        img.addEventListener('load', function() {
+                            this.classList.add('loaded');
+                        });
+                    }
+                });
+            }
+
+            // Add loading states to buttons
+            document.querySelectorAll('a[href]').forEach(link => {
+                link.addEventListener('click', function() {
+                    if (this.classList.contains('btn') || this.classList.contains('login-btn')) {
+                        this.classList.add('loading');
+                        setTimeout(() => {
+                            this.classList.remove('loading');
+                        }, 2000); // Remove after 2 seconds
+                    }
+                });
+            });
+
+            // Performance monitoring
+            if ('performance' in window) {
+                window.addEventListener('load', function() {
+                    setTimeout(() => {
+                        const timing = performance.timing;
+                        const loadTime = timing.loadEventEnd - timing.navigationStart;
+                        console.log('Page load time: ' + loadTime + 'ms');
+                    }, 0);
+                });
+            }
+
+            // Service Worker registration for PWA capabilities (optional)
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                    navigator.serviceWorker.register('/sw.js').then(
+                        function(registration) {
+                            console.log('ServiceWorker registration successful');
+                        },
+                        function(err) {
+                            console.log('ServiceWorker registration failed: ', err);
+                        }
+                    );
+                });
+            }
+        });
+
+        // Error handling
+        window.addEventListener('error', function(e) {
+            console.error('Error occurred:', e.error);
+        });
+
+        // Offline detection
+        window.addEventListener('online', function() {
+            document.body.classList.remove('offline');
+            console.log('You are online');
+        });
+
+        window.addEventListener('offline', function() {
+            document.body.classList.add('offline');
+            console.log('You are offline');
+        });
+    </script>
+</body>
+</html>

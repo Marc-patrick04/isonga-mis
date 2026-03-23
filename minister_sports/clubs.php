@@ -1,0 +1,1978 @@
+<?php
+session_start();
+require_once '../config/database.php';
+
+// Check if user is logged in and is Minister of Sports
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_sports') {
+    header('Location: ../auth/login.php');
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+
+// Get user profile data
+try {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    // Check if user needs to change password (first login)
+    $password_change_required = ($user['last_login'] === null);
+    
+} catch (PDOException $e) {
+    $user = [];
+    $password_change_required = false;
+    error_log("User profile error: " . $e->getMessage());
+}
+
+// ========== FUNCTION DEFINITIONS ========== //
+
+// Function to get all clubs
+function getAllClubs($pdo) {
+    try {
+        $stmt = $pdo->query("
+            SELECT c.*, 
+                   COUNT(cm.id) as total_members,
+                   u.full_name as advisor_name
+            FROM clubs c
+            LEFT JOIN club_members cm ON c.id = cm.club_id AND cm.status = 'active'
+            LEFT JOIN users u ON c.faculty_advisor = u.id
+            WHERE c.category = 'entertainment'
+            GROUP BY c.id
+            ORDER BY c.name ASC
+        ");
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting clubs: " . $e->getMessage());
+        return [];
+    }
+}
+
+// Function to get club by ID
+function getClubById($pdo, $id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT c.*, u.full_name as advisor_name
+            FROM clubs c
+            LEFT JOIN users u ON c.faculty_advisor = u.id
+            WHERE c.id = ? AND c.category = 'entertainment'
+        ");
+        $stmt->execute([$id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting club: " . $e->getMessage());
+        return null;
+    }
+}
+
+// Function to get club members
+function getClubMembers($pdo, $club_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT cm.*, u.full_name, u.email, u.phone, 
+                   d.name as department_name, p.name as program_name
+            FROM club_members cm
+            LEFT JOIN users u ON cm.user_id = u.id
+            LEFT JOIN departments d ON cm.department_id = d.id
+            LEFT JOIN programs p ON cm.program_id = p.id
+            WHERE cm.club_id = ? AND cm.status = 'active'
+            ORDER BY cm.role, cm.join_date DESC
+        ");
+        $stmt->execute([$club_id]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting club members: " . $e->getMessage());
+        return [];
+    }
+}
+
+// Function to get club activities
+function getClubActivities($pdo, $club_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT ca.*, u.full_name as organizer_name
+            FROM club_activities ca
+            LEFT JOIN users u ON ca.organizer_id = u.id
+            WHERE ca.club_id = ?
+            ORDER BY ca.activity_date DESC, ca.start_time ASC
+            LIMIT 10
+        ");
+        $stmt->execute([$club_id]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting club activities: " . $e->getMessage());
+        return [];
+    }
+}
+
+// Function to get club resources
+function getClubResources($pdo, $club_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT cr.*, u.full_name as uploaded_by_name
+            FROM club_resources cr
+            LEFT JOIN users u ON cr.uploaded_by = u.id
+            WHERE cr.club_id = ? AND cr.status = 'available'
+            ORDER BY cr.created_at DESC
+        ");
+        $stmt->execute([$club_id]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting club resources: " . $e->getMessage());
+        return [];
+    }
+}
+
+// Function to get available students (not in the club)
+function getAvailableStudents($pdo) {
+    try {
+        $stmt = $pdo->query("
+            SELECT id, reg_number, full_name, email, phone, 
+                   department_id, program_id, academic_year
+            FROM users 
+            WHERE role = 'student' 
+            AND status = 'active'
+            ORDER BY full_name ASC
+        ");
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Error getting available students: " . $e->getMessage());
+        return [];
+    }
+}
+
+// Function to handle club form submission
+function handleClubForm($pdo, $user_id, $action, $club_id) {
+    $name = $_POST['name'] ?? '';
+    $description = $_POST['description'] ?? '';
+    $department = $_POST['department'] ?? '';
+    $established_date = $_POST['established_date'] ?? '';
+    $meeting_schedule = $_POST['meeting_schedule'] ?? '';
+    $meeting_location = $_POST['meeting_location'] ?? '';
+    $faculty_advisor = $_POST['faculty_advisor'] ?? null;
+    $advisor_contact = $_POST['advisor_contact'] ?? '';
+    $status = $_POST['status'] ?? 'active';
+    
+    if (empty($name) || empty($description)) {
+        $_SESSION['error'] = 'Name and description are required';
+        return;
+    }
+    
+    try {
+        if ($action === 'add') {
+            $stmt = $pdo->prepare("
+                INSERT INTO clubs (name, description, category, department, established_date, 
+                                   meeting_schedule, meeting_location, faculty_advisor, 
+                                   advisor_contact, status, created_by, created_at)
+                VALUES (?, ?, 'entertainment', ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ");
+            $stmt->execute([
+                $name, $description, $department, $established_date, $meeting_schedule,
+                $meeting_location, $faculty_advisor, $advisor_contact, $status, $user_id
+            ]);
+            $_SESSION['success'] = 'Club created successfully';
+        } else {
+            $stmt = $pdo->prepare("
+                UPDATE clubs SET 
+                    name = ?,
+                    description = ?,
+                    department = ?,
+                    established_date = ?,
+                    meeting_schedule = ?,
+                    meeting_location = ?,
+                    faculty_advisor = ?,
+                    advisor_contact = ?,
+                    status = ?,
+                    updated_at = NOW()
+                WHERE id = ? AND category = 'entertainment'
+            ");
+            $stmt->execute([
+                $name, $description, $department, $established_date, $meeting_schedule,
+                $meeting_location, $faculty_advisor, $advisor_contact, $status, $club_id
+            ]);
+            $_SESSION['success'] = 'Club updated successfully';
+        }
+        
+        header('Location: clubs.php');
+        exit();
+    } catch (PDOException $e) {
+        error_log("Error saving club: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to save club: ' . $e->getMessage();
+    }
+}
+
+// Function to handle delete club
+function handleDeleteClub($pdo, $club_id, $user_id) {
+    try {
+        // Check if club has members
+        $stmt = $pdo->prepare("SELECT COUNT(*) as member_count FROM club_members WHERE club_id = ? AND status = 'active'");
+        $stmt->execute([$club_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($result['member_count'] > 0) {
+            $_SESSION['error'] = 'Cannot delete club with active members. Please remove members first.';
+            return;
+        }
+        
+        $stmt = $pdo->prepare("DELETE FROM clubs WHERE id = ? AND category = 'entertainment'");
+        $stmt->execute([$club_id]);
+        $_SESSION['success'] = 'Club deleted successfully';
+    } catch (PDOException $e) {
+        error_log("Error deleting club: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to delete club: ' . $e->getMessage();
+    }
+}
+
+// Function to handle add member
+function handleAddMember($pdo, $club_id, $user_id) {
+    $user_id_member = $_POST['user_id'] ?? 0;
+    $role = $_POST['role'] ?? 'member';
+    
+    if (!$user_id_member) {
+        $_SESSION['error'] = 'Please select a student';
+        return;
+    }
+    
+    try {
+        // Check if student is already in the club
+        $stmt = $pdo->prepare("SELECT id FROM club_members WHERE club_id = ? AND user_id = ? AND status = 'active'");
+        $stmt->execute([$club_id, $user_id_member]);
+        
+        if ($stmt->rowCount() > 0) {
+            $_SESSION['error'] = 'Student is already a member of this club';
+            return;
+        }
+        
+        // Get student details
+        $stmt = $pdo->prepare("
+            SELECT reg_number, full_name, email, phone, department_id, program_id, academic_year
+            FROM users WHERE id = ?
+        ");
+        $stmt->execute([$user_id_member]);
+        $student = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$student) {
+            $_SESSION['error'] = 'Student not found';
+            return;
+        }
+        
+        // Add member
+        $stmt = $pdo->prepare("
+            INSERT INTO club_members (club_id, user_id, reg_number, name, email, phone, 
+                                      department_id, program_id, academic_year, role, join_date, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', NOW())
+        ");
+        $stmt->execute([
+            $club_id, $user_id_member, $student['reg_number'], $student['full_name'], 
+            $student['email'], $student['phone'], $student['department_id'], 
+            $student['program_id'], $student['academic_year'], $role
+        ]);
+        
+        // Update members count
+        $stmt = $pdo->prepare("
+            UPDATE clubs SET members_count = members_count + 1, updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$club_id]);
+        
+        $_SESSION['success'] = 'Member added successfully';
+        header("Location: clubs.php?action=view&id=$club_id");
+        exit();
+    } catch (PDOException $e) {
+        error_log("Error adding member: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to add member: ' . $e->getMessage();
+    }
+}
+
+// Function to handle remove member
+function handleRemoveMember($pdo, $club_id, $member_id, $user_id) {
+    try {
+        $stmt = $pdo->prepare("
+            UPDATE club_members SET status = 'inactive', updated_at = NOW()
+            WHERE id = ? AND club_id = ?
+        ");
+        $stmt->execute([$member_id, $club_id]);
+        
+        // Update members count
+        $stmt = $pdo->prepare("
+            UPDATE clubs SET members_count = GREATEST(0, members_count - 1), updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$club_id]);
+        
+        $_SESSION['success'] = 'Member removed successfully';
+    } catch (PDOException $e) {
+        error_log("Error removing member: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to remove member: ' . $e->getMessage();
+    }
+}
+
+// Function to handle add activity
+function handleAddActivity($pdo, $club_id, $user_id) {
+    $title = $_POST['title'] ?? '';
+    $description = $_POST['description'] ?? '';
+    $activity_type = $_POST['activity_type'] ?? 'meeting';
+    $activity_date = $_POST['activity_date'] ?? '';
+    $start_time = $_POST['start_time'] ?? '';
+    $end_time = $_POST['end_time'] ?? '';
+    $location = $_POST['location'] ?? '';
+    $budget = $_POST['budget'] ?? 0;
+    $organizer_id = $_POST['organizer_id'] ?? $user_id;
+    
+    if (empty($title) || empty($activity_date)) {
+        $_SESSION['error'] = 'Title and date are required';
+        return;
+    }
+    
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO club_activities (club_id, title, description, activity_type, 
+                                         activity_date, start_time, end_time, location, 
+                                         budget, organizer_id, status, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, NOW())
+        ");
+        $stmt->execute([
+            $club_id, $title, $description, $activity_type, $activity_date,
+            $start_time, $end_time, $location, $budget, $organizer_id, $user_id
+        ]);
+        
+        $_SESSION['success'] = 'Activity added successfully';
+        header("Location: clubs.php?action=view&id=$club_id");
+        exit();
+    } catch (PDOException $e) {
+        error_log("Error adding activity: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to add activity: ' . $e->getMessage();
+    }
+}
+
+// Function to handle delete activity
+function handleDeleteActivity($pdo, $activity_id, $user_id) {
+    try {
+        $stmt = $pdo->prepare("DELETE FROM club_activities WHERE id = ?");
+        $stmt->execute([$activity_id]);
+        $_SESSION['success'] = 'Activity deleted successfully';
+    } catch (PDOException $e) {
+        error_log("Error deleting activity: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to delete activity: ' . $e->getMessage();
+    }
+}
+
+// Function to handle add resource
+function handleAddResource($pdo, $club_id, $user_id) {
+    $resource_type = $_POST['resource_type'] ?? 'document';
+    $title = $_POST['title'] ?? '';
+    $description = $_POST['description'] ?? '';
+    $quantity = $_POST['quantity'] ?? 1;
+    $value = $_POST['value'] ?? 0;
+    
+    if (empty($title)) {
+        $_SESSION['error'] = 'Title is required';
+        return;
+    }
+    
+    // Handle file upload
+    $file_name = '';
+    $file_path = '';
+    $file_type = '';
+    $file_size = 0;
+    
+    if (isset($_FILES['resource_file']) && $_FILES['resource_file']['error'] === UPLOAD_ERR_OK) {
+        $upload_dir = '../uploads/club_resources/';
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+        
+        $file_name = basename($_FILES['resource_file']['name']);
+        $file_tmp = $_FILES['resource_file']['tmp_name'];
+        $file_type = $_FILES['resource_file']['type'];
+        $file_size = $_FILES['resource_file']['size'];
+        
+        // Generate unique filename
+        $file_ext = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+        $new_filename = uniqid('resource_', true) . '.' . $file_ext;
+        $file_path = $upload_dir . $new_filename;
+        
+        // Move uploaded file
+        if (!move_uploaded_file($file_tmp, $file_path)) {
+            $_SESSION['error'] = 'Failed to upload file';
+            return;
+        }
+        
+        $file_name = $new_filename; // Use the new filename
+    }
+    
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO club_resources (club_id, resource_type, title, description, 
+                                        file_name, file_path, file_type, file_size,
+                                        quantity, value, status, uploaded_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, NOW())
+        ");
+        $stmt->execute([
+            $club_id, $resource_type, $title, $description, $file_name, $file_path,
+            $file_type, $file_size, $quantity, $value, $user_id
+        ]);
+        
+        $_SESSION['success'] = 'Resource added successfully';
+        header("Location: clubs.php?action=view&id=$club_id");
+        exit();
+    } catch (PDOException $e) {
+        error_log("Error adding resource: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to add resource: ' . $e->getMessage();
+    }
+}
+
+// Function to handle delete resource
+function handleDeleteResource($pdo, $resource_id, $user_id) {
+    try {
+        // Get file path before deletion
+        $stmt = $pdo->prepare("SELECT file_path FROM club_resources WHERE id = ?");
+        $stmt->execute([$resource_id]);
+        $resource = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Delete file from server
+        if ($resource && !empty($resource['file_path']) && file_exists($resource['file_path'])) {
+            unlink($resource['file_path']);
+        }
+        
+        $stmt = $pdo->prepare("DELETE FROM club_resources WHERE id = ?");
+        $stmt->execute([$resource_id]);
+        
+        $_SESSION['success'] = 'Resource deleted successfully';
+    } catch (PDOException $e) {
+        error_log("Error deleting resource: " . $e->getMessage());
+        $_SESSION['error'] = 'Failed to delete resource: ' . $e->getMessage();
+    }
+}
+
+// ========== MAIN LOGIC ========== //
+
+$action = $_GET['action'] ?? 'list';
+$club_id = $_GET['id'] ?? 0;
+
+// Initialize variables
+$clubs = [];
+$club = null;
+$members = [];
+$activities = [];
+$resources = [];
+$students = [];
+$unread_messages = 0; // Initialize unread messages variable
+
+// Handle different actions
+switch ($action) {
+    case 'add':
+    case 'edit':
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            handleClubForm($pdo, $user_id, $action, $club_id);
+        } else {
+            if ($action === 'edit' && $club_id) {
+                $club = getClubById($pdo, $club_id);
+                if (!$club) {
+                    $_SESSION['error'] = 'Club not found';
+                    header('Location: clubs.php');
+                    exit();
+                }
+            }
+        }
+        break;
+        
+    case 'delete':
+        if ($club_id) {
+            handleDeleteClub($pdo, $club_id, $user_id);
+        }
+        header('Location: clubs.php');
+        exit();
+        
+    case 'add_member':
+        if ($club_id && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            handleAddMember($pdo, $club_id, $user_id);
+        }
+        break;
+        
+    case 'remove_member':
+        $member_id = $_GET['member_id'] ?? 0;
+        if ($club_id && $member_id) {
+            handleRemoveMember($pdo, $club_id, $member_id, $user_id);
+        }
+        header("Location: clubs.php?action=view&id=$club_id");
+        exit();
+        
+    case 'add_activity':
+        if ($club_id && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            handleAddActivity($pdo, $club_id, $user_id);
+        }
+        break;
+        
+    case 'delete_activity':
+        $activity_id = $_GET['activity_id'] ?? 0;
+        if ($activity_id) {
+            handleDeleteActivity($pdo, $activity_id, $user_id);
+        }
+        header("Location: clubs.php?action=view&id=$club_id");
+        exit();
+        
+    case 'add_resource':
+        if ($club_id && $_SERVER['REQUEST_METHOD'] === 'POST') {
+            handleAddResource($pdo, $club_id, $user_id);
+        }
+        break;
+        
+    case 'delete_resource':
+        $resource_id = $_GET['resource_id'] ?? 0;
+        if ($resource_id) {
+            handleDeleteResource($pdo, $resource_id, $user_id);
+        }
+        header("Location: clubs.php?action=view&id=$club_id");
+        exit();
+        
+    case 'view':
+        if ($club_id) {
+            $club = getClubById($pdo, $club_id);
+            if ($club) {
+                $members = getClubMembers($pdo, $club_id);
+                $activities = getClubActivities($pdo, $club_id);
+                $resources = getClubResources($pdo, $club_id);
+                $students = getAvailableStudents($pdo);
+            }
+        }
+        break;
+        
+    default:
+        $clubs = getAllClubs($pdo);
+        break;
+}
+
+// Get unread messages count (do this AFTER all other initialization)
+try {
+    // Unread messages - Check if tables exist first
+    $stmt = $pdo->query("SHOW TABLES LIKE 'conversation_messages'");
+    $stmt2 = $pdo->query("SHOW TABLES LIKE 'conversation_participants'");
+    if ($stmt->rowCount() > 0 && $stmt2->rowCount() > 0) {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_messages 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $unread_messages = $result['unread_messages'] ?? 0;
+    }
+} catch (PDOException $e) {
+    error_log("Error getting unread messages: " . $e->getMessage());
+    $unread_messages = 0;
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entertainment Clubs - Minister of Sports & Entertainment</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="../assets/images/logo.png">
+    <style>
+        :root {
+            --primary-blue: #0056b3;
+            --secondary-blue: #1e88e5;
+            --accent-blue: #0d47a1;
+            --light-blue: #e3f2fd;
+            --white: #ffffff;
+            --light-gray: #f8f9fa;
+            --medium-gray: #e9ecef;
+            --dark-gray: #6c757d;
+            --text-dark: #2c3e50;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
+            --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
+            --border-radius: 8px;
+            --border-radius-lg: 12px;
+            --transition: all 0.2s ease;
+        }
+
+        .dark-mode {
+            --primary-blue: #1e88e5;
+            --secondary-blue: #64b5f6;
+            --accent-blue: #1565c0;
+            --light-blue: #0d1b2a;
+            --white: #1a1a1a;
+            --light-gray: #2d2d2d;
+            --medium-gray: #3d3d3d;
+            --dark-gray: #b0b0b0;
+            --text-dark: #e0e0e0;
+            --success: #4caf50;
+            --warning: #ffb74d;
+            --danger: #f44336;
+            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
+            color: var(--text-dark);
+            background: var(--light-gray);
+            min-height: 100vh;
+            font-size: 0.875rem;
+            transition: var(--transition);
+        }
+
+        /* Header */
+        .header {
+            background: var(--white);
+            box-shadow: var(--shadow-sm);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            border-bottom: 1px solid var(--medium-gray);
+            height: 80px;
+            display: flex;
+            align-items: center;
+        }
+
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 1.5rem;
+            width: 100%;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logos {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .logo {
+            height: 40px;
+            width: auto;
+        }
+
+        .brand-text h1 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--primary-blue);
+        }
+
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: var(--gradient-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 1.1rem;
+            border: 3px solid var(--medium-gray);
+            overflow: hidden;
+            position: relative;
+            transition: var(--transition);
+        }
+
+        .user-avatar:hover {
+            border-color: var(--primary-blue);
+            transform: scale(1.05);
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .user-details {
+            text-align: right;
+        }
+
+        .user-name {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.95rem;
+        }
+
+        .user-role {
+            font-size: 0.8rem;
+            color: var(--dark-gray);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .icon-btn {
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: var(--light-gray);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            cursor: pointer;
+            transition: var(--transition);
+            position: relative;
+            font-size: 1.1rem;
+        }
+
+        .icon-btn:hover {
+            background: var(--primary-blue);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        /* ADD THIS - Notification Badge CSS */
+        .notification-badge {
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            background: var(--danger);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 0.7rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            border: 2px solid var(--white);
+        }
+
+        .logout-btn {
+            background: var(--gradient-primary);
+            color: white;
+            padding: 0.6rem 1.2rem;
+            border-radius: 20px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: var(--transition);
+            font-size: 0.85rem;
+            border: none;
+            cursor: pointer;
+        }
+
+        .logout-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* Dashboard Container */
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            min-height: calc(100vh - 80px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: var(--white);
+            border-right: 1px solid var(--medium-gray);
+            padding: 1.5rem 0;
+            position: sticky;
+            top: 80px;
+            height: calc(100vh - 80px);
+            overflow-y: auto;
+        }
+
+        .sidebar-menu {
+            list-style: none;
+        }
+
+        .menu-item {
+            margin-bottom: 0.25rem;
+        }
+
+        .menu-item a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            color: var(--text-dark);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+            font-size: 0.85rem;
+        }
+
+        .menu-item a:hover, .menu-item a.active {
+            background: var(--light-blue);
+            border-left-color: var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .menu-item i {
+            width: 16px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        /* Main Content */
+        .main-content {
+            padding: 1.5rem;
+            overflow-y: auto;
+            height: calc(100vh - 80px);
+        }
+
+        /* Page Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .page-header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-dark);
+        }
+
+        .page-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.85rem;
+            border: none;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--light-gray);
+            color: var(--text-dark);
+            border: 1px solid var(--medium-gray);
+        }
+
+        .btn-secondary:hover {
+            background: var(--medium-gray);
+        }
+
+        /* Alert Messages */
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            font-size: 0.8rem;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .card-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .card-body {
+            padding: 1.25rem;
+        }
+
+        /* Tables */
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .table th, .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .table th {
+            background: var(--light-gray);
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .table tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-active {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .status-inactive {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .status-scheduled {
+            background: #cce7ff;
+            color: var(--primary-blue);
+        }
+
+        .status-completed {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .status-cancelled {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        /* Role Badges */
+        .role-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .role-leader {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .role-deputy {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .role-member {
+            background: #f8f9fa;
+            color: var(--dark-gray);
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.8rem;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        /* Club View Layout */
+        .club-header {
+            background: var(--gradient-primary);
+            color: white;
+            padding: 2rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1.5rem;
+        }
+
+        .club-info h2 {
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .club-meta {
+            display: flex;
+            gap: 2rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .club-sections {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1.5rem;
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            max-width: 600px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-body {
+            padding: 1rem;
+        }
+
+        .modal-footer {
+            padding: 1rem;
+            border-top: 1px solid var(--medium-gray);
+            text-align: right;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .club-sections {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .sidebar {
+                display: none;
+            }
+            
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1rem;
+            }
+            
+            .page-actions {
+                width: 100%;
+                justify-content: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="nav-container">
+            <div class="logo-section">
+                <div class="logos">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
+                </div>
+                <div class="brand-text">
+                    <h1>Isonga - Minister of Sports & Entertainment</h1>
+                </div>
+            </div>
+            <div class="user-menu">
+                <div class="header-actions">
+                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages">
+                        <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </div>
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <?php if (!empty($user['avatar_url'])): ?>
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                        <?php else: ?>
+                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
+                        <?php endif; ?>
+                    </div>
+                    <div class="user-details">
+                        <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
+                        <div class="user-role">Minister of Sports & Entertainment</div>
+                    </div>
+                </div>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Dashboard Container -->
+    <div class="dashboard-container">
+               <nav class="sidebar">
+            <ul class="sidebar-menu">
+                <li class="menu-item">
+                    <a href="dashboard.php" >
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="teams.php">
+                        <i class="fas fa-users"></i>
+                        <span>Sports Teams</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="facilities.php">
+                        <i class="fas fa-building"></i>
+                        <span>Sports Facilities</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="clubs.php" class="active">
+                        <i class="fas fa-music"></i>
+                        <span>Entertainment Clubs</span>
+
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Support Tickets</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="competitions.php">
+                        <i class="fas fa-trophy"></i>
+                        <span>Competitions</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="equipment.php">
+                        <i class="fas fa-baseball-ball"></i>
+                        <span>Equipment</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="action-funding.php" >
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Funding & Budget</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="training.php">
+                        <i class="fas fa-running"></i>
+                        <span>Training</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Reports & Analytics</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <?php if (isset($_SESSION['success'])): ?>
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success']; ?>
+                    <?php unset($_SESSION['success']); ?>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (isset($_SESSION['error'])): ?>
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error']; ?>
+                    <?php unset($_SESSION['error']); ?>
+                </div>
+            <?php endif; ?>
+            
+            <?php if ($action === 'list'): ?>
+                <!-- Clubs List -->
+                <div class="page-header">
+                    <h1>Entertainment Clubs</h1>
+                    <div class="page-actions">
+                        <a href="clubs.php?action=add" class="btn btn-primary">
+                            <i class="fas fa-plus"></i> Add New Club
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-body">
+                        <?php if (empty($clubs)): ?>
+                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
+                                <i class="fas fa-music" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <h3>No Entertainment Clubs Found</h3>
+                                <p>Get started by creating your first entertainment club</p>
+                                <a href="clubs.php?action=add" class="btn btn-primary" style="margin-top: 1rem;">
+                                    <i class="fas fa-plus"></i> Create First Club
+                                </a>
+                            </div>
+                        <?php else: ?>
+                            <table class="table">
+                                <thead>
+                                    <tr>
+                                        <th>Club Name</th>
+                                        <th>Department</th>
+                                        <th>Members</th>
+                                        <th>Faculty Advisor</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($clubs as $club_item): ?>
+                                        <tr>
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($club_item['name']); ?></strong>
+                                                <div style="font-size: 0.75rem; color: var(--dark-gray); margin-top: 0.25rem;">
+                                                    <?php echo htmlspecialchars(substr($club_item['description'], 0, 100)); ?>...
+                                                </div>
+                                            </td>
+                                            <td><?php echo htmlspecialchars($club_item['department']); ?></td>
+                                            <td>
+                                                <strong><?php echo $club_item['total_members']; ?></strong> members
+                                            </td>
+                                            <td><?php echo htmlspecialchars($club_item['advisor_name'] ?? 'Not assigned'); ?></td>
+                                            <td>
+                                                <span class="status-badge status-<?php echo $club_item['status']; ?>">
+                                                    <?php echo ucfirst($club_item['status']); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="action-buttons">
+                                                    <a href="clubs.php?action=view&id=<?php echo $club_item['id']; ?>" class="btn btn-secondary btn-sm">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
+                                                    <a href="clubs.php?action=edit&id=<?php echo $club_item['id']; ?>" class="btn btn-secondary btn-sm">
+                                                        <i class="fas fa-edit"></i>
+                                                    </a>
+                                                    <a href="clubs.php?action=delete&id=<?php echo $club_item['id']; ?>" 
+                                                       class="btn btn-danger btn-sm"
+                                                       onclick="return confirm('Are you sure you want to delete this club?')">
+                                                        <i class="fas fa-trash"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+            <?php elseif ($action === 'add' || $action === 'edit'): ?>
+                <!-- Add/Edit Club Form -->
+                <div class="page-header">
+                    <h1><?php echo $action === 'add' ? 'Add New Club' : 'Edit Club'; ?></h1>
+                    <div class="page-actions">
+                        <a href="clubs.php" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Back to List
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-body">
+                        <form method="POST" action="">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Club Name *</label>
+                                    <input type="text" name="name" class="form-control" 
+                                           value="<?php echo htmlspecialchars($club['name'] ?? ''); ?>" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Department</label>
+                                    <input type="text" name="department" class="form-control" 
+                                           value="<?php echo htmlspecialchars($club['department'] ?? ''); ?>">
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">Description *</label>
+                                <textarea name="description" class="form-control" rows="4" required><?php echo htmlspecialchars($club['description'] ?? ''); ?></textarea>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Established Date</label>
+                                    <input type="date" name="established_date" class="form-control" 
+                                           value="<?php echo htmlspecialchars($club['established_date'] ?? ''); ?>">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Status</label>
+                                    <select name="status" class="form-control">
+                                        <option value="active" <?php echo ($club['status'] ?? '') === 'active' ? 'selected' : ''; ?>>Active</option>
+                                        <option value="inactive" <?php echo ($club['status'] ?? '') === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Meeting Schedule</label>
+                                    <input type="text" name="meeting_schedule" class="form-control" 
+                                           value="<?php echo htmlspecialchars($club['meeting_schedule'] ?? ''); ?>"
+                                           placeholder="e.g., Every Monday, 4 PM">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Meeting Location</label>
+                                    <input type="text" name="meeting_location" class="form-control" 
+                                           value="<?php echo htmlspecialchars($club['meeting_location'] ?? ''); ?>"
+                                           placeholder="e.g., Main Auditorium">
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Faculty Advisor</label>
+                                    <select name="faculty_advisor" class="form-control">
+                                        <option value="">Select Faculty Advisor</option>
+                                        <?php
+                                        try {
+                                            $stmt = $pdo->query("SELECT id, full_name FROM users WHERE role LIKE '%faculty%' OR role LIKE '%staff%' ORDER BY full_name");
+                                            $faculty = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                                            foreach ($faculty as $f) {
+                                                $selected = ($club['faculty_advisor'] ?? '') == $f['id'] ? 'selected' : '';
+                                                echo "<option value=\"{$f['id']}\" $selected>{$f['full_name']}</option>";
+                                            }
+                                        } catch (PDOException $e) {
+                                            // Silently handle error
+                                        }
+                                        ?>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Advisor Contact</label>
+                                    <input type="text" name="advisor_contact" class="form-control" 
+                                           value="<?php echo htmlspecialchars($club['advisor_contact'] ?? ''); ?>"
+                                           placeholder="e.g., advisor@college.ac.rw">
+                                </div>
+                            </div>
+                            
+                            <div class="form-group" style="margin-top: 1.5rem;">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-save"></i> Save Club
+                                </button>
+                                <a href="clubs.php" class="btn btn-secondary">Cancel</a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+            <?php elseif ($action === 'view' && $club): ?>
+                <!-- View Club Details -->
+                <div class="club-header">
+                    <div class="club-info">
+                        <h2><?php echo htmlspecialchars($club['name']); ?></h2>
+                        <p><?php echo htmlspecialchars($club['description']); ?></p>
+                        <div class="club-meta">
+                            <div class="meta-item">
+                                <i class="fas fa-users"></i>
+                                <span><?php echo $club['members_count']; ?> Members</span>
+                            </div>
+                            <div class="meta-item">
+                                <i class="fas fa-building"></i>
+                                <span><?php echo htmlspecialchars($club['department']); ?></span>
+                            </div>
+                            <div class="meta-item">
+                                <i class="fas fa-calendar-alt"></i>
+                                <span>Established: <?php echo date('F Y', strtotime($club['established_date'])); ?></span>
+                            </div>
+                            <div class="meta-item">
+                                <i class="fas fa-user-tie"></i>
+                                <span>Advisor: <?php echo htmlspecialchars($club['advisor_name'] ?? 'Not assigned'); ?></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="page-header" style="margin-top: 1.5rem;">
+                    <div>
+                        <h1 style="font-size: 1.2rem; margin-bottom: 0.5rem;">Club Management</h1>
+                        <p style="color: var(--dark-gray); font-size: 0.9rem;">
+                            <?php echo htmlspecialchars($club['meeting_schedule']); ?> at <?php echo htmlspecialchars($club['meeting_location']); ?>
+                        </p>
+                    </div>
+                    <div class="page-actions">
+                        <button onclick="showModal('addMemberModal')" class="btn btn-success">
+                            <i class="fas fa-user-plus"></i> Add Member
+                        </button>
+                        <button onclick="showModal('addActivityModal')" class="btn btn-primary">
+                            <i class="fas fa-calendar-plus"></i> Add Activity
+                        </button>
+                        <button onclick="showModal('addResourceModal')" class="btn btn-secondary">
+                            <i class="fas fa-file-upload"></i> Add Resource
+                        </button>
+                        <a href="clubs.php?action=edit&id=<?php echo $club_id; ?>" class="btn btn-secondary">
+                            <i class="fas fa-edit"></i> Edit Club
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="club-sections">
+                    <!-- Left Column: Members and Activities -->
+                    <div class="left-column">
+                        <!-- Members Section -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Club Members (<?php echo count($members); ?>)</h3>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($members)): ?>
+                                    <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
+                                        <i class="fas fa-users" style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5;"></i>
+                                        <p>No members yet</p>
+                                        <button onclick="showModal('addMemberModal')" class="btn btn-primary btn-sm">
+                                            <i class="fas fa-user-plus"></i> Add Members
+                                        </button>
+                                    </div>
+                                <?php else: ?>
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Name</th>
+                                                <th>Registration No.</th>
+                                                <th>Role</th>
+                                                <th>Join Date</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($members as $member): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($member['name']); ?></strong>
+                                                        <div style="font-size: 0.75rem; color: var(--dark-gray);">
+                                                            <?php echo htmlspecialchars($member['program_name'] ?? ''); ?>
+                                                        </div>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($member['reg_number']); ?></td>
+                                                    <td>
+                                                        <span class="role-badge role-<?php echo $member['role']; ?>">
+                                                            <?php echo ucfirst($member['role']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td><?php echo date('M j, Y', strtotime($member['join_date'])); ?></td>
+                                                    <td>
+                                                        <a href="clubs.php?action=remove_member&id=<?php echo $club_id; ?>&member_id=<?php echo $member['id']; ?>" 
+                                                           class="btn btn-danger btn-sm"
+                                                           onclick="return confirm('Remove <?php echo htmlspecialchars($member['name']); ?> from the club?')">
+                                                            <i class="fas fa-user-minus"></i>
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        
+                        <!-- Activities Section -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Club Activities</h3>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($activities)): ?>
+                                    <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
+                                        <p>No activities scheduled</p>
+                                        <button onclick="showModal('addActivityModal')" class="btn btn-primary btn-sm">
+                                            <i class="fas fa-calendar-plus"></i> Schedule Activity
+                                        </button>
+                                    </div>
+                                <?php else: ?>
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Activity</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
+                                                <th>Type</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($activities as $activity): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($activity['title']); ?></strong>
+                                                        <div style="font-size: 0.75rem; color: var(--dark-gray);">
+                                                            <?php echo htmlspecialchars(substr($activity['description'], 0, 50)); ?>...
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($activity['activity_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($activity['start_time'])); ?></small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($activity['location']); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $activity['status']; ?>">
+                                                            <?php echo ucfirst($activity['activity_type']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <a href="clubs.php?action=delete_activity&id=<?php echo $club_id; ?>&activity_id=<?php echo $activity['id']; ?>" 
+                                                           class="btn btn-danger btn-sm"
+                                                           onclick="return confirm('Delete this activity?')">
+                                                            <i class="fas fa-trash"></i>
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Right Column: Resources and Quick Actions -->
+                    <div class="right-column">
+                        <!-- Resources Section -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Club Resources</h3>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($resources)): ?>
+                                    <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
+                                        <p>No resources available</p>
+                                        <button onclick="showModal('addResourceModal')" class="btn btn-primary btn-sm">
+                                            <i class="fas fa-file-upload"></i> Upload Resource
+                                        </button>
+                                    </div>
+                                <?php else: ?>
+                                    <div style="display: grid; gap: 0.75rem;">
+                                        <?php foreach ($resources as $resource): ?>
+                                            <div style="padding: 0.75rem; background: var(--light-gray); border-radius: var(--border-radius);">
+                                                <div style="display: flex; justify-content: space-between; align-items: start;">
+                                                    <div>
+                                                        <strong style="font-size: 0.85rem;"><?php echo htmlspecialchars($resource['title']); ?></strong>
+                                                        <div style="font-size: 0.75rem; color: var(--dark-gray); margin-top: 0.25rem;">
+                                                            <?php echo htmlspecialchars($resource['description']); ?>
+                                                        </div>
+                                                        <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
+                                                            <i class="fas fa-file"></i> <?php echo strtoupper(pathinfo($resource['file_name'], PATHINFO_EXTENSION)); ?> • 
+                                                            <?php echo round($resource['file_size'] / 1024, 1); ?> KB
+                                                        </div>
+                                                    </div>
+                                                    <div class="action-buttons">
+                                                        <?php if (!empty($resource['file_path'])): ?>
+                                                            <a href="../<?php echo htmlspecialchars($resource['file_path']); ?>" 
+                                                               class="btn btn-secondary btn-sm" target="_blank" download>
+                                                                <i class="fas fa-download"></i>
+                                                            </a>
+                                                        <?php endif; ?>
+                                                        <a href="clubs.php?action=delete_resource&id=<?php echo $club_id; ?>&resource_id=<?php echo $resource['id']; ?>" 
+                                                           class="btn btn-danger btn-sm"
+                                                           onclick="return confirm('Delete this resource?')">
+                                                            <i class="fas fa-trash"></i>
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        
+                        <!-- Quick Stats -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Club Information</h3>
+                            </div>
+                            <div class="card-body">
+                                <div style="display: grid; gap: 0.75rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Members</span>
+                                        <strong style="color: var(--text-dark);"><?php echo $club['members_count']; ?></strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Department</span>
+                                        <strong style="color: var(--text-dark);"><?php echo htmlspecialchars($club['department']); ?></strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Meeting Schedule</span>
+                                        <strong style="color: var(--text-dark); font-size: 0.8rem;"><?php echo htmlspecialchars($club['meeting_schedule']); ?></strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Meeting Location</span>
+                                        <strong style="color: var(--text-dark); font-size: 0.8rem;"><?php echo htmlspecialchars($club['meeting_location']); ?></strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Status</span>
+                                        <span class="status-badge status-<?php echo $club['status']; ?>">
+                                            <?php echo ucfirst($club['status']); ?>
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Modals -->
+                <!-- Add Member Modal -->
+                <div id="addMemberModal" class="modal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Add Member to Club</h3>
+                            <button onclick="hideModal('addMemberModal')" style="background: none; border: none; font-size: 1.25rem; cursor: pointer;">×</button>
+                        </div>
+                        <div class="modal-body">
+                            <form method="POST" action="clubs.php?action=add_member&id=<?php echo $club_id; ?>">
+                                <div class="form-group">
+                                    <label class="form-label">Select Student *</label>
+                                    <select name="user_id" class="form-control" required>
+                                        <option value="">Choose a student...</option>
+                                        <?php foreach ($students as $student): ?>
+                                            <option value="<?php echo $student['id']; ?>">
+                                                <?php echo htmlspecialchars($student['full_name']); ?> 
+                                                (<?php echo htmlspecialchars($student['reg_number']); ?>)
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Role</label>
+                                    <select name="role" class="form-control">
+                                        <option value="member">Member</option>
+                                        <option value="leader">Leader</option>
+                                        <option value="deputy">Deputy Leader</option>
+                                        <option value="treasurer">Treasurer</option>
+                                        <option value="secretary">Secretary</option>
+                                    </select>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" onclick="hideModal('addMemberModal')" class="btn btn-secondary">Cancel</button>
+                                    <button type="submit" class="btn btn-primary">Add Member</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Add Activity Modal -->
+                <div id="addActivityModal" class="modal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Add Club Activity</h3>
+                            <button onclick="hideModal('addActivityModal')" style="background: none; border: none; font-size: 1.25rem; cursor: pointer;">×</button>
+                        </div>
+                        <div class="modal-body">
+                            <form method="POST" action="clubs.php?action=add_activity&id=<?php echo $club_id; ?>">
+                                <div class="form-group">
+                                    <label class="form-label">Activity Title *</label>
+                                    <input type="text" name="title" class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Description</label>
+                                    <textarea name="description" class="form-control" rows="3"></textarea>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label">Activity Type</label>
+                                        <select name="activity_type" class="form-control">
+                                            <option value="meeting">Regular Meeting</option>
+                                            <option value="rehearsal">Rehearsal</option>
+                                            <option value="performance">Performance</option>
+                                            <option value="workshop">Workshop</option>
+                                            <option value="competition">Competition</option>
+                                            <option value="social">Social Event</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Budget (RWF)</label>
+                                        <input type="number" name="budget" class="form-control" min="0" step="1000" value="0">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label">Date *</label>
+                                        <input type="date" name="activity_date" class="form-control" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Location</label>
+                                        <input type="text" name="location" class="form-control">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label">Start Time</label>
+                                        <input type="time" name="start_time" class="form-control">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">End Time</label>
+                                        <input type="time" name="end_time" class="form-control">
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" onclick="hideModal('addActivityModal')" class="btn btn-secondary">Cancel</button>
+                                    <button type="submit" class="btn btn-primary">Add Activity</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Add Resource Modal -->
+                <div id="addResourceModal" class="modal">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h3>Add Club Resource</h3>
+                            <button onclick="hideModal('addResourceModal')" style="background: none; border: none; font-size: 1.25rem; cursor: pointer;">×</button>
+                        </div>
+                        <div class="modal-body">
+                            <form method="POST" action="clubs.php?action=add_resource&id=<?php echo $club_id; ?>" enctype="multipart/form-data">
+                                <div class="form-group">
+                                    <label class="form-label">Resource Type</label>
+                                    <select name="resource_type" class="form-control">
+                                        <option value="document">Document</option>
+                                        <option value="music">Music File</option>
+                                        <option value="video">Video</option>
+                                        <option value="image">Image</option>
+                                        <option value="other">Other</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Title *</label>
+                                    <input type="text" name="title" class="form-control" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Description</label>
+                                    <textarea name="description" class="form-control" rows="2"></textarea>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label class="form-label">Quantity</label>
+                                        <input type="number" name="quantity" class="form-control" min="1" value="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="form-label">Value (RWF)</label>
+                                        <input type="number" name="value" class="form-control" min="0" value="0">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Upload File</label>
+                                    <input type="file" name="resource_file" class="form-control">
+                                    <small style="color: var(--dark-gray); font-size: 0.75rem;">
+                                        Max file size: 10MB. Supported formats: PDF, DOC, MP3, MP4, JPG, PNG
+                                    </small>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" onclick="hideModal('addResourceModal')" class="btn btn-secondary">Cancel</button>
+                                    <button type="submit" class="btn btn-primary">Upload Resource</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+            <?php endif; ?>
+        </main>
+    </div>
+
+    <script>
+        // Dark Mode Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const body = document.body;
+
+        // Check for saved theme preference or respect OS preference
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        if (savedTheme === 'dark') {
+            body.classList.add('dark-mode');
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        }
+
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Modal Functions
+        function showModal(modalId) {
+            document.getElementById(modalId).style.display = 'flex';
+        }
+
+        function hideModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>

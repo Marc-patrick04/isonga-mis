@@ -1,0 +1,183 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset='UTF-8'>
+            <title>Receipt for KWIZERA Angelo</title>
+            <style>
+                @page { size: A4; margin: 1cm; }
+                body { 
+                    margin: 0; 
+                    font-family: 'Arial', sans-serif;
+                    color: #333;
+                }
+                .receipt-container {
+                    max-width: 21cm;
+                    margin: 0 auto;
+                    padding: 1.5cm;
+                    border: 2px solid #ddd;
+                    background: white;
+                }
+                .receipt-header {
+                    text-align: center;
+                    border-bottom: 3px double #333;
+                    padding-bottom: 20px;
+                    margin-bottom: 30px;
+                }
+                .institution-name {
+                    font-size: 28px;
+                    font-weight: bold;
+                    color: #2c3e50;
+                    margin-bottom: 10px;
+                }
+                .institution-address {
+                    font-size: 14px;
+                    color: #666;
+                    margin-bottom: 5px;
+                }
+                .receipt-title {
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #2c3e50;
+                    margin: 20px 0;
+                }
+                .receipt-details {
+                    margin: 30px 0;
+                }
+                .detail-row {
+                    display: flex;
+                    margin-bottom: 15px;
+                    padding: 10px 0;
+                    border-bottom: 1px solid #eee;
+                }
+                .detail-label {
+                    font-weight: bold;
+                    width: 200px;
+                    color: #555;
+                }
+                .detail-value {
+                    flex: 1;
+                    color: #333;
+                }
+                .amount-section {
+                    background: #f8f9fa;
+                    padding: 20px;
+                    border-radius: 8px;
+                    margin: 30px 0;
+                    text-align: center;
+                }
+                .amount-label {
+                    font-size: 16px;
+                    color: #666;
+                    margin-bottom: 10px;
+                }
+                .amount-value {
+                    font-size: 36px;
+                    font-weight: bold;
+                    color: #27ae60;
+                }
+                .payment-method {
+                    background: #e8f5e8;
+                    padding: 15px;
+                    border-radius: 6px;
+                    margin: 20px 0;
+                }
+                .receipt-footer {
+                    margin-top: 40px;
+                    padding-top: 20px;
+                    border-top: 2px solid #ddd;
+                    text-align: center;
+                    color: #666;
+                    font-size: 12px;
+                }
+                .signature-area {
+                    margin-top: 60px;
+                    text-align: right;
+                }
+                .signature-line {
+                    border-top: 1px solid #333;
+                    width: 200px;
+                    margin: 40px 0 10px auto;
+                }
+                .stamp-area {
+                    text-align: left;
+                    margin-top: 40px;
+                }
+                .official-stamp {
+                    border: 2px solid #c0392b;
+                    padding: 10px 20px;
+                    display: inline-block;
+                    color: #c0392b;
+                    font-weight: bold;
+                    transform: rotate(-5deg);
+                }
+            </style>
+        </head>
+        <body>
+            <div class='receipt-container'>
+                <div class='receipt-header'>
+                    <div class='institution-name'>RP MUSANZE COLLEGE</div>
+                    <div class='institution-address'>P.O. Box 100, Musanze, Rwanda</div>
+                    <div class='institution-address'>Tel: +250 788 123 456 | Email: info@rpmusanze.ac.rw</div>
+                    <div class='receipt-title'>OFFICIAL RECEIPT</div>
+                    <div style='font-size: 16px; color: #666;'>Receipt No: RCP000001</div>
+                </div>
+                
+                <div class='receipt-details'>
+                    <div class='detail-row'>
+                        <div class='detail-label'>Date:</div>
+                        <div class='detail-value'>November 12, 2025</div>
+                    </div>
+                    <div class='detail-row'>
+                        <div class='detail-label'>Received From:</div>
+                        <div class='detail-value'>KWIZERA Angelo</div>
+                    </div>
+                    
+                    <div class='detail-row'>
+                        <div class='detail-label'>Registration Number:</div>
+                        <div class='detail-value'>24RP0078</div>
+                    </div>
+                    
+                    <div class='detail-row'>
+                        <div class='detail-label'>Payment Purpose:</div>
+                        <div class='detail-value'>Payment for: donation</div>
+                    </div>
+                </div>
+                
+                <div class='amount-section'>
+                    <div class='amount-label'>AMOUNT PAID</div>
+                    <div class='amount-value'>RWF 10,000.00</div>
+                </div>
+                
+                <div class='payment-method'>
+                    <div class='detail-row'>
+                        <div class='detail-label'>Payment Method:</div>
+                        <div class='detail-value'>cash</div>
+                    </div>
+                </div>
+                
+                
+                
+                <div style='display: flex; justify-content: space-between; margin-top: 60px;'>
+                    <div class='stamp-area'>
+                        <div class='official-stamp'>OFFICIAL STAMP</div>
+                    </div>
+                    <div class='signature-area'>
+                        <div class='signature-line'></div>
+                        <div style='text-align: right;'>
+                            <div>Authorized Signature</div>
+                            <div>Student Guild Treasurer</div>
+                            <div>RP Musanze College</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class='receipt-footer'>
+                    <div>This is an official receipt. Please keep it for your records.</div>
+                    <div>For any inquiries, contact: finance@rpsu.rp.ac.rw</div>
+                    <div>Generated on: November 14, 2025 at 12:25</div>
+                </div>
+            </div>
+        </body>
+        </html>
+    
