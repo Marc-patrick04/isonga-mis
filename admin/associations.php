@@ -19,11 +19,11 @@ try {
     $current_admin = [];
 }
 
-// Handle Committee Member Actions
+// Handle Association Actions
 $message = '';
 $error = '';
 
-// Get departments and programs for dropdowns
+// Get departments for dropdowns
 try {
     $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
     $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -32,139 +32,188 @@ try {
     error_log("Error fetching departments: " . $e->getMessage());
 }
 
-// Handle Add Committee Member
+// Get programs for dropdowns
+try {
+    $stmt = $pdo->query("SELECT id, name, department_id FROM programs WHERE is_active = true ORDER BY name");
+    $programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $programs = [];
+}
+
+// Handle Add Association
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
         try {
-            // Handle photo upload
-            $photo_url = null;
-            if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-                $upload_dir = '../assets/uploads/committee/';
+            // Handle logo upload
+            $logo_url = null;
+            if (isset($_FILES['logo']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
+                $upload_dir = '../assets/uploads/associations/';
                 if (!file_exists($upload_dir)) {
                     mkdir($upload_dir, 0777, true);
                 }
                 
-                $file_extension = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
+                $file_extension = strtolower(pathinfo($_FILES['logo']['name'], PATHINFO_EXTENSION));
                 $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
                 
                 if (in_array($file_extension, $allowed_extensions)) {
                     $file_name = time() . '_' . uniqid() . '.' . $file_extension;
                     $upload_path = $upload_dir . $file_name;
                     
-                    if (move_uploaded_file($_FILES['photo']['tmp_name'], $upload_path)) {
-                        $photo_url = 'assets/uploads/committee/' . $file_name;
+                    if (move_uploaded_file($_FILES['logo']['tmp_name'], $upload_path)) {
+                        $logo_url = 'assets/uploads/associations/' . $file_name;
                     }
                 }
             }
             
+            // Prepare social links JSON
+            $social_links = [];
+            if (!empty($_POST['facebook'])) $social_links['facebook'] = $_POST['facebook'];
+            if (!empty($_POST['twitter'])) $social_links['twitter'] = $_POST['twitter'];
+            if (!empty($_POST['instagram'])) $social_links['instagram'] = $_POST['instagram'];
+            if (!empty($_POST['linkedin'])) $social_links['linkedin'] = $_POST['linkedin'];
+            if (!empty($_POST['website'])) $social_links['website'] = $_POST['website'];
+            
+            $social_links_json = !empty($social_links) ? json_encode($social_links) : null;
+            
+            // Check if name already exists
+            $stmt = $pdo->prepare("SELECT id FROM associations WHERE name = ?");
+            $stmt->execute([$_POST['name']]);
+            if ($stmt->fetch()) {
+                throw new Exception("Association name '{$_POST['name']}' already exists.");
+            }
+            
             $stmt = $pdo->prepare("
-                INSERT INTO committee_members (
-                    user_id, name, reg_number, role, role_order, 
-                    department_id, program_id, academic_year, 
-                    email, phone, bio, portfolio_description,
-                    photo_url, status, created_by, created_at
+                INSERT INTO associations (
+                    name, type, description, established_date, meeting_schedule, meeting_location,
+                    faculty_advisor, advisor_contact, members_count, status, logo_url,
+                    contact_person, contact_email, contact_phone, social_links,
+                    performance_notes, goals, achievements, created_by, created_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()
                 )
             ");
             
             $stmt->execute([
-                !empty($_POST['user_id']) ? $_POST['user_id'] : null,
                 $_POST['name'],
-                $_POST['reg_number'] ?? null,
-                $_POST['role'],
-                $_POST['role_order'] ?? 0,
-                !empty($_POST['department_id']) ? $_POST['department_id'] : null,
-                !empty($_POST['program_id']) ? $_POST['program_id'] : null,
-                $_POST['academic_year'] ?? null,
-                $_POST['email'] ?? null,
-                $_POST['phone'] ?? null,
-                $_POST['bio'] ?? null,
-                $_POST['portfolio_description'] ?? null,
-                $photo_url,
+                $_POST['type'],
+                $_POST['description'] ?? null,
+                !empty($_POST['established_date']) ? $_POST['established_date'] : null,
+                $_POST['meeting_schedule'] ?? null,
+                $_POST['meeting_location'] ?? null,
+                $_POST['faculty_advisor'] ?? null,
+                $_POST['advisor_contact'] ?? null,
+                $_POST['members_count'] ?? 0,
                 $_POST['status'] ?? 'active',
+                $logo_url,
+                $_POST['contact_person'] ?? null,
+                $_POST['contact_email'] ?? null,
+                $_POST['contact_phone'] ?? null,
+                $social_links_json,
+                $_POST['performance_notes'] ?? null,
+                $_POST['goals'] ?? null,
+                $_POST['achievements'] ?? null,
                 $user_id
             ]);
             
-            $message = "Committee member added successfully!";
-            header("Location: committee.php?msg=" . urlencode($message));
+            $message = "Association added successfully!";
+            header("Location: associations.php?msg=" . urlencode($message));
             exit();
+        } catch (Exception $e) {
+            $error = $e->getMessage();
         } catch (PDOException $e) {
-            $error = "Error adding committee member: " . $e->getMessage();
-            error_log("Committee member creation error: " . $e->getMessage());
+            $error = "Error adding association: " . $e->getMessage();
+            error_log("Association creation error: " . $e->getMessage());
         }
     }
     
-    // Handle Edit Committee Member
+    // Handle Edit Association
     elseif ($_POST['action'] === 'edit') {
         try {
-            $member_id = $_POST['member_id'];
-            $photo_url = null;
+            $association_id = $_POST['association_id'];
+            $logo_url = null;
             
-            if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
-                $upload_dir = '../assets/uploads/committee/';
+            // Handle logo upload
+            if (isset($_FILES['logo']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
+                $upload_dir = '../assets/uploads/associations/';
                 if (!file_exists($upload_dir)) {
                     mkdir($upload_dir, 0777, true);
                 }
                 
-                $file_extension = strtolower(pathinfo($_FILES['photo']['name'], PATHINFO_EXTENSION));
+                $file_extension = strtolower(pathinfo($_FILES['logo']['name'], PATHINFO_EXTENSION));
                 $allowed_extensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
                 
                 if (in_array($file_extension, $allowed_extensions)) {
                     $file_name = time() . '_' . uniqid() . '.' . $file_extension;
                     $upload_path = $upload_dir . $file_name;
                     
-                    if (move_uploaded_file($_FILES['photo']['tmp_name'], $upload_path)) {
-                        $photo_url = 'assets/uploads/committee/' . $file_name;
+                    if (move_uploaded_file($_FILES['logo']['tmp_name'], $upload_path)) {
+                        $logo_url = 'assets/uploads/associations/' . $file_name;
                         
-                        // Delete old photo
-                        $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id = ?");
-                        $stmt->execute([$member_id]);
-                        $old_member = $stmt->fetch(PDO::FETCH_ASSOC);
-                        if (!empty($old_member['photo_url'])) {
-                            $old_photo_path = '../' . $old_member['photo_url'];
-                            if (file_exists($old_photo_path)) {
-                                unlink($old_photo_path);
+                        // Delete old logo
+                        $stmt = $pdo->prepare("SELECT logo_url FROM associations WHERE id = ?");
+                        $stmt->execute([$association_id]);
+                        $old_assoc = $stmt->fetch(PDO::FETCH_ASSOC);
+                        if (!empty($old_assoc['logo_url'])) {
+                            $old_logo_path = '../' . $old_assoc['logo_url'];
+                            if (file_exists($old_logo_path)) {
+                                unlink($old_logo_path);
                             }
                         }
                     }
                 }
             }
             
+            // Prepare social links JSON
+            $social_links = [];
+            if (!empty($_POST['facebook'])) $social_links['facebook'] = $_POST['facebook'];
+            if (!empty($_POST['twitter'])) $social_links['twitter'] = $_POST['twitter'];
+            if (!empty($_POST['instagram'])) $social_links['instagram'] = $_POST['instagram'];
+            if (!empty($_POST['linkedin'])) $social_links['linkedin'] = $_POST['linkedin'];
+            if (!empty($_POST['website'])) $social_links['website'] = $_POST['website'];
+            
+            $social_links_json = !empty($social_links) ? json_encode($social_links) : null;
+            
             $updateFields = [];
             $params = [];
             
             $allowedFields = [
-                'user_id', 'name', 'reg_number', 'role', 'role_order',
-                'department_id', 'program_id', 'academic_year',
-                'email', 'phone', 'bio', 'portfolio_description', 'status'
+                'name', 'type', 'description', 'established_date', 'meeting_schedule',
+                'meeting_location', 'faculty_advisor', 'advisor_contact', 'members_count',
+                'status', 'contact_person', 'contact_email', 'contact_phone',
+                'performance_notes', 'goals', 'achievements'
             ];
             
             foreach ($allowedFields as $field) {
                 if (isset($_POST[$field])) {
                     $updateFields[] = "$field = ?";
-                    $params[] = $_POST[$field] !== '' ? $_POST[$field] : null;
+                    $value = $_POST[$field] !== '' ? $_POST[$field] : null;
+                    $params[] = $value;
                 }
             }
             
-            if ($photo_url) {
-                $updateFields[] = "photo_url = ?";
-                $params[] = $photo_url;
+            if ($logo_url) {
+                $updateFields[] = "logo_url = ?";
+                $params[] = $logo_url;
+            }
+            
+            if ($social_links_json) {
+                $updateFields[] = "social_links = ?";
+                $params[] = $social_links_json;
             }
             
             $updateFields[] = "updated_at = NOW()";
-            $params[] = $member_id;
+            $params[] = $association_id;
             
-            $sql = "UPDATE committee_members SET " . implode(", ", $updateFields) . " WHERE id = ?";
+            $sql = "UPDATE associations SET " . implode(", ", $updateFields) . " WHERE id = ?";
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             
-            $message = "Committee member updated successfully!";
-            header("Location: committee.php?msg=" . urlencode($message));
+            $message = "Association updated successfully!";
+            header("Location: associations.php?msg=" . urlencode($message));
             exit();
         } catch (PDOException $e) {
-            $error = "Error updating committee member: " . $e->getMessage();
-            error_log("Committee member update error: " . $e->getMessage());
+            $error = "Error updating association: " . $e->getMessage();
+            error_log("Association update error: " . $e->getMessage());
         }
     }
     
@@ -178,140 +227,104 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             
             try {
                 if ($bulk_action === 'activate') {
-                    $stmt = $pdo->prepare("UPDATE committee_members SET status = 'active' WHERE id IN ($placeholders)");
+                    $stmt = $pdo->prepare("UPDATE associations SET status = 'active' WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " members activated.";
+                    $message = count($selected_ids) . " associations activated.";
                 } elseif ($bulk_action === 'deactivate') {
-                    $stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive' WHERE id IN ($placeholders)");
+                    $stmt = $pdo->prepare("UPDATE associations SET status = 'inactive' WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " members deactivated.";
+                    $message = count($selected_ids) . " associations deactivated.";
                 } elseif ($bulk_action === 'delete') {
-                    $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id IN ($placeholders)");
+                    // Get logos to delete
+                    $stmt = $pdo->prepare("SELECT logo_url FROM associations WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
-                    $members_to_delete = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                    foreach ($members_to_delete as $member) {
-                        if (!empty($member['photo_url'])) {
-                            $photo_path = '../' . $member['photo_url'];
-                            if (file_exists($photo_path)) {
-                                unlink($photo_path);
+                    $assocs_to_delete = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($assocs_to_delete as $assoc) {
+                        if (!empty($assoc['logo_url'])) {
+                            $logo_path = '../' . $assoc['logo_url'];
+                            if (file_exists($logo_path)) {
+                                unlink($logo_path);
                             }
                         }
                     }
                     
-                    $stmt = $pdo->prepare("DELETE FROM committee_members WHERE id IN ($placeholders)");
+                    $stmt = $pdo->prepare("DELETE FROM associations WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " members deleted.";
+                    $message = count($selected_ids) . " associations deleted.";
                 }
-                header("Location: committee.php?msg=" . urlencode($message));
+                header("Location: associations.php?msg=" . urlencode($message));
                 exit();
             } catch (PDOException $e) {
                 $error = "Error performing bulk action: " . $e->getMessage();
             }
         } else {
-            $error = "No members selected.";
+            $error = "No associations selected.";
         }
     }
 }
 
 // Handle Status Toggle
 if (isset($_GET['toggle_status']) && isset($_GET['id'])) {
-    $member_id = $_GET['id'];
+    $assoc_id = $_GET['id'];
     try {
-        $stmt = $pdo->prepare("SELECT status FROM committee_members WHERE id = ?");
-        $stmt->execute([$member_id]);
+        $stmt = $pdo->prepare("SELECT status FROM associations WHERE id = ?");
+        $stmt->execute([$assoc_id]);
         $current_status = $stmt->fetchColumn();
         
         $new_status = $current_status === 'active' ? 'inactive' : 'active';
-        $stmt = $pdo->prepare("UPDATE committee_members SET status = ? WHERE id = ?");
-        $stmt->execute([$new_status, $member_id]);
+        $stmt = $pdo->prepare("UPDATE associations SET status = ? WHERE id = ?");
+        $stmt->execute([$new_status, $assoc_id]);
         
-        $message = "Member status updated successfully!";
-        header("Location: committee.php?msg=" . urlencode($message));
+        $message = "Association status updated successfully!";
+        header("Location: associations.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
-        $error = "Error toggling member status: " . $e->getMessage();
+        $error = "Error toggling association status: " . $e->getMessage();
     }
 }
 
 // Handle Delete
 if (isset($_GET['delete']) && isset($_GET['id'])) {
-    $member_id = $_GET['id'];
+    $assoc_id = $_GET['id'];
     try {
-        $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id = ?");
-        $stmt->execute([$member_id]);
-        $member = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!empty($member['photo_url'])) {
-            $photo_path = '../' . $member['photo_url'];
-            if (file_exists($photo_path)) {
-                unlink($photo_path);
+        // Get logo to delete
+        $stmt = $pdo->prepare("SELECT logo_url FROM associations WHERE id = ?");
+        $stmt->execute([$assoc_id]);
+        $assoc = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!empty($assoc['logo_url'])) {
+            $logo_path = '../' . $assoc['logo_url'];
+            if (file_exists($logo_path)) {
+                unlink($logo_path);
             }
         }
         
-        $stmt = $pdo->prepare("DELETE FROM committee_members WHERE id = ?");
-        $stmt->execute([$member_id]);
-        $message = "Committee member deleted successfully!";
-        header("Location: committee.php?msg=" . urlencode($message));
+        $stmt = $pdo->prepare("DELETE FROM associations WHERE id = ?");
+        $stmt->execute([$assoc_id]);
+        $message = "Association deleted successfully!";
+        header("Location: associations.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
-        $error = "Error deleting committee member: " . $e->getMessage();
+        $error = "Error deleting association: " . $e->getMessage();
     }
 }
 
-// Get member for editing via AJAX
-if (isset($_GET['get_member']) && isset($_GET['id'])) {
+// Get association for editing via AJAX
+if (isset($_GET['get_association']) && isset($_GET['id'])) {
     header('Content-Type: application/json');
     try {
-        $stmt = $pdo->prepare("
-            SELECT cm.*, 
-                   d.name as department_name, 
-                   p.name as program_name
-            FROM committee_members cm
-            LEFT JOIN departments d ON cm.department_id = d.id
-            LEFT JOIN programs p ON cm.program_id = p.id
-            WHERE cm.id = ?
-        ");
+        $stmt = $pdo->prepare("SELECT * FROM associations WHERE id = ?");
         $stmt->execute([$_GET['id']]);
-        $member = $stmt->fetch(PDO::FETCH_ASSOC);
-        echo json_encode($member);
-    } catch (PDOException $e) {
-        echo json_encode(['error' => $e->getMessage()]);
-    }
-    exit();
-}
-
-// Get students for search via AJAX
-if (isset($_GET['search_students'])) {
-    header('Content-Type: application/json');
-    $search = $_GET['search'] ?? '';
-    
-    try {
-        $stmt = $pdo->prepare("
-            SELECT id, reg_number, full_name, email, phone, department_id, program_id 
-            FROM users 
-            WHERE role = 'student' 
-            AND status = 'active'
-            AND (full_name ILIKE ? OR reg_number ILIKE ? OR email ILIKE ?)
-            ORDER BY full_name ASC 
-            LIMIT 15
-        ");
-        $search_term = "%$search%";
-        $stmt->execute([$search_term, $search_term, $search_term]);
-        $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($students);
-    } catch (PDOException $e) {
-        echo json_encode(['error' => $e->getMessage()]);
-    }
-    exit();
-}
-
-// Get programs by department via AJAX
-if (isset($_GET['get_programs']) && isset($_GET['department_id'])) {
-    header('Content-Type: application/json');
-    try {
-        $stmt = $pdo->prepare("SELECT id, name FROM programs WHERE department_id = ? AND is_active = true ORDER BY name");
-        $stmt->execute([$_GET['department_id']]);
-        $programs_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($programs_list);
+        $association = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Decode social links
+        if (!empty($association['social_links'])) {
+            $social = json_decode($association['social_links'], true);
+            if (is_array($social)) {
+                $association = array_merge($association, $social);
+            }
+        }
+        
+        echo json_encode($association);
     } catch (PDOException $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
@@ -324,27 +337,24 @@ $limit = 12;
 $offset = ($page - 1) * $limit;
 
 $search = $_GET['search'] ?? '';
-$role_filter = $_GET['role'] ?? '';
+$type_filter = $_GET['type'] ?? '';
 $status_filter = $_GET['status'] ?? '';
-$department_filter = $_GET['department'] ?? '';
-$program_filter = $_GET['program'] ?? '';
 
 // Build WHERE clause
 $where_conditions = ["1=1"];
 $params = [];
 
 if (!empty($search)) {
-    $where_conditions[] = "(name ILIKE ? OR email ILIKE ? OR reg_number ILIKE ? OR role ILIKE ?)";
+    $where_conditions[] = "(name ILIKE ? OR description ILIKE ? OR contact_person ILIKE ?)";
     $search_term = "%$search%";
-    $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
 }
 
-if (!empty($role_filter)) {
-    $where_conditions[] = "role = ?";
-    $params[] = $role_filter;
+if (!empty($type_filter)) {
+    $where_conditions[] = "type = ?";
+    $params[] = $type_filter;
 }
 
 if (!empty($status_filter)) {
@@ -352,77 +362,58 @@ if (!empty($status_filter)) {
     $params[] = $status_filter;
 }
 
-if (!empty($department_filter)) {
-    $where_conditions[] = "department_id = ?";
-    $params[] = $department_filter;
-}
-
-if (!empty($program_filter)) {
-    $where_conditions[] = "program_id = ?";
-    $params[] = $program_filter;
-}
-
 $where_clause = implode(" AND ", $where_conditions);
 
 // Get total count
 try {
-    $count_sql = "SELECT COUNT(*) FROM committee_members WHERE $where_clause";
+    $count_sql = "SELECT COUNT(*) FROM associations WHERE $where_clause";
     $stmt = $pdo->prepare($count_sql);
     $stmt->execute($params);
-    $total_members = $stmt->fetchColumn();
-    $total_pages = ceil($total_members / $limit);
+    $total_associations = $stmt->fetchColumn();
+    $total_pages = ceil($total_associations / $limit);
 } catch (PDOException $e) {
-    $total_members = 0;
+    $total_associations = 0;
     $total_pages = 0;
 }
 
-// Get committee members with joins
+// Get associations with pagination
 try {
     $sql = "
-        SELECT cm.*, 
-               d.name as department_name, 
-               p.name as program_name
-        FROM committee_members cm
-        LEFT JOIN departments d ON cm.department_id = d.id
-        LEFT JOIN programs p ON cm.program_id = p.id
+        SELECT a.*, 
+               (SELECT COUNT(*) FROM association_members WHERE association_id = a.id) as actual_members_count
+        FROM associations a
         WHERE $where_clause
-        ORDER BY cm.role_order ASC, cm.name ASC
+        ORDER BY a.name ASC
         LIMIT $limit OFFSET $offset
     ";
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    $committee_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $associations = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    $committee_members = [];
+    $associations = [];
+    error_log("Association fetch error: " . $e->getMessage());
 }
 
 // Get statistics
 try {
-    $stmt = $pdo->query("SELECT status, COUNT(*) as count FROM committee_members GROUP BY status");
+    $stmt = $pdo->query("SELECT type, COUNT(*) as count FROM associations GROUP BY type");
+    $type_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    $stmt = $pdo->query("SELECT status, COUNT(*) as count FROM associations GROUP BY status");
     $status_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
+    $type_stats = [];
     $status_stats = [];
 }
 
-// Define available roles for dropdown
-$available_roles = [
-    'guild_president' => 'Guild President',
-    'vice_guild_academic' => 'Vice Guild President - Academic',
-    'vice_guild_finance' => 'Vice Guild President - Finance',
-    'general_secretary' => 'General Secretary',
-    'minister_sports' => 'Minister of Sports',
-    'minister_environment' => 'Minister of Environment',
-    'minister_public_relations' => 'Minister of Public Relations',
-    'minister_health' => 'Minister of Health',
-    'minister_culture' => 'Minister of Culture',
-    'minister_gender' => 'Minister of Gender',
-    'president_representative_board' => 'President - Rep Board',
-    'vice_president_representative_board' => 'Vice President - Rep Board',
-    'secretary_representative_board' => 'Secretary - Rep Board',
-    'president_arbitration' => 'President - Arbitration',
-    'vice_president_arbitration' => 'Vice President - Arbitration',
-    'advisor_arbitration' => 'Advisor - Arbitration',
-    'secretary_arbitration' => 'Secretary - Arbitration'
+// Association types
+$association_types = [
+    'religious' => 'Religious',
+    'cultural' => 'Cultural',
+    'academic' => 'Academic',
+    'sports' => 'Sports',
+    'social' => 'Social',
+    'other' => 'Other'
 ];
 
 // Get message from URL
@@ -435,7 +426,7 @@ if (isset($_GET['msg'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Committee Management - Isonga RPSU Admin</title>
+    <title>Associations Management - Isonga RPSU Admin</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -454,6 +445,8 @@ if (isset($_GET['msg'])) {
             --warning: #f59e0b;
             --danger: #ef4444;
             --info: #3b82f6;
+            --purple: #8b5cf6;
+            --pink: #ec489a;
             
             /* Light Mode Colors */
             --bg-primary: #f4f6f9;
@@ -721,18 +714,13 @@ if (isset($_GET['msg'])) {
             transform: translateY(-1px);
         }
 
-        .btn-success {
-            background: var(--success);
+        .btn-warning {
+            background: var(--warning);
             color: white;
         }
 
         .btn-danger {
             background: var(--danger);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
             color: white;
         }
 
@@ -827,30 +815,6 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
         }
 
-        /* View Toggle */
-        .view-toggle {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .view-btn {
-            padding: 0.4rem 0.8rem;
-            background: var(--bg-primary);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            cursor: pointer;
-            transition: var(--transition);
-            font-size: 0.75rem;
-            color: var(--text-primary);
-        }
-
-        .view-btn.active {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
-        }
-
         /* Bulk Actions */
         .bulk-actions-bar {
             background: var(--card-bg);
@@ -874,15 +838,15 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
         }
 
-        /* Committee Grid */
-        .committee-grid {
+        /* Associations Grid */
+        .associations-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 1.5rem;
             margin-top: 0.5rem;
         }
 
-        .member-card {
+        .association-card {
             background: var(--card-bg);
             border-radius: var(--border-radius);
             overflow: hidden;
@@ -891,34 +855,45 @@ if (isset($_GET['msg'])) {
             border: 1px solid var(--border-color);
         }
 
-        .member-card:hover {
+        .association-card:hover {
             transform: translateY(-3px);
             box-shadow: var(--shadow-md);
         }
 
-        .member-image {
-            height: 180px;
+        .association-header {
+            height: 120px;
             background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            position: relative;
             display: flex;
             align-items: center;
             justify-content: center;
-            position: relative;
-            overflow: hidden;
         }
 
-        .member-image img {
+        .association-logo {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: var(--card-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            border: 3px solid white;
+            box-shadow: var(--shadow-md);
+        }
+
+        .association-logo img {
             width: 100%;
             height: 100%;
             object-fit: cover;
-            object-position: center top;
         }
 
-        .member-image .placeholder {
-            font-size: 4rem;
-            color: rgba(255, 255, 255, 0.8);
+        .association-logo .placeholder {
+            font-size: 2.5rem;
+            color: var(--primary);
         }
 
-        .member-status {
+        .association-status {
             position: absolute;
             top: 12px;
             right: 12px;
@@ -930,27 +905,27 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
         }
 
-        .member-status.active {
+        .association-status.active {
             background: #d4edda;
             color: #155724;
         }
 
-        .member-status.inactive {
+        .association-status.inactive {
             background: #f8d7da;
             color: #721c24;
         }
 
-        body.dark-mode .member-status.active {
+        body.dark-mode .association-status.active {
             background: rgba(16, 185, 129, 0.2);
             color: var(--success);
         }
 
-        body.dark-mode .member-status.inactive {
+        body.dark-mode .association-status.inactive {
             background: rgba(239, 68, 68, 0.2);
             color: var(--danger);
         }
 
-        .member-checkbox-wrapper {
+        .association-checkbox-wrapper {
             position: absolute;
             top: 12px;
             left: 12px;
@@ -959,33 +934,35 @@ if (isset($_GET['msg'])) {
             padding: 4px;
         }
 
-        .member-checkbox {
+        .association-checkbox {
             width: 18px;
             height: 18px;
             cursor: pointer;
         }
 
-        .member-info {
+        .association-info {
             padding: 1rem;
         }
 
-        .member-name {
-            font-size: 1rem;
+        .association-name {
+            font-size: 1.1rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
         }
 
-        .member-role {
-            color: var(--primary);
-            font-size: 0.7rem;
+        .association-type {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
             font-weight: 600;
             margin-bottom: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            background: var(--bg-primary);
+            color: var(--primary);
         }
 
-        .member-details {
-            font-size: 0.7rem;
+        .association-details {
+            font-size: 0.75rem;
             color: var(--text-secondary);
             margin-bottom: 0.5rem;
             display: flex;
@@ -993,14 +970,13 @@ if (isset($_GET['msg'])) {
             gap: 0.5rem;
         }
 
-        .member-details i {
-            width: 14px;
+        .association-details i {
+            width: 16px;
             color: var(--primary);
-            font-size: 0.7rem;
         }
 
-        .member-bio {
-            font-size: 0.7rem;
+        .association-description {
+            font-size: 0.75rem;
             color: var(--text-secondary);
             margin: 0.75rem 0;
             line-height: 1.4;
@@ -1010,7 +986,24 @@ if (isset($_GET['msg'])) {
             overflow: hidden;
         }
 
-        .member-actions {
+        .association-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .association-meta span {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .association-actions {
             display: flex;
             gap: 0.5rem;
             margin-top: 0.75rem;
@@ -1019,7 +1012,7 @@ if (isset($_GET['msg'])) {
         }
 
         /* Table View */
-        .members-table-container {
+        .associations-table-container {
             background: var(--card-bg);
             border-radius: var(--border-radius);
             overflow-x: auto;
@@ -1027,20 +1020,20 @@ if (isset($_GET['msg'])) {
             box-shadow: var(--shadow);
         }
 
-        .members-table {
+        .associations-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.85rem;
         }
 
-        .members-table th,
-        .members-table td {
+        .associations-table th,
+        .associations-table td {
             padding: 0.75rem;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
         }
 
-        .members-table th {
+        .associations-table th {
             background: var(--bg-primary);
             font-weight: 600;
             font-size: 0.75rem;
@@ -1049,11 +1042,11 @@ if (isset($_GET['msg'])) {
             color: var(--text-secondary);
         }
 
-        .members-table tr:hover {
+        .associations-table tr:hover {
             background: var(--bg-primary);
         }
 
-        .member-avatar-sm {
+        .association-logo-sm {
             width: 40px;
             height: 40px;
             border-radius: 50%;
@@ -1066,6 +1059,20 @@ if (isset($_GET['msg'])) {
             font-weight: bold;
             font-size: 1rem;
         }
+
+        .type-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: inline-block;
+        }
+
+        .type-badge.religious { background: rgba(139, 92, 246, 0.1); color: var(--purple); }
+        .type-badge.cultural { background: rgba(236, 72, 153, 0.1); color: var(--pink); }
+        .type-badge.academic { background: rgba(59, 130, 246, 0.1); color: var(--info); }
+        .type-badge.sports { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+        .type-badge.social { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
 
         .status-badge {
             padding: 0.25rem 0.75rem;
@@ -1117,7 +1124,7 @@ if (isset($_GET['msg'])) {
             background: var(--card-bg);
             border-radius: var(--border-radius);
             width: 90%;
-            max-width: 900px;
+            max-width: 800px;
             max-height: 90vh;
             overflow-y: auto;
             padding: 1.5rem;
@@ -1201,46 +1208,6 @@ if (isset($_GET['msg'])) {
 
         .form-group small {
             font-size: 0.7rem;
-            color: var(--text-secondary);
-        }
-
-        .search-container {
-            position: relative;
-        }
-
-        .student-search-results {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            max-height: 250px;
-            overflow-y: auto;
-            z-index: 1001;
-            display: none;
-            box-shadow: var(--shadow-md);
-        }
-
-        .student-result-item {
-            padding: 0.6rem;
-            cursor: pointer;
-            border-bottom: 1px solid var(--border-color);
-            transition: background 0.2s;
-        }
-
-        .student-result-item:hover {
-            background: var(--bg-primary);
-        }
-
-        .student-result-name {
-            font-weight: 600;
-            font-size: 0.8rem;
-        }
-
-        .student-result-reg {
-            font-size: 0.65rem;
             color: var(--text-secondary);
         }
 
@@ -1400,7 +1367,7 @@ if (isset($_GET['msg'])) {
                 grid-template-columns: repeat(2, 1fr);
             }
             
-            .committee-grid {
+            .associations-grid {
                 grid-template-columns: 1fr;
             }
         }
@@ -1410,7 +1377,7 @@ if (isset($_GET['msg'])) {
                 grid-template-columns: 1fr;
             }
             
-            .action-buttons {
+            .association-actions {
                 flex-direction: column;
             }
             
@@ -1456,11 +1423,12 @@ if (isset($_GET['msg'])) {
             <ul class="sidebar-menu">
                 <li class="menu-item"><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
                 <li class="menu-item"><a href="users.php"><i class="fas fa-users"></i> User Management</a></li>
-                <li class="menu-item"><a href="committee.php" class="active"><i class="fas fa-user-tie"></i> Committee</a></li>
+                <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
                   <li class="menu-item"><a href="representative.php" class="active"><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
                 <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
+                <li class="menu-item"><a href="associations.php" class="active"><i class="fas fa-handshake"></i> Associations</a></li>
                 <li class="menu-item"><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
                 <li class="menu-item"><a href="arbitration.php"><i class="fas fa-balance-scale"></i> Arbitration</a></li>
                 <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i> Support Tickets</a></li>
@@ -1479,17 +1447,17 @@ if (isset($_GET['msg'])) {
             <?php endif; ?>
 
             <div class="page-header">
-                <h1><i class="fas fa-user-tie"></i> Committee Management</h1>
+                <h1><i class="fas fa-handshake"></i> Associations Management</h1>
                 <button class="btn btn-primary" onclick="openAddModal()">
-                    <i class="fas fa-plus"></i> Add Committee Member
+                    <i class="fas fa-plus"></i> Add Association
                 </button>
             </div>
 
             <!-- Statistics Cards -->
             <div class="stats-cards">
                 <div class="stat-card">
-                    <div class="stat-number"><?php echo $total_members; ?></div>
-                    <div class="stat-label">Total Members</div>
+                    <div class="stat-number"><?php echo $total_associations; ?></div>
+                    <div class="stat-label">Total Associations</div>
                 </div>
                 <?php foreach ($status_stats as $stat): ?>
                     <div class="stat-card">
@@ -1497,17 +1465,23 @@ if (isset($_GET['msg'])) {
                         <div class="stat-label"><?php echo ucfirst($stat['status']); ?></div>
                     </div>
                 <?php endforeach; ?>
+                <?php foreach (array_slice($type_stats, 0, 2) as $stat): ?>
+                    <div class="stat-card">
+                        <div class="stat-number"><?php echo $stat['count']; ?></div>
+                        <div class="stat-label"><?php echo ucfirst($stat['type']); ?></div>
+                    </div>
+                <?php endforeach; ?>
             </div>
 
             <!-- Filters -->
             <form method="GET" action="" class="filters-bar">
                 <div class="filter-group">
-                    <label>Role:</label>
-                    <select name="role" onchange="this.form.submit()">
-                        <option value="">All Roles</option>
-                        <?php foreach ($available_roles as $key => $role_name): ?>
-                            <option value="<?php echo $key; ?>" <?php echo $role_filter === $key ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($role_name); ?>
+                    <label>Type:</label>
+                    <select name="type" onchange="this.form.submit()">
+                        <option value="">All Types</option>
+                        <?php foreach ($association_types as $key => $type_name): ?>
+                            <option value="<?php echo $key; ?>" <?php echo $type_filter === $key ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($type_name); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -1520,57 +1494,14 @@ if (isset($_GET['msg'])) {
                         <option value="inactive" <?php echo $status_filter === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
                     </select>
                 </div>
-                <div class="filter-group">
-                    <label>Department:</label>
-                    <select name="department" onchange="this.form.submit()">
-                        <option value="">All Departments</option>
-                        <?php foreach ($departments as $dept): ?>
-                            <option value="<?php echo $dept['id']; ?>" <?php echo $department_filter == $dept['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($dept['name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Program:</label>
-                    <select name="program" id="program_filter" onchange="this.form.submit()">
-                        <option value="">All Programs</option>
-                        <?php 
-                        // Get programs for filter
-                        try {
-                            $stmt = $pdo->query("SELECT id, name FROM programs WHERE is_active = true ORDER BY name");
-                            $filter_programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                            foreach ($filter_programs as $prog): 
-                        ?>
-                            <option value="<?php echo $prog['id']; ?>" <?php echo $program_filter == $prog['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($prog['name']); ?>
-                            </option>
-                        <?php 
-                            endforeach;
-                        } catch (PDOException $e) {
-                            // Silently fail
-                        }
-                        ?>
-                    </select>
-                </div>
                 <div class="search-box">
-                    <input type="text" name="search" placeholder="Search by name, email..." value="<?php echo htmlspecialchars($search); ?>">
+                    <input type="text" name="search" placeholder="Search by name, contact person..." value="<?php echo htmlspecialchars($search); ?>">
                     <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i></button>
-                    <?php if ($search || $role_filter || $status_filter || $department_filter || $program_filter): ?>
-                        <a href="committee.php" class="btn btn-sm">Clear</a>
+                    <?php if ($search || $type_filter || $status_filter): ?>
+                        <a href="associations.php" class="btn btn-sm">Clear</a>
                     <?php endif; ?>
                 </div>
             </form>
-
-            <!-- View Toggle -->
-            <div class="view-toggle">
-                <button class="view-btn active" onclick="toggleView('grid')" id="gridViewBtn">
-                    <i class="fas fa-th-large"></i> Grid View
-                </button>
-                <button class="view-btn" onclick="toggleView('table')" id="tableViewBtn">
-                    <i class="fas fa-table"></i> Table View
-                </button>
-            </div>
 
             <!-- Bulk Actions -->
             <form method="POST" action="" id="bulkForm">
@@ -1586,70 +1517,67 @@ if (isset($_GET['msg'])) {
                 </div>
 
                 <!-- Grid View -->
-                <div id="gridView" class="committee-grid">
-                    <?php if (empty($committee_members)): ?>
+                <div id="gridView" class="associations-grid">
+                    <?php if (empty($associations)): ?>
                         <div class="empty-state" style="grid-column: 1/-1;">
-                            <i class="fas fa-user-tie"></i>
-                            <h3>No committee members found</h3>
-                            <p>Click "Add Committee Member" to create one.</p>
+                            <i class="fas fa-handshake"></i>
+                            <h3>No associations found</h3>
+                            <p>Click "Add Association" to create one.</p>
                         </div>
                     <?php else: ?>
-                        <?php foreach ($committee_members as $member): ?>
-                            <div class="member-card">
-                                <div class="member-image">
-                                    <?php if (!empty($member['photo_url']) && file_exists('../' . $member['photo_url'])): ?>
-                                        <img src="../<?php echo htmlspecialchars($member['photo_url']); ?>" alt="<?php echo htmlspecialchars($member['name']); ?>">
-                                    <?php else: ?>
-                                        <div class="placeholder">
-                                            <i class="fas fa-user-circle"></i>
-                                        </div>
-                                    <?php endif; ?>
-                                    <div class="member-status <?php echo $member['status']; ?>">
-                                        <?php echo ucfirst($member['status']); ?>
+                        <?php foreach ($associations as $assoc): ?>
+                            <div class="association-card">
+                                <div class="association-header">
+                                    <div class="association-logo">
+                                        <?php if (!empty($assoc['logo_url']) && file_exists('../' . $assoc['logo_url'])): ?>
+                                            <img src="../<?php echo htmlspecialchars($assoc['logo_url']); ?>" alt="<?php echo htmlspecialchars($assoc['name']); ?>">
+                                        <?php else: ?>
+                                            <div class="placeholder">
+                                                <i class="fas fa-handshake"></i>
+                                            </div>
+                                        <?php endif; ?>
                                     </div>
-                                    <div class="member-checkbox-wrapper">
-                                        <input type="checkbox" name="selected_ids[]" value="<?php echo $member['id']; ?>" class="member-checkbox">
+                                    <div class="association-status <?php echo $assoc['status']; ?>">
+                                        <?php echo ucfirst($assoc['status']); ?>
+                                    </div>
+                                    <div class="association-checkbox-wrapper">
+                                        <input type="checkbox" name="selected_ids[]" value="<?php echo $assoc['id']; ?>" class="association-checkbox">
                                     </div>
                                 </div>
-                                <div class="member-info">
-                                    <h3 class="member-name"><?php echo htmlspecialchars($member['name']); ?></h3>
-                                    <div class="member-role">
-                                        <?php 
-                                            $role_display = $available_roles[$member['role']] ?? str_replace('_', ' ', ucfirst($member['role']));
-                                            echo htmlspecialchars($role_display);
-                                        ?>
+                                <div class="association-info">
+                                    <h3 class="association-name"><?php echo htmlspecialchars($assoc['name']); ?></h3>
+                                    <span class="association-type">
+                                        <?php echo $association_types[$assoc['type']] ?? ucfirst($assoc['type']); ?>
+                                    </span>
+                                    <?php if (!empty($assoc['established_date'])): ?>
+                                        <div class="association-details">
+                                            <i class="fas fa-calendar-alt"></i> Est. <?php echo date('Y', strtotime($assoc['established_date'])); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if (!empty($assoc['contact_person'])): ?>
+                                        <div class="association-details">
+                                            <i class="fas fa-user"></i> <?php echo htmlspecialchars($assoc['contact_person']); ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if (!empty($assoc['description'])): ?>
+                                        <div class="association-description">
+                                            <?php echo htmlspecialchars(substr($assoc['description'], 0, 100)); ?>...
+                                        </div>
+                                    <?php endif; ?>
+                                    <div class="association-meta">
+                                        <span><i class="fas fa-users"></i> <?php echo $assoc['actual_members_count'] ?? $assoc['members_count']; ?> members</span>
+                                        <?php if (!empty($assoc['meeting_schedule'])): ?>
+                                            <span><i class="fas fa-calendar-week"></i> Weekly</span>
+                                        <?php endif; ?>
                                     </div>
-                                    <?php if (!empty($member['reg_number'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-id-card"></i> <?php echo htmlspecialchars($member['reg_number']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['email'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-envelope"></i> <?php echo htmlspecialchars($member['email']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['department_name'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-building"></i> <?php echo htmlspecialchars($member['department_name']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['program_name'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-graduation-cap"></i> <?php echo htmlspecialchars($member['program_name']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['bio'])): ?>
-                                        <div class="member-bio"><?php echo htmlspecialchars(substr($member['bio'], 0, 80)); ?>...</div>
-                                    <?php endif; ?>
-                                    <div class="member-actions">
-                                        <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)">
+                                    <div class="association-actions">
+                                        <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $assoc['id']; ?>)">
                                             <i class="fas fa-edit"></i> Edit
                                         </button>
-                                        <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle member status?')">
+                                        <a href="?toggle_status=1&id=<?php echo $assoc['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle association status?')">
                                             <i class="fas fa-toggle-on"></i>
                                         </a>
-                                        <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this member?')">
+                                        <a href="?delete=1&id=<?php echo $assoc['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this association?')">
                                             <i class="fas fa-trash"></i>
                                         </a>
                                     </div>
@@ -1660,59 +1588,59 @@ if (isset($_GET['msg'])) {
                 </div>
 
                 <!-- Table View -->
-                <div id="tableView" class="members-table-container" style="display: none;">
-                    <table class="members-table">
+                <div id="tableView" class="associations-table-container" style="display: none;">
+                    <table class="associations-table">
                         <thead>
                             <tr>
                                 <th><input type="checkbox" class="select-all" onclick="toggleAll(this)"></th>
-                                <th>Photo</th>
+                                <th>Logo</th>
                                 <th>Name</th>
-                                <th>Reg Number</th>
-                                <th>Role</th>
-                                <th>Department</th>
-                                <th>Program</th>
+                                <th>Type</th>
+                                <th>Contact Person</th>
+                                <th>Members</th>
                                 <th>Status</th>
+                                <th>Established</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php if (empty($committee_members)): ?>
+                            <?php if (empty($associations)): ?>
                                 <tr>
                                     <td colspan="9">
                                         <div class="empty-state">
-                                            <i class="fas fa-user-tie"></i>
-                                            <h3>No committee members found</h3>
-                                            <p>Click "Add Committee Member" to create one.</p>
+                                            <i class="fas fa-handshake"></i>
+                                            <h3>No associations found</h3>
+                                            <p>Click "Add Association" to create one.</p>
                                         </div>
                                     </td>
                                 </tr>
                             <?php else: ?>
-                                <?php foreach ($committee_members as $member): ?>
+                                <?php foreach ($associations as $assoc): ?>
                                     <tr>
-                                        <td><input type="checkbox" name="selected_ids[]" value="<?php echo $member['id']; ?>" class="member-checkbox"></td>
+                                        <td><input type="checkbox" name="selected_ids[]" value="<?php echo $assoc['id']; ?>" class="association-checkbox"></td>
                                         <td>
-                                            <?php if (!empty($member['photo_url']) && file_exists('../' . $member['photo_url'])): ?>
-                                                <img src="../<?php echo htmlspecialchars($member['photo_url']); ?>" class="member-avatar-sm" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
+                                            <?php if (!empty($assoc['logo_url']) && file_exists('../' . $assoc['logo_url'])): ?>
+                                                <img src="../<?php echo htmlspecialchars($assoc['logo_url']); ?>" class="association-logo-sm" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
                                             <?php else: ?>
-                                                <div class="member-avatar-sm" style="background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);">
-                                                    <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
+                                                <div class="association-logo-sm" style="background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);">
+                                                    <i class="fas fa-handshake"></i>
                                                 </div>
                                             <?php endif; ?>
                                         </td>
-                                        <td><strong><?php echo htmlspecialchars($member['name']); ?></strong></td>
-                                        <td><?php echo htmlspecialchars($member['reg_number'] ?? '-'); ?></td>
-                                        <td><?php echo htmlspecialchars($available_roles[$member['role']] ?? str_replace('_', ' ', ucfirst($member['role']))); ?></td>
-                                        <td><?php echo htmlspecialchars($member['department_name'] ?? '-'); ?></td>
-                                        <td><?php echo htmlspecialchars($member['program_name'] ?? '-'); ?></td>
-                                        <td><span class="status-badge <?php echo $member['status']; ?>"><?php echo ucfirst($member['status']); ?></span></td>
+                                        <td><strong><?php echo htmlspecialchars($assoc['name']); ?></strong></td>
+                                        <td><span class="type-badge <?php echo $assoc['type']; ?>"><?php echo $association_types[$assoc['type']] ?? ucfirst($assoc['type']); ?></span></td>
+                                        <td><?php echo htmlspecialchars($assoc['contact_person'] ?? '-'); ?></td>
+                                        <td><?php echo $assoc['actual_members_count'] ?? $assoc['members_count']; ?></td>
+                                        <td><span class="status-badge <?php echo $assoc['status']; ?>"><?php echo ucfirst($assoc['status']); ?></span></td>
+                                        <td><?php echo $assoc['established_date'] ? date('Y', strtotime($assoc['established_date'])) : '-'; ?></td>
                                         <td class="action-buttons">
-                                            <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)">
+                                            <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $assoc['id']; ?>)">
                                                 <i class="fas fa-edit"></i>
                                             </button>
-                                            <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')">
+                                            <a href="?toggle_status=1&id=<?php echo $assoc['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')">
                                                 <i class="fas fa-toggle-on"></i>
                                             </a>
-                                            <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')">
+                                            <a href="?delete=1&id=<?php echo $assoc['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')">
                                                 <i class="fas fa-trash"></i>
                                             </a>
                                         </td>
@@ -1724,24 +1652,34 @@ if (isset($_GET['msg'])) {
                 </div>
             </form>
 
+            <!-- View Toggle -->
+            <div class="view-toggle" style="margin-top: 1rem;">
+                <button class="view-btn active" onclick="toggleView('grid')" id="gridViewBtn">
+                    <i class="fas fa-th-large"></i> Grid View
+                </button>
+                <button class="view-btn" onclick="toggleView('table')" id="tableViewBtn">
+                    <i class="fas fa-table"></i> Table View
+                </button>
+            </div>
+
             <!-- Pagination -->
             <?php if ($total_pages > 1): ?>
                 <div class="pagination">
                     <?php if ($page > 1): ?>
-                        <a href="?page=<?php echo $page-1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>&department=<?php echo $department_filter; ?>&program=<?php echo $program_filter; ?>">
+                        <a href="?page=<?php echo $page-1; ?>&search=<?php echo urlencode($search); ?>&type=<?php echo $type_filter; ?>&status=<?php echo $status_filter; ?>">
                             <i class="fas fa-chevron-left"></i> Previous
                         </a>
                     <?php endif; ?>
                     
                     <?php for ($i = max(1, $page-2); $i <= min($total_pages, $page+2); $i++): ?>
-                        <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>&department=<?php echo $department_filter; ?>&program=<?php echo $program_filter; ?>" 
+                        <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&type=<?php echo $type_filter; ?>&status=<?php echo $status_filter; ?>" 
                            class="<?php echo $i == $page ? 'active' : ''; ?>">
                             <?php echo $i; ?>
                         </a>
                     <?php endfor; ?>
                     
                     <?php if ($page < $total_pages): ?>
-                        <a href="?page=<?php echo $page+1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>&department=<?php echo $department_filter; ?>&program=<?php echo $program_filter; ?>">
+                        <a href="?page=<?php echo $page+1; ?>&search=<?php echo urlencode($search); ?>&type=<?php echo $type_filter; ?>&status=<?php echo $status_filter; ?>">
                             Next <i class="fas fa-chevron-right"></i>
                         </a>
                     <?php endif; ?>
@@ -1750,90 +1688,70 @@ if (isset($_GET['msg'])) {
         </main>
     </div>
 
-    <!-- Add/Edit Member Modal -->
-    <div id="memberModal" class="modal">
+    <!-- Add/Edit Association Modal -->
+    <div id="associationModal" class="modal">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
-                <h2 id="modalTitle">Add Committee Member</h2>
+                <h2 id="modalTitle">Add Association</h2>
                 <button class="close-modal" onclick="closeModal()">&times;</button>
             </div>
-            <form method="POST" action="" id="memberForm" enctype="multipart/form-data">
+            <form method="POST" action="" id="associationForm" enctype="multipart/form-data">
                 <input type="hidden" name="action" id="formAction" value="add">
-                <input type="hidden" name="member_id" id="memberId" value="">
-                <input type="hidden" name="user_id" id="user_id" value="">
+                <input type="hidden" name="association_id" id="associationId" value="">
                 
                 <div class="form-grid">
-                    <div class="form-group full-width">
-                        <label>Search Student</label>
-                        <div class="search-container">
-                            <input type="text" id="studentSearch" class="search-input" placeholder="Type reg number or name to search..." autocomplete="off">
-                            <div id="studentSearchResults" class="student-search-results"></div>
-                        </div>
-                        <small>Search for existing students to auto-fill their information</small>
-                    </div>
-                    
                     <div class="form-group">
-                        <label>Full Name *</label>
+                        <label>Association Name *</label>
                         <input type="text" name="name" id="name" required>
                     </div>
                     <div class="form-group">
-                        <label>Registration Number</label>
-                        <input type="text" name="reg_number" id="reg_number">
-                    </div>
-                    <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" name="email" id="email">
-                    </div>
-                    <div class="form-group">
-                        <label>Phone</label>
-                        <input type="text" name="phone" id="phone">
-                    </div>
-                    <div class="form-group">
-                        <label>Role *</label>
-                        <select name="role" id="role" required>
-                            <option value="">Select Role</option>
-                            <?php foreach ($available_roles as $key => $role_name): ?>
-                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($role_name); ?></option>
+                        <label>Type *</label>
+                        <select name="type" id="type" required>
+                            <option value="">Select Type</option>
+                            <?php foreach ($association_types as $key => $type_name): ?>
+                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($type_name); ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>Role Order</label>
-                        <input type="number" name="role_order" id="role_order" value="0">
+                        <label>Established Date</label>
+                        <input type="date" name="established_date" id="established_date">
                     </div>
                     <div class="form-group">
-                        <label>Department</label>
-                        <select name="department_id" id="department_id">
-                            <option value="">Select Department</option>
-                            <?php foreach ($departments as $dept): ?>
-                                <option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['name']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Program</label>
-                        <select name="program_id" id="program_id">
-                            <option value="">Select Program</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Academic Year</label>
-                        <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
+                        <label>Members Count</label>
+                        <input type="number" name="members_count" id="members_count" value="0">
                     </div>
                     <div class="form-group full-width">
-                        <label>Bio</label>
-                        <textarea name="bio" id="bio" rows="2" placeholder="Brief biography..."></textarea>
-                    </div>
-                    <div class="form-group full-width">
-                        <label>Portfolio Description</label>
-                        <textarea name="portfolio_description" id="portfolio_description" rows="2" placeholder="Responsibilities..."></textarea>
+                        <label>Description</label>
+                        <textarea name="description" id="description" rows="3" placeholder="Brief description of the association..."></textarea>
                     </div>
                     <div class="form-group">
-                        <label>Profile Photo</label>
-                        <input type="file" name="photo" id="photo" accept="image/*" onchange="previewImage(this)">
-                        <div id="imagePreview" class="image-preview" style="display: none;">
-                            <img id="previewImg" src="" alt="Preview">
-                        </div>
+                        <label>Meeting Schedule</label>
+                        <input type="text" name="meeting_schedule" id="meeting_schedule" placeholder="e.g., Every Friday, 2:00 PM">
+                    </div>
+                    <div class="form-group">
+                        <label>Meeting Location</label>
+                        <input type="text" name="meeting_location" id="meeting_location" placeholder="e.g., Room A-101">
+                    </div>
+                    <div class="form-group">
+                        <label>Faculty Advisor</label>
+                        <input type="text" name="faculty_advisor" id="faculty_advisor">
+                    </div>
+                    <div class="form-group">
+                        <label>Advisor Contact</label>
+                        <input type="text" name="advisor_contact" id="advisor_contact">
+                    </div>
+                    <div class="form-group">
+                        <label>Contact Person</label>
+                        <input type="text" name="contact_person" id="contact_person">
+                    </div>
+                    <div class="form-group">
+                        <label>Contact Email</label>
+                        <input type="email" name="contact_email" id="contact_email">
+                    </div>
+                    <div class="form-group">
+                        <label>Contact Phone</label>
+                        <input type="text" name="contact_phone" id="contact_phone">
                     </div>
                     <div class="form-group">
                         <label>Status</label>
@@ -1842,11 +1760,48 @@ if (isset($_GET['msg'])) {
                             <option value="inactive">Inactive</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label>Logo</label>
+                        <input type="file" name="logo" id="logo" accept="image/*" onchange="previewImage(this)">
+                        <div id="imagePreview" class="image-preview" style="display: none;">
+                            <img id="previewImg" src="" alt="Preview">
+                        </div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Social Links</label>
+                        <div class="form-group">
+                            <input type="url" name="facebook" id="facebook" placeholder="Facebook URL">
+                        </div>
+                        <div class="form-group">
+                            <input type="url" name="twitter" id="twitter" placeholder="Twitter URL">
+                        </div>
+                        <div class="form-group">
+                            <input type="url" name="instagram" id="instagram" placeholder="Instagram URL">
+                        </div>
+                        <div class="form-group">
+                            <input type="url" name="linkedin" id="linkedin" placeholder="LinkedIn URL">
+                        </div>
+                        <div class="form-group">
+                            <input type="url" name="website" id="website" placeholder="Website URL">
+                        </div>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Goals & Objectives</label>
+                        <textarea name="goals" id="goals" rows="2" placeholder="Association goals and objectives..."></textarea>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Achievements</label>
+                        <textarea name="achievements" id="achievements" rows="2" placeholder="Notable achievements..."></textarea>
+                    </div>
+                    <div class="form-group full-width">
+                        <label>Performance Notes</label>
+                        <textarea name="performance_notes" id="performance_notes" rows="2" placeholder="Performance notes..."></textarea>
+                    </div>
                 </div>
                 
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Member</button>
+                    <button type="submit" class="btn btn-primary">Save Association</button>
                 </div>
             </form>
         </div>
@@ -1897,99 +1852,71 @@ if (isset($_GET['msg'])) {
         
         // Modal functions
         function openAddModal() {
-            document.getElementById('modalTitle').textContent = 'Add Committee Member';
+            document.getElementById('modalTitle').textContent = 'Add Association';
             document.getElementById('formAction').value = 'add';
-            document.getElementById('memberId').value = '';
-            document.getElementById('memberForm').reset();
+            document.getElementById('associationId').value = '';
+            document.getElementById('associationForm').reset();
             document.getElementById('imagePreview').style.display = 'none';
-            document.getElementById('studentSearch').value = '';
-            document.getElementById('user_id').value = '';
-            document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
-            document.getElementById('memberModal').classList.add('active');
+            document.getElementById('associationModal').classList.add('active');
             document.body.classList.add('modal-open');
         }
         
-        function openEditModal(memberId) {
-            fetch(`committee.php?get_member=1&id=${memberId}`)
+        function openEditModal(assocId) {
+            fetch(`associations.php?get_association=1&id=${assocId}`)
                 .then(response => response.json())
-                .then(member => {
-                    if (member.error) {
-                        alert('Error loading member data');
+                .then(assoc => {
+                    if (assoc.error) {
+                        alert('Error loading association data');
                         return;
                     }
                     
-                    document.getElementById('modalTitle').textContent = 'Edit Committee Member';
+                    document.getElementById('modalTitle').textContent = 'Edit Association';
                     document.getElementById('formAction').value = 'edit';
-                    document.getElementById('memberId').value = member.id;
-                    document.getElementById('name').value = member.name || '';
-                    document.getElementById('reg_number').value = member.reg_number || '';
-                    document.getElementById('email').value = member.email || '';
-                    document.getElementById('phone').value = member.phone || '';
-                    document.getElementById('role').value = member.role;
-                    document.getElementById('role_order').value = member.role_order || 0;
-                    document.getElementById('department_id').value = member.department_id || '';
-                    document.getElementById('academic_year').value = member.academic_year || '';
-                    document.getElementById('bio').value = member.bio || '';
-                    document.getElementById('portfolio_description').value = member.portfolio_description || '';
-                    document.getElementById('status').value = member.status;
-                    document.getElementById('user_id').value = member.user_id || '';
+                    document.getElementById('associationId').value = assoc.id;
+                    document.getElementById('name').value = assoc.name || '';
+                    document.getElementById('type').value = assoc.type || '';
+                    document.getElementById('description').value = assoc.description || '';
+                    document.getElementById('established_date').value = assoc.established_date || '';
+                    document.getElementById('meeting_schedule').value = assoc.meeting_schedule || '';
+                    document.getElementById('meeting_location').value = assoc.meeting_location || '';
+                    document.getElementById('faculty_advisor').value = assoc.faculty_advisor || '';
+                    document.getElementById('advisor_contact').value = assoc.advisor_contact || '';
+                    document.getElementById('members_count').value = assoc.members_count || 0;
+                    document.getElementById('contact_person').value = assoc.contact_person || '';
+                    document.getElementById('contact_email').value = assoc.contact_email || '';
+                    document.getElementById('contact_phone').value = assoc.contact_phone || '';
+                    document.getElementById('status').value = assoc.status || 'active';
+                    document.getElementById('goals').value = assoc.goals || '';
+                    document.getElementById('achievements').value = assoc.achievements || '';
+                    document.getElementById('performance_notes').value = assoc.performance_notes || '';
+                    document.getElementById('facebook').value = assoc.facebook || '';
+                    document.getElementById('twitter').value = assoc.twitter || '';
+                    document.getElementById('instagram').value = assoc.instagram || '';
+                    document.getElementById('linkedin').value = assoc.linkedin || '';
+                    document.getElementById('website').value = assoc.website || '';
                     
-                    if (member.department_id) {
-                        loadPrograms(member.department_id, member.program_id);
-                    } else {
-                        document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
-                    }
-                    
-                    if (member.photo_url && member.photo_url !== 'null') {
+                    if (assoc.logo_url && assoc.logo_url !== 'null') {
                         const preview = document.getElementById('imagePreview');
                         const previewImg = document.getElementById('previewImg');
-                        previewImg.src = '../' + member.photo_url;
+                        previewImg.src = '../' + assoc.logo_url;
                         preview.style.display = 'block';
                     } else {
                         document.getElementById('imagePreview').style.display = 'none';
                     }
                     
-                    document.getElementById('memberModal').classList.add('active');
+                    document.getElementById('associationModal').classList.add('active');
                     document.body.classList.add('modal-open');
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    alert('Error loading member data');
+                    alert('Error loading association data');
                 });
         }
         
         function closeModal() {
-            document.getElementById('memberModal').classList.remove('active');
+            document.getElementById('associationModal').classList.remove('active');
             document.body.classList.remove('modal-open');
         }
-        
-        // Load programs based on department
-        function loadPrograms(departmentId, selectedProgramId = null) {
-            if (!departmentId) {
-                document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
-                return;
-            }
-            
-            fetch(`committee.php?get_programs=1&department_id=${departmentId}`)
-                .then(response => response.json())
-                .then(programs => {
-                    let options = '<option value="">Select Program</option>';
-                    if (!programs.error && programs.length > 0) {
-                        programs.forEach(program => {
-                            const selected = selectedProgramId == program.id ? 'selected' : '';
-                            options += `<option value="${program.id}" ${selected}>${escapeHtml(program.name)}</option>`;
-                        });
-                    }
-                    document.getElementById('program_id').innerHTML = options;
-                })
-                .catch(error => {
-                    console.error('Error loading programs:', error);
-                });
-        }
-        
-        document.getElementById('department_id').addEventListener('change', function() {
-            loadPrograms(this.value);
-        });
         
         // Image preview - circular
         function previewImage(input) {
@@ -2008,86 +1935,15 @@ if (isset($_GET['msg'])) {
             }
         }
         
-        // Student search
-        let searchTimeout;
-        const studentSearch = document.getElementById('studentSearch');
-        const searchResults = document.getElementById('studentSearchResults');
-        
-        if (studentSearch) {
-            studentSearch.addEventListener('input', function() {
-                clearTimeout(searchTimeout);
-                const query = this.value.trim();
-                
-                if (query.length < 2) {
-                    searchResults.style.display = 'none';
-                    return;
-                }
-                
-                searchTimeout = setTimeout(() => {
-                    fetch(`committee.php?search_students=1&search=${encodeURIComponent(query)}`)
-                        .then(response => response.json())
-                        .then(students => {
-                            if (students.error || students.length === 0) {
-                                searchResults.innerHTML = '<div class="student-result-item">No students found</div>';
-                                searchResults.style.display = 'block';
-                                return;
-                            }
-                            
-                            let html = '';
-                            students.forEach(student => {
-                                html += `
-                                    <div class="student-result-item" onclick="selectStudent(${student.id}, '${escapeHtml(student.full_name)}', '${escapeHtml(student.reg_number || '')}', '${escapeHtml(student.email || '')}', '${escapeHtml(student.phone || '')}', ${student.department_id || 'null'}, ${student.program_id || 'null'})">
-                                        <div class="student-result-name">${escapeHtml(student.full_name)}</div>
-                                        <div class="student-result-reg">${escapeHtml(student.reg_number || 'No reg number')} | ${escapeHtml(student.email || 'No email')}</div>
-                                    </div>
-                                `;
-                            });
-                            searchResults.innerHTML = html;
-                            searchResults.style.display = 'block';
-                        });
-                }, 300);
-            });
-        }
-        
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        function selectStudent(userId, fullName, regNumber, email, phone, departmentId, programId) {
-            document.getElementById('name').value = fullName;
-            document.getElementById('reg_number').value = regNumber;
-            document.getElementById('email').value = email;
-            document.getElementById('phone').value = phone;
-            document.getElementById('user_id').value = userId;
-            
-            if (departmentId && departmentId !== 'null') {
-                document.getElementById('department_id').value = departmentId;
-                loadPrograms(departmentId, programId !== 'null' ? programId : null);
-            }
-            
-            studentSearch.value = fullName;
-            searchResults.style.display = 'none';
-        }
-        
-        // Close search results when clicking outside
-        document.addEventListener('click', function(event) {
-            if (studentSearch && !studentSearch.contains(event.target) && searchResults && !searchResults.contains(event.target)) {
-                if (searchResults) searchResults.style.display = 'none';
-            }
-        });
-        
         // Bulk actions
         function toggleAll(source) {
-            const checkboxes = document.querySelectorAll('.member-checkbox');
+            const checkboxes = document.querySelectorAll('.association-checkbox');
             checkboxes.forEach(cb => cb.checked = source.checked);
         }
         
         function confirmBulk() {
             const action = document.getElementById('bulk_action').value;
-            const checked = document.querySelectorAll('.member-checkbox:checked').length;
+            const checked = document.querySelectorAll('.association-checkbox:checked').length;
             
             if (!action) {
                 alert('Please select an action');
@@ -2095,16 +1951,16 @@ if (isset($_GET['msg'])) {
             }
             
             if (checked === 0) {
-                alert('Please select at least one member');
+                alert('Please select at least one association');
                 return false;
             }
             
-            return confirm(`Are you sure you want to ${action} ${checked} member(s)?`);
+            return confirm(`Are you sure you want to ${action} ${checked} association(s)?`);
         }
         
         // Close modal on outside click
         window.onclick = function(event) {
-            const modal = document.getElementById('memberModal');
+            const modal = document.getElementById('associationModal');
             if (event.target === modal) {
                 closeModal();
             }

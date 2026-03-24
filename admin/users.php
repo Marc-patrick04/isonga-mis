@@ -8,31 +8,48 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     exit();
 }
 
+$user_id = $_SESSION['user_id'];
+
+// Get user profile data
+try {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $current_admin = $stmt->fetch(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $current_admin = [];
+}
+
 // Handle user actions (add, edit, delete, status toggle)
-$action = $_GET['action'] ?? 'list';
 $message = '';
 $error = '';
 
-// Get departments and programs for dropdowns
+// Get departments for dropdowns
 try {
-    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = 1 ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
     $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    $stmt = $pdo->query("SELECT id, name, department_id FROM programs WHERE is_active = 1 ORDER BY name");
-    $programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $departments = [];
-    $programs = [];
-    error_log("Error fetching departments/programs: " . $e->getMessage());
+    error_log("Error fetching departments: " . $e->getMessage());
 }
 
 // Handle Add User
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
         try {
-            // Generate username from email or reg_number if not provided
-            $username = !empty($_POST['username']) ? $_POST['username'] : explode('@', $_POST['email'])[0];
+            $username = !empty($_POST['username']) ? trim($_POST['username']) : explode('@', $_POST['email'])[0];
             $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+            
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ? AND deleted_at IS NULL");
+            $stmt->execute([$username]);
+            if ($stmt->fetch()) {
+                throw new Exception("Username '$username' already exists.");
+            }
+            
+            $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND deleted_at IS NULL");
+            $stmt->execute([$_POST['email']]);
+            if ($stmt->fetch()) {
+                throw new Exception("Email '{$_POST['email']}' already exists.");
+            }
             
             $stmt = $pdo->prepare("
                 INSERT INTO users (
@@ -40,9 +57,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     date_of_birth, gender, bio, address, emergency_contact_name, 
                     emergency_contact_phone, email_notifications, sms_notifications, 
                     preferred_language, theme_preference, two_factor_enabled, 
-                    academic_year, is_class_rep, status, created_by
+                    academic_year, is_class_rep, department_id, program_id, status, created_by, created_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW()
                 )
             ");
             
@@ -67,11 +84,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 isset($_POST['two_factor_enabled']) ? 1 : 0,
                 $_POST['academic_year'] ?? null,
                 isset($_POST['is_class_rep']) ? 1 : 0,
-                'active',
+                !empty($_POST['department_id']) ? $_POST['department_id'] : null,
+                !empty($_POST['program_id']) ? $_POST['program_id'] : null,
                 $_SESSION['user_id']
             ]);
             
             $message = "User created successfully!";
+            header("Location: users.php?msg=" . urlencode($message));
+            exit();
+        } catch (Exception $e) {
+            $error = $e->getMessage();
         } catch (PDOException $e) {
             $error = "Error creating user: " . $e->getMessage();
             error_log("User creation error: " . $e->getMessage());
@@ -81,11 +103,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     // Handle Edit User
     elseif ($_POST['action'] === 'edit') {
         try {
-            $user_id = $_POST['user_id'];
+            $user_id_edit = $_POST['user_id'];
             $updateFields = [];
             $params = [];
             
-            // Build dynamic update query
             $allowedFields = [
                 'reg_number', 'username', 'role', 'full_name', 'email', 'phone',
                 'date_of_birth', 'gender', 'bio', 'address', 'emergency_contact_name',
@@ -96,11 +117,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             foreach ($allowedFields as $field) {
                 if (isset($_POST[$field])) {
                     $updateFields[] = "$field = ?";
-                    $params[] = $_POST[$field];
+                    $params[] = $_POST[$field] !== '' ? $_POST[$field] : null;
                 }
             }
             
-            // Handle checkbox fields
             $updateFields[] = "email_notifications = ?";
             $params[] = isset($_POST['email_notifications']) ? 1 : 0;
             
@@ -113,19 +133,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updateFields[] = "is_class_rep = ?";
             $params[] = isset($_POST['is_class_rep']) ? 1 : 0;
             
-            // Update password if provided
             if (!empty($_POST['password'])) {
                 $updateFields[] = "password = ?";
                 $params[] = password_hash($_POST['password'], PASSWORD_DEFAULT);
             }
             
-            $params[] = $user_id;
+            $updateFields[] = "updated_at = NOW()";
+            $params[] = $user_id_edit;
             
             $sql = "UPDATE users SET " . implode(", ", $updateFields) . " WHERE id = ?";
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             
             $message = "User updated successfully!";
+            header("Location: users.php?msg=" . urlencode($message));
+            exit();
         } catch (PDOException $e) {
             $error = "Error updating user: " . $e->getMessage();
             error_log("User update error: " . $e->getMessage());
@@ -154,6 +176,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $stmt->execute($selected_ids);
                     $message = count($selected_ids) . " users deleted.";
                 }
+                header("Location: users.php?msg=" . urlencode($message));
+                exit();
             } catch (PDOException $e) {
                 $error = "Error performing bulk action: " . $e->getMessage();
             }
@@ -165,49 +189,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
 // Handle status toggle via GET
 if (isset($_GET['toggle_status']) && isset($_GET['id'])) {
-    $user_id = $_GET['id'];
+    $user_id_toggle = $_GET['id'];
     try {
         $stmt = $pdo->prepare("SELECT status FROM users WHERE id = ?");
-        $stmt->execute([$user_id]);
+        $stmt->execute([$user_id_toggle]);
         $current_status = $stmt->fetchColumn();
         
         $new_status = $current_status === 'active' ? 'inactive' : 'active';
         $stmt = $pdo->prepare("UPDATE users SET status = ? WHERE id = ?");
-        $stmt->execute([$new_status, $user_id]);
+        $stmt->execute([$new_status, $user_id_toggle]);
         
         $message = "User status updated successfully!";
+        header("Location: users.php?msg=" . urlencode($message));
+        exit();
     } catch (PDOException $e) {
         $error = "Error toggling user status: " . $e->getMessage();
     }
 }
 
-// Handle delete via GET (soft delete)
+// Handle delete via GET
 if (isset($_GET['delete']) && isset($_GET['id'])) {
-    $user_id = $_GET['id'];
+    $user_id_delete = $_GET['id'];
     try {
         $stmt = $pdo->prepare("UPDATE users SET deleted_at = NOW(), status = 'deleted' WHERE id = ?");
-        $stmt->execute([$user_id]);
+        $stmt->execute([$user_id_delete]);
         $message = "User deleted successfully!";
+        header("Location: users.php?msg=" . urlencode($message));
+        exit();
     } catch (PDOException $e) {
         $error = "Error deleting user: " . $e->getMessage();
     }
 }
 
-// Get user for editing
-$edit_user = null;
-if (isset($_GET['edit']) && isset($_GET['id'])) {
+// Get user for editing via AJAX
+if (isset($_GET['get_user']) && isset($_GET['id'])) {
+    header('Content-Type: application/json');
     try {
         $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
         $stmt->execute([$_GET['id']]);
-        $edit_user = $stmt->fetch(PDO::FETCH_ASSOC);
+        $user_data = $stmt->fetch(PDO::FETCH_ASSOC);
+        echo json_encode($user_data);
     } catch (PDOException $e) {
-        $error = "Error fetching user data: " . $e->getMessage();
+        echo json_encode(['error' => $e->getMessage()]);
     }
+    exit();
+}
+
+// Get programs by department via AJAX
+if (isset($_GET['get_programs']) && isset($_GET['department_id'])) {
+    header('Content-Type: application/json');
+    try {
+        $stmt = $pdo->prepare("SELECT id, name FROM programs WHERE department_id = ? AND is_active = true ORDER BY name");
+        $stmt->execute([$_GET['department_id']]);
+        $programs_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode($programs_list);
+    } catch (PDOException $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit();
 }
 
 // Pagination and filtering
 $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-$limit = 20;
+$limit = 15;
 $offset = ($page - 1) * $limit;
 
 $search = $_GET['search'] ?? '';
@@ -215,12 +259,11 @@ $role_filter = $_GET['role'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $department_filter = $_GET['department'] ?? '';
 
-// Build WHERE clause for filtering
 $where_conditions = ["deleted_at IS NULL"];
 $params = [];
 
 if (!empty($search)) {
-    $where_conditions[] = "(full_name LIKE ? OR email LIKE ? OR username LIKE ? OR reg_number LIKE ?)";
+    $where_conditions[] = "(full_name ILIKE ? OR email ILIKE ? OR username ILIKE ? OR reg_number ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -245,7 +288,6 @@ if (!empty($department_filter)) {
 
 $where_clause = implode(" AND ", $where_conditions);
 
-// Get total count for pagination
 try {
     $count_sql = "SELECT COUNT(*) FROM users WHERE $where_clause";
     $stmt = $pdo->prepare($count_sql);
@@ -258,7 +300,6 @@ try {
     error_log("Count error: " . $e->getMessage());
 }
 
-// Get users with pagination
 try {
     $sql = "
         SELECT u.*, d.name as department_name, p.name as program_name
@@ -277,23 +318,22 @@ try {
     error_log("User fetch error: " . $e->getMessage());
 }
 
-// Get statistics
 try {
     $stmt = $pdo->query("SELECT role, COUNT(*) as count FROM users WHERE deleted_at IS NULL GROUP BY role");
     $role_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    $stmt = $pdo->query("SELECT status, COUNT(*) as count FROM users WHERE deleted_at IS NULL GROUP BY status");
-    $status_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $role_stats = [];
-    $status_stats = [];
+}
+
+if (isset($_GET['msg'])) {
+    $message = $_GET['msg'];
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>User Management - Isonga RPSU Admin</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -304,106 +344,203 @@ try {
             box-sizing: border-box;
         }
 
+        /* Light Mode (Default) */
         :root {
             --primary: #0056b3;
-            --primary-dark: #003d82;
+            --primary-dark: #004080;
             --primary-light: #4d8be6;
-            --success: #28a745;
-            --danger: #dc3545;
-            --warning: #ffc107;
-            --info: #17a2b8;
-            --light: #f8f9fa;
-            --dark: #343a40;
-            --gray: #6c757d;
-            --border: #dee2e6;
-            --shadow: 0 2px 4px rgba(0,0,0,0.1);
-            --border-radius: 8px;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            
+            /* Light Mode Colors */
+            --bg-primary: #f4f6f9;
+            --bg-secondary: #ffffff;
+            --text-primary: #1f2937;
+            --text-secondary: #6b7280;
+            --border-color: #e5e7eb;
+            --sidebar-bg: #ffffff;
+            --card-bg: #ffffff;
+            --header-bg: #ffffff;
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --border-radius: 12px;
             --transition: all 0.3s ease;
+        }
+
+        /* Dark Mode */
+        body.dark-mode {
+            --bg-primary: #111827;
+            --bg-secondary: #1f2937;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --border-color: #374151;
+            --sidebar-bg: #1f2937;
+            --card-bg: #1f2937;
+            --header-bg: #1f2937;
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
         }
 
         body {
             font-family: 'Inter', sans-serif;
-            background: #f4f6f9;
-            color: #333;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            min-height: 100vh;
+            transition: background 0.3s ease, color 0.3s ease;
         }
 
         /* Header */
         .header {
-            background: white;
+            background: var(--header-bg);
             box-shadow: var(--shadow);
-            padding: 1rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
+            border-bottom: 1px solid var(--border-color);
         }
 
-        .nav-container {
+        .header-container {
             max-width: 1400px;
             margin: 0 auto;
+            padding: 0.75rem 1.5rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 1.5rem;
+            gap: 1rem;
+            flex-wrap: wrap;
         }
 
-        .logo-section {
+        .logo-area {
             display: flex;
             align-items: center;
             gap: 0.75rem;
         }
 
-        .logo {
+        .logo-img {
             height: 40px;
+            width: auto;
         }
 
-        .brand-text h1 {
+        .logo-text h1 {
             font-size: 1.25rem;
-            color: var(--primary);
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        .user-menu {
+        .logo-text p {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .user-area {
             display: flex;
             align-items: center;
             gap: 1rem;
         }
 
-        .user-avatar {
+        .theme-toggle {
             width: 40px;
             height: 40px;
+            border: none;
+            background: var(--bg-primary);
             border-radius: 50%;
-            background: var(--primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            color: var(--text-primary);
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background: var(--border-color);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .user-avatar {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-weight: bold;
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .user-details {
+            text-align: right;
+        }
+
+        .user-name {
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        .user-role {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
         }
 
         .logout-btn {
             background: var(--danger);
             color: white;
             padding: 0.5rem 1rem;
-            border-radius: 6px;
+            border-radius: 8px;
             text-decoration: none;
-            font-size: 0.85rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logout-btn:hover {
+            background: #dc2626;
+            transform: translateY(-1px);
         }
 
         /* Dashboard Container */
         .dashboard-container {
             display: flex;
-            min-height: calc(100vh - 80px);
+            max-width: 1400px;
+            margin: 0 auto;
+            min-height: calc(100vh - 65px);
         }
 
         /* Sidebar */
         .sidebar {
             width: 260px;
-            background: white;
-            border-right: 1px solid var(--border);
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
             padding: 1.5rem 0;
+            position: sticky;
+            top: 65px;
+            height: calc(100vh - 65px);
+            overflow-y: auto;
         }
 
         .sidebar-menu {
             list-style: none;
+        }
+
+        .menu-item {
+            margin-bottom: 0.25rem;
         }
 
         .menu-item a {
@@ -411,23 +548,34 @@ try {
             align-items: center;
             gap: 0.75rem;
             padding: 0.75rem 1.5rem;
-            color: #555;
+            color: var(--text-primary);
             text-decoration: none;
-            transition: var(--transition);
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+            font-size: 0.85rem;
         }
 
-        .menu-item a:hover,
+        .menu-item a:hover {
+            background: var(--bg-primary);
+            border-left-color: var(--primary);
+        }
+
         .menu-item a.active {
-            background: #e3f2fd;
+            background: var(--bg-primary);
+            border-left-color: var(--primary);
             color: var(--primary);
-            border-left: 3px solid var(--primary);
+        }
+
+        .menu-item i {
+            width: 20px;
+            text-align: center;
         }
 
         /* Main Content */
         .main-content {
             flex: 1;
             padding: 1.5rem;
-            overflow-x: auto;
+            overflow-y: auto;
         }
 
         /* Page Header */
@@ -442,20 +590,24 @@ try {
 
         .page-header h1 {
             font-size: 1.5rem;
-            color: #333;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
         .btn {
             padding: 0.6rem 1.2rem;
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: 500;
             text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            transition: var(--transition);
+            transition: all 0.2s;
+            font-size: 0.85rem;
         }
 
         .btn-primary {
@@ -465,6 +617,7 @@ try {
 
         .btn-primary:hover {
             background: var(--primary-dark);
+            transform: translateY(-1px);
         }
 
         .btn-success {
@@ -477,57 +630,17 @@ try {
             color: white;
         }
 
+        .btn-warning {
+            background: var(--warning);
+            color: white;
+        }
+
         .btn-sm {
             padding: 0.3rem 0.6rem;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
         }
 
-        /* Filters */
-        .filters-bar {
-            background: white;
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1.5rem;
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-            align-items: center;
-            box-shadow: var(--shadow);
-        }
-
-        .filter-group {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .filter-group label {
-            font-size: 0.85rem;
-            color: var(--gray);
-        }
-
-        .filter-group select,
-        .filter-group input {
-            padding: 0.5rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            font-size: 0.85rem;
-        }
-
-        .search-box {
-            display: flex;
-            gap: 0.5rem;
-            margin-left: auto;
-        }
-
-        .search-box input {
-            padding: 0.5rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            width: 250px;
-        }
-
-        /* Stats Cards */
+        /* Stats Cards - Like departments.php */
         .stats-cards {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -536,11 +649,18 @@ try {
         }
 
         .stat-card {
-            background: white;
+            background: var(--card-bg);
             padding: 1rem;
             border-radius: var(--border-radius);
             text-align: center;
+            border: 1px solid var(--border-color);
             box-shadow: var(--shadow);
+            transition: all 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .stat-number {
@@ -551,43 +671,122 @@ try {
 
         .stat-label {
             font-size: 0.75rem;
-            color: var(--gray);
+            color: var(--text-secondary);
             margin-top: 0.25rem;
         }
 
-        /* Users Table */
+        /* Filters Bar - Like departments.php */
+        .filters-bar {
+            background: var(--card-bg);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+        }
+
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .filter-group label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .filter-group select,
+        .filter-group input {
+            padding: 0.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 0.8rem;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        .search-box {
+            display: flex;
+            gap: 0.5rem;
+            margin-left: auto;
+        }
+
+        .search-box input {
+            padding: 0.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            width: 250px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        /* Bulk Actions - Like departments.php */
+        .bulk-actions-bar {
+            background: var(--card-bg);
+            padding: 0.8rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 0.8rem;
+            align-items: center;
+            flex-wrap: wrap;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow);
+        }
+
+        .bulk-actions-bar select {
+            padding: 0.4rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        /* Users Table Container - Like departments.php */
         .users-table-container {
-            background: white;
+            background: var(--card-bg);
             border-radius: var(--border-radius);
             overflow-x: auto;
+            border: 1px solid var(--border-color);
             box-shadow: var(--shadow);
         }
 
         .users-table {
             width: 100%;
             border-collapse: collapse;
+            font-size: 0.75rem;
         }
 
         .users-table th,
         .users-table td {
-            padding: 0.75rem;
+            padding: 0.55rem;
             text-align: left;
-            border-bottom: 1px solid var(--border);
+            border-bottom: 1px solid var(--border-color);
         }
 
         .users-table th {
-            background: #f8f9fa;
+            background: var(--bg-primary);
             font-weight: 600;
-            font-size: 0.85rem;
-            color: #555;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
         }
 
         .users-table tr:hover {
-            background: #f8f9fa;
+            background: var(--bg-primary);
         }
 
+        /* Status Badges - Like departments.php */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.6rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -604,11 +803,22 @@ try {
             color: #721c24;
         }
 
+        body.dark-mode .status-active {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        body.dark-mode .status-inactive {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
         .role-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
+            padding: 0px;
+            border-radius: 3px;
             font-size: 0.7rem;
-            font-weight: 600;
+            font-weight: 200;
+            display: inline-block;
         }
 
         .role-admin {
@@ -626,19 +836,28 @@ try {
             color: #856404;
         }
 
+        body.dark-mode .role-admin {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--info);
+        }
+
+        body.dark-mode .role-student {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        body.dark-mode .role-committee {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
         .action-buttons {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.4rem;
+            flex-wrap: wrap;
         }
 
-        .action-btn {
-            padding: 0.25rem 0.5rem;
-            border-radius: 4px;
-            text-decoration: none;
-            font-size: 0.8rem;
-        }
-
-        /* Modal */
+        /* Modal - Like departments.php */
         .modal {
             display: none;
             position: fixed;
@@ -646,7 +865,7 @@ try {
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.5);
             z-index: 1000;
             justify-content: center;
             align-items: center;
@@ -657,13 +876,15 @@ try {
         }
 
         .modal-content {
-            background: white;
+            background: var(--card-bg);
             border-radius: var(--border-radius);
             width: 90%;
-            max-width: 800px;
+            max-width: 900px;
             max-height: 90vh;
             overflow-y: auto;
             padding: 1.5rem;
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-md);
         }
 
         .modal-header {
@@ -671,8 +892,13 @@ try {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-header h2 {
+            font-size: 1.25rem;
+            font-weight: 700;
         }
 
         .close-modal {
@@ -680,7 +906,13 @@ try {
             border: none;
             font-size: 1.5rem;
             cursor: pointer;
-            color: var(--gray);
+            color: var(--text-secondary);
+            transition: color 0.2s;
+            padding: 0.5rem;
+        }
+
+        .close-modal:hover {
+            color: var(--danger);
         }
 
         .form-grid {
@@ -700,18 +932,28 @@ try {
         }
 
         .form-group label {
-            font-size: 0.85rem;
-            font-weight: 500;
-            color: #555;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
         }
 
         .form-group input,
         .form-group select,
         .form-group textarea {
-            padding: 0.5rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
+            padding: 0.6rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
             font-size: 0.85rem;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--primary);
         }
 
         .form-group textarea {
@@ -719,20 +961,38 @@ try {
             min-height: 80px;
         }
 
+        .form-group small {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+        }
+
+        .checkbox-label input {
+            width: auto;
+            margin-right: 0;
+        }
+
         .form-actions {
             display: flex;
             justify-content: flex-end;
-            gap: 0.5rem;
+            gap: 0.75rem;
             margin-top: 1.5rem;
             padding-top: 1rem;
-            border-top: 1px solid var(--border);
+            border-top: 1px solid var(--border-color);
         }
 
         /* Alert Messages */
         .alert {
             padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
+            border-radius: 8px;
             margin-bottom: 1rem;
+            font-size: 0.85rem;
         }
 
         .alert-success {
@@ -747,7 +1007,19 @@ try {
             border: 1px solid #f5c6cb;
         }
 
-        /* Pagination */
+        body.dark-mode .alert-success {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        body.dark-mode .alert-danger {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        /* Pagination - Like departments.php */
         .pagination {
             display: flex;
             justify-content: center;
@@ -758,10 +1030,18 @@ try {
         .pagination a,
         .pagination span {
             padding: 0.5rem 0.75rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
             text-decoration: none;
             color: var(--primary);
+            background: var(--card-bg);
+            transition: all 0.2s;
+        }
+
+        .pagination a:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
         }
 
         .pagination .active {
@@ -771,52 +1051,126 @@ try {
         }
 
         /* Checkbox */
-        .select-all {
+        .select-all, .user-checkbox {
             width: 18px;
             height: 18px;
             cursor: pointer;
         }
 
-        .bulk-actions {
-            display: flex;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
         }
 
-        @media (max-width: 768px) {
+        .empty-state i {
+            font-size: 3rem;
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .empty-state p {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
             .form-grid {
                 grid-template-columns: 1fr;
             }
             .form-group.full-width {
                 grid-column: span 1;
             }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+            
             .filters-bar {
                 flex-direction: column;
                 align-items: stretch;
             }
+            
             .search-box {
                 margin-left: 0;
             }
-            .sidebar {
+            
+            .search-box input {
+                width: 100%;
+            }
+            
+            .header-container {
+                padding: 0.75rem 1rem;
+            }
+            
+            .user-details {
                 display: none;
+            }
+            
+            .main-content {
+                padding: 1rem;
+            }
+            
+            .stats-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .users-table th,
+            .users-table td {
+                padding: 0.1rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .stats-cards {
+                grid-template-columns: 1fr;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+            
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
             }
         }
     </style>
 </head>
 <body>
     <header class="header">
-        <div class="nav-container">
-            <div class="logo-section">
-                <img src="../assets/images/rp_logo.png" alt="Logo" class="logo">
-                <div class="brand-text">
-                    <h1>Isonga - Admin Panel</h1>
+        <div class="header-container">
+            <div class="logo-area">
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo-img">
+                <div class="logo-text">
+                    <h1>Isonga Admin</h1>
+                    <p>RPSU Management System</p>
                 </div>
             </div>
-            <div class="user-menu">
-                <div class="user-avatar">
-                    <?php echo strtoupper(substr($_SESSION['full_name'] ?? 'A', 0, 1)); ?>
+            <div class="user-area">
+                <button class="theme-toggle" id="themeToggle" title="Toggle Dark/Light Mode">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <?php echo strtoupper(substr($current_admin['full_name'] ?? 'A', 0, 1)); ?>
+                    </div>
+                    <div class="user-details">
+                        <div class="user-name"><?php echo htmlspecialchars($current_admin['full_name'] ?? 'Admin'); ?></div>
+                        <div class="user-role">System Administrator</div>
+                    </div>
                 </div>
-                <span><?php echo htmlspecialchars($_SESSION['full_name'] ?? 'Admin'); ?></span>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
@@ -831,10 +1185,14 @@ try {
                 <li class="menu-item"><a href="users.php" class="active"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
+                  <li class="menu-item"><a href="representative.php" class="active"><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
                 <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
                 <li class="menu-item"><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
                 <li class="menu-item"><a href="arbitration.php"><i class="fas fa-balance-scale"></i> Arbitration</a></li>
+                <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i> Support Tickets</a></li>
+                <li class="menu-item"><a href="gallery.php"><i class="fas fa-images"></i> Gallery</a></li>
+                <li class="menu-item"><a href="reports.php"><i class="fas fa-chart-bar"></i> Reports</a></li>
                 <li class="menu-item"><a href="settings.php"><i class="fas fa-cogs"></i> Settings</a></li>
             </ul>
         </nav>
@@ -901,7 +1259,7 @@ try {
                 <div class="search-box">
                     <input type="text" name="search" placeholder="Search by name, email, username..." value="<?php echo htmlspecialchars($search); ?>">
                     <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i></button>
-                    <?php if ($search || $role_filter || $status_filter): ?>
+                    <?php if ($search || $role_filter || $status_filter || $department_filter): ?>
                         <a href="users.php" class="btn btn-sm">Clear</a>
                     <?php endif; ?>
                 </div>
@@ -910,7 +1268,7 @@ try {
             <!-- Bulk Actions -->
             <form method="POST" action="" id="bulkForm">
                 <input type="hidden" name="action" value="bulk">
-                <div class="bulk-actions">
+                <div class="bulk-actions-bar">
                     <select name="bulk_action" id="bulk_action">
                         <option value="">Bulk Actions</option>
                         <option value="activate">Activate</option>
@@ -926,27 +1284,32 @@ try {
                         <thead>
                             <tr>
                                 <th><input type="checkbox" class="select-all" onclick="toggleAll(this)"></th>
-                                <th>ID</th>
                                 <th>Reg Number</th>
                                 <th>Full Name</th>
                                 <th>Email</th>
                                 <th>Role</th>
                                 <th>Department</th>
+                                <th>Program</th>
                                 <th>Status</th>
-                                <th>Last Login</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (empty($users)): ?>
                                 <tr>
-                                    <td colspan="10" style="text-align: center; padding: 2rem;">No users found</td>
+                                    <td colspan="11">
+                                        <div class="empty-state">
+                                            <i class="fas fa-users"></i>
+                                            <h3>No users found</h3>
+                                            <p>Click "Add New User" to create one.</p>
+                                        </div>
+                                    </td>
                                 </tr>
                             <?php else: ?>
                                 <?php foreach ($users as $user): ?>
                                     <tr>
                                         <td><input type="checkbox" name="selected_ids[]" value="<?php echo $user['id']; ?>" class="user-checkbox"></td>
-                                        <td><?php echo $user['id']; ?></td>
+                                       
                                         <td><?php echo htmlspecialchars($user['reg_number'] ?? '-'); ?></td>
                                         <td>
                                             <strong><?php echo htmlspecialchars($user['full_name']); ?></strong>
@@ -958,27 +1321,25 @@ try {
                                                 <?php echo ucfirst($user['role']); ?>
                                             </span>
                                             <?php if ($user['is_class_rep']): ?>
-                                                <br><small class="badge">Class Rep</small>
+                                                <br><small style="color: var(--warning);">Class Rep</small>
                                             <?php endif; ?>
                                         </td>
                                         <td><?php echo htmlspecialchars($user['department_name'] ?? '-'); ?></td>
+                                        <td><?php echo htmlspecialchars($user['program_name'] ?? '-'); ?></td>
                                         <td>
                                             <span class="status-badge status-<?php echo $user['status']; ?>">
                                                 <?php echo ucfirst($user['status']); ?>
                                             </span>
                                         </td>
-                                        <td>
-                                            <?php echo $user['last_login'] ? date('M j, Y', strtotime($user['last_login'])) : 'Never'; ?>
-                                            <br><small><?php echo $user['login_count'] ?? 0; ?> logins</small>
-                                        </td>
+                                        
                                         <td class="action-buttons">
-                                            <a href="?edit=1&id=<?php echo $user['id']; ?>" class="action-btn btn-primary btn-sm" onclick="openEditModal(event, <?php echo $user['id']; ?>)">
+                                            <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $user['id']; ?>)">
                                                 <i class="fas fa-edit"></i>
-                                            </a>
-                                            <a href="?toggle_status=1&id=<?php echo $user['id']; ?>" class="action-btn btn-warning btn-sm" onclick="return confirm('Toggle user status?')">
+                                            </button>
+                                            <a href="?toggle_status=1&id=<?php echo $user['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle user status?')">
                                                 <i class="fas fa-toggle-on"></i>
                                             </a>
-                                            <a href="?delete=1&id=<?php echo $user['id']; ?>" class="action-btn btn-danger btn-sm" onclick="return confirm('Delete this user? This action can be undone.')">
+                                            <a href="?delete=1&id=<?php echo $user['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this user?')">
                                                 <i class="fas fa-trash"></i>
                                             </a>
                                         </td>
@@ -1018,7 +1379,7 @@ try {
 
     <!-- Add/Edit User Modal -->
     <div id="userModal" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
                 <h2 id="modalTitle">Add New User</h2>
                 <button class="close-modal" onclick="closeModal()">&times;</button>
@@ -1033,7 +1394,7 @@ try {
                         <input type="text" name="reg_number" id="reg_number" placeholder="e.g., 2024-001">
                     </div>
                     <div class="form-group">
-                        <label>Username</label>
+                        <label>Username *</label>
                         <input type="text" name="username" id="username" required>
                     </div>
                     <div class="form-group">
@@ -1081,17 +1442,17 @@ try {
                             <option value="">Select</option>
                             <option value="male">Male</option>
                             <option value="female">Female</option>
-                            <option value="other">Other</option>
+                     
                         </select>
                     </div>
                     <div class="form-group">
                         <label>Academic Year</label>
-                        <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
+                        <input type="text" name="academic_year" id="academic_year" placeholder="e.g., Year 1">
                     </div>
                     <div class="form-group">
                         <label>Password</label>
                         <input type="password" name="password" id="password">
-                        <small id="passwordHint">Leave blank to keep current password (for edit)</small>
+                        <small id="passwordHint">Password is required for new users</small>
                     </div>
                     <div class="form-group full-width">
                         <label>Address</label>
@@ -1125,25 +1486,25 @@ try {
                         </select>
                     </div>
                     <div class="form-group">
-                        <label>
+                        <label class="checkbox-label">
                             <input type="checkbox" name="email_notifications" id="email_notifications" value="1">
                             Email Notifications
                         </label>
                     </div>
                     <div class="form-group">
-                        <label>
+                        <label class="checkbox-label">
                             <input type="checkbox" name="sms_notifications" id="sms_notifications" value="1">
                             SMS Notifications
                         </label>
                     </div>
                     <div class="form-group">
-                        <label>
+                        <label class="checkbox-label">
                             <input type="checkbox" name="two_factor_enabled" id="two_factor_enabled" value="1">
-                            2FA Enabled
+                            Two-Factor Authentication
                         </label>
                     </div>
                     <div class="form-group">
-                        <label>
+                        <label class="checkbox-label">
                             <input type="checkbox" name="is_class_rep" id="is_class_rep" value="1">
                             Class Representative
                         </label>
@@ -1159,6 +1520,25 @@ try {
     </div>
 
     <script>
+        // Dark/Light Mode Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const body = document.body;
+        
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        if (savedTheme === 'dark') {
+            body.classList.add('dark-mode');
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        } else {
+            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
+        }
+        
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+        
         // Modal functions
         function openAddModal() {
             document.getElementById('modalTitle').textContent = 'Add New User';
@@ -1167,16 +1547,20 @@ try {
             document.getElementById('userForm').reset();
             document.getElementById('password').required = true;
             document.getElementById('passwordHint').textContent = 'Password is required for new users';
+            document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
             document.getElementById('userModal').classList.add('active');
+            document.body.classList.add('modal-open');
         }
         
-        function openEditModal(event, userId) {
-            event.preventDefault();
-            
-            // Fetch user data via AJAX
-            fetch(`get_user.php?id=${userId}`)
+        function openEditModal(userId) {
+            fetch(`users.php?get_user=1&id=${userId}`)
                 .then(response => response.json())
                 .then(user => {
+                    if (user.error) {
+                        alert('Error loading user data');
+                        return;
+                    }
+                    
                     document.getElementById('modalTitle').textContent = 'Edit User';
                     document.getElementById('formAction').value = 'edit';
                     document.getElementById('userId').value = user.id;
@@ -1203,12 +1587,14 @@ try {
                     document.getElementById('password').required = false;
                     document.getElementById('passwordHint').textContent = 'Leave blank to keep current password';
                     
-                    // Load programs based on department
                     if (user.department_id) {
                         loadPrograms(user.department_id, user.program_id);
+                    } else {
+                        document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
                     }
                     
                     document.getElementById('userModal').classList.add('active');
+                    document.body.classList.add('modal-open');
                 })
                 .catch(error => {
                     console.error('Error:', error);
@@ -1218,31 +1604,43 @@ try {
         
         function closeModal() {
             document.getElementById('userModal').classList.remove('active');
+            document.body.classList.remove('modal-open');
         }
         
-        // Load programs based on department
         function loadPrograms(departmentId, selectedProgramId = null) {
             if (!departmentId) {
                 document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
                 return;
             }
             
-            fetch(`get_programs.php?department_id=${departmentId}`)
+            fetch(`users.php?get_programs=1&department_id=${departmentId}`)
                 .then(response => response.json())
                 .then(programs => {
                     let options = '<option value="">Select Program</option>';
-                    programs.forEach(program => {
-                        options += `<option value="${program.id}" ${selectedProgramId == program.id ? 'selected' : ''}>${program.name}</option>`;
-                    });
+                    if (!programs.error && programs.length > 0) {
+                        programs.forEach(program => {
+                            const selected = selectedProgramId == program.id ? 'selected' : '';
+                            options += `<option value="${program.id}" ${selected}>${escapeHtml(program.name)}</option>`;
+                        });
+                    }
                     document.getElementById('program_id').innerHTML = options;
+                })
+                .catch(error => {
+                    console.error('Error loading programs:', error);
                 });
+        }
+        
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
         
         document.getElementById('department_id').addEventListener('change', function() {
             loadPrograms(this.value);
         });
         
-        // Bulk actions
         function toggleAll(source) {
             const checkboxes = document.querySelectorAll('.user-checkbox');
             checkboxes.forEach(cb => cb.checked = source.checked);
@@ -1265,13 +1663,18 @@ try {
             return confirm(`Are you sure you want to ${action} ${checked} user(s)?`);
         }
         
-        // Close modal on outside click
         window.onclick = function(event) {
             const modal = document.getElementById('userModal');
             if (event.target === modal) {
                 closeModal();
             }
         }
+        
+        document.querySelectorAll('.modal-content').forEach(content => {
+            content.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+        });
     </script>
 </body>
 </html>
