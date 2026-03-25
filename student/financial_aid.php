@@ -1,6 +1,11 @@
 <?php
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 session_start();
 require_once '../config/database.php';
+require_once '../config/email_config_base.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
@@ -21,6 +26,7 @@ $department = $_SESSION['department'];
 $program = $_SESSION['program'];
 $academic_year = $_SESSION['academic_year'];
 $is_class_rep = $_SESSION['is_class_rep'] ?? 0;
+$student_email = $_SESSION['email'] ?? '';
 
 // Get theme preference
 $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
@@ -40,6 +46,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
     $urgency_level = $_POST['urgency_level'];
     $purpose = trim($_POST['purpose']);
     
+    // Get student email from database if not in session
+    if (empty($student_email)) {
+        try {
+            $email_stmt = $pdo->prepare("SELECT email FROM users WHERE id = ?");
+            $email_stmt->execute([$student_id]);
+            $student_email = $email_stmt->fetchColumn();
+            $_SESSION['email'] = $student_email;
+        } catch (PDOException $e) {
+            error_log("Failed to fetch email: " . $e->getMessage());
+        }
+    }
+    
     // File upload handling
     $supporting_docs_path = null;
     $request_letter_path = null;
@@ -48,6 +66,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
         $error_message = "All fields are required.";
     } else {
         try {
+            // Start transaction
+            $pdo->beginTransaction();
+            
             // Handle supporting documents upload
             if (isset($_FILES['supporting_docs']) && $_FILES['supporting_docs']['error'] === UPLOAD_ERR_OK) {
                 $upload_dir = '../assets/uploads/supporting_docs/';
@@ -102,68 +123,246 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
             
             $request_id = $pdo->lastInsertId();
             
-            $_SESSION['success_message'] = "Financial aid request submitted successfully! Request ID: #$request_id";
+            // Commit transaction
+            $pdo->commit();
+            
+            // 1. Send confirmation email to student
+            $email_sent = false;
+            $email_message = "";
+            
+            if (!empty($student_email)) {
+                $subject = "Financial Aid Request Received - #$request_id";
+                $body = '
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; line-height: 1.6; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                        .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                        .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+                        .details { background: #f8f9fa; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
+                        .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h2>✅ Financial Aid Request Received</h2>
+                        </div>
+                        <div class="content">
+                            <p>Dear ' . htmlspecialchars($student_name) . ',</p>
+                            <p>Thank you for submitting your financial aid request.</p>
+                            <div class="details">
+                                <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                                <p><strong>Amount:</strong> RWF ' . number_format($amount_requested, 2) . '</p>
+                                <p><strong>Urgency:</strong> ' . ucfirst($urgency_level) . '</p>
+                                <p><strong>Submission Date:</strong> ' . date('F j, Y') . '</p>
+                            </div>
+                            <p>Our team will review your request and get back to you within 3-5 business days.</p>
+                            <p><a href="http://localhost/isonga-mis/student/financial_aid.php">View your request</a></p>
+                        </div>
+                        <div class="footer">
+                            <p>Isonga - RPSU Management System</p>
+                        </div>
+                    </div>
+                </body>
+                </html>';
+                
+                $email_result = sendEmailCore($student_email, $subject, $body);
+                
+                if ($email_result['success']) {
+                    $email_sent = true;
+                    $email_message = " A confirmation email has been sent to $student_email";
+                } else {
+                    error_log("Failed to send email to student: " . ($email_result['message'] ?? 'Unknown error'));
+                    $email_message = " However, we couldn't send the confirmation email.";
+                }
+            } else {
+                $email_message = " Please update your email address in your profile to receive notifications.";
+            }
+            
+            // 2. Send notification to finance officers about new request
+            $finance_notification_sent = false;
+            $finance_message = "";
+            
+            // Get all finance officers from database
+            try {
+                $finance_stmt = $pdo->prepare("
+                    SELECT id, email, full_name 
+                    FROM users 
+                    WHERE role = 'vice_guild_finance' AND status = 'active'
+                ");
+                $finance_stmt->execute();
+                $finance_officers = $finance_stmt->fetchAll(PDO::FETCH_ASSOC);
+                
+                if (!empty($finance_officers)) {
+                    $urgency_colors = [
+                        'low' => '#28a745',
+                        'medium' => '#ffc107',
+                        'high' => '#fd7e14',
+                        'emergency' => '#dc3545'
+                    ];
+                    $color = $urgency_colors[$urgency_level] ?? '#6c757d';
+                    
+                    $subject = "⚠️ URGENT: New Student Aid Request #$request_id";
+                    
+                    $body = '
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <style>
+                            body { font-family: Arial, sans-serif; line-height: 1.6; }
+                            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                            .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+                            .alert { background: #fff3cd; border-left: 4px solid ' . $color . '; padding: 15px; margin: 15px 0; }
+                            .urgency-badge { display: inline-block; padding: 3px 8px; background: ' . $color . '; color: white; border-radius: 3px; font-size: 12px; font-weight: bold; }
+                            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+                            .btn { display: inline-block; padding: 10px 20px; background: #0056b3; color: white; text-decoration: none; border-radius: 5px; margin-top: 10px; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <div class="header">
+                                <h2>🚨 New Student Aid Request</h2>
+                            </div>
+                            <div class="content">
+                                <p>Dear Finance Officer,</p>
+                                <div class="alert">
+                                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                                    <p><strong>Student:</strong> ' . htmlspecialchars($student_name) . ' (' . htmlspecialchars($reg_number) . ')</p>
+                                    <p><strong>Amount:</strong> <strong style="color: #dc3545;">RWF ' . number_format($amount_requested, 2) . '</strong></p>
+                                    <p><strong>Urgency Level:</strong> <span class="urgency-badge">' . strtoupper($urgency_level) . '</span></p>
+                                    <p><strong>Purpose:</strong> ' . htmlspecialchars(substr($purpose, 0, 200)) . '</p>
+                                    <p><strong>Submitted:</strong> ' . date('F j, Y g:i a') . '</p>
+                                </div>
+                                <p><a href="http://localhost/isonga-mis/student_aid.php?view=' . $request_id . '" class="btn">🔍 Review Request</a></p>
+                                <p>Please review this request and take appropriate action.</p>
+                            </div>
+                            <div class="footer">
+                                <p>Isonga - RPSU Management System</p>
+                                <p>RP Musanze College Student Union</p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>';
+                    
+                    // Send to each finance officer
+                    $sent_count = 0;
+                    foreach ($finance_officers as $officer) {
+                        if (!empty($officer['email'])) {
+                            $result = sendEmailCore($officer['email'], $subject, $body);
+                            if ($result['success']) {
+                                $sent_count++;
+                                error_log("Finance notification sent to: " . $officer['email']);
+                            } else {
+                                error_log("Failed to send to finance officer: " . $officer['email'] . " - " . ($result['message'] ?? 'Unknown'));
+                            }
+                        }
+                    }
+                    
+                    if ($sent_count > 0) {
+                        $finance_notification_sent = true;
+                        $finance_message = " Notification sent to $sent_count finance officer(s).";
+                    } else {
+                        $finance_message = " Could not send notification to finance officers.";
+                    }
+                } else {
+                    error_log("No active finance officers found in database");
+                    $finance_message = " No finance officers found to notify.";
+                }
+            } catch (PDOException $e) {
+                error_log("Failed to get finance officers: " . $e->getMessage());
+                $finance_message = " Could not notify finance officers due to system error.";
+            }
+            
+            // 3. Create system notification for finance officers
+            try {
+                $notify_stmt = $pdo->prepare("
+                    INSERT INTO system_notifications (user_id, notification_type, title, message, related_id, related_table, created_at, expires_at)
+                    SELECT id, 'urgent', 'New Student Aid Request', 
+                    CONCAT('Student ', ?, ' has submitted a new financial aid request (ID: #', ?, ') for RWF ', ?),
+                    ?, 'student_financial_aid', NOW(), NOW() + INTERVAL '30 days'
+                    FROM users 
+                    WHERE role = 'vice_guild_finance' AND status = 'active'
+                ");
+                $notify_stmt->execute([
+                    $student_name,
+                    $request_id,
+                    number_format($amount_requested, 2),
+                    $request_id
+                ]);
+                $notification_count = $notify_stmt->rowCount();
+                error_log("Created $notification_count system notifications for finance officers");
+            } catch (PDOException $e) {
+                error_log("Failed to create system notifications: " . $e->getMessage());
+            }
+            
+            $_SESSION['success_message'] = "✅ Financial aid request submitted successfully! Request ID: #$request_id." . $email_message . $finance_message;
             header('Location: financial_aid.php');
             exit();
             
         } catch (PDOException $e) {
+            $pdo->rollBack();
+            error_log("Database error: " . $e->getMessage());
             $error_message = "Failed to submit financial aid request. Please try again.";
         } catch (Exception $e) {
+            $pdo->rollBack();
+            error_log("Error: " . $e->getMessage());
             $error_message = $e->getMessage();
         }
     }
 }
 
 // Get student's financial aid requests
-$requests_stmt = $pdo->prepare("
-    SELECT * FROM student_financial_aid 
-    WHERE student_id = ? 
-    ORDER BY created_at DESC
-");
-$requests_stmt->execute([$student_id]);
-$financial_aid_requests = $requests_stmt->fetchAll(PDO::FETCH_ASSOC);
+try {
+    $requests_stmt = $pdo->prepare("
+        SELECT * FROM student_financial_aid 
+        WHERE student_id = ? 
+        ORDER BY created_at DESC
+    ");
+    $requests_stmt->execute([$student_id]);
+    $financial_aid_requests = $requests_stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Failed to fetch requests: " . $e->getMessage());
+    $financial_aid_requests = [];
+}
 
 // Get financial aid statistics
-$stats_stmt = $pdo->prepare("
-    SELECT 
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
-        SUM(CASE WHEN status = 'disbursed' THEN 1 ELSE 0 END) as disbursed,
-        SUM(amount_requested) as total_requested,
-        SUM(amount_approved) as total_approved
-    FROM student_financial_aid 
-    WHERE student_id = ?
-");
-$stats_stmt->execute([$student_id]);
-$financial_stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
+try {
+    $stats_stmt = $pdo->prepare("
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
+            SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as under_review,
+            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+            SUM(CASE WHEN status = 'disbursed' THEN 1 ELSE 0 END) as disbursed,
+            SUM(amount_requested) as total_requested,
+            SUM(amount_approved) as total_approved
+        FROM student_financial_aid 
+        WHERE student_id = ?
+    ");
+    $stats_stmt->execute([$student_id]);
+    $financial_stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Failed to fetch stats: " . $e->getMessage());
+    $financial_stats = [
+        'total' => 0,
+        'submitted' => 0,
+        'under_review' => 0,
+        'approved' => 0,
+        'rejected' => 0,
+        'disbursed' => 0,
+        'total_requested' => 0,
+        'total_approved' => 0
+    ];
+}
 
 // Helper function
 function safe_display($data) {
     return $data ? htmlspecialchars($data) : '';
-}
-
-function getStatusBadge($status) {
-    $badges = [
-        'submitted' => 'status-open',
-        'under_review' => 'status-progress',
-        'approved' => 'status-success',
-        'rejected' => 'status-error',
-        'disbursed' => 'status-resolved'
-    ];
-    return $badges[$status] ?? 'status-open';
-}
-
-function getUrgencyBadge($urgency) {
-    $badges = [
-        'low' => 'status-resolved',
-        'medium' => 'status-open',
-        'high' => 'status-progress',
-        'emergency' => 'status-error'
-    ];
-    return $badges[$urgency] ?? 'status-open';
 }
 ?>
 
@@ -176,6 +375,7 @@ function getUrgencyBadge($urgency) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        /* All CSS styles remain the same as in the previous version */
         :root {
             --booking-blue: #003b95;
             --booking-blue-light: #006ce4;
@@ -235,35 +435,29 @@ function getUrgencyBadge($urgency) {
             z-index: 100;
         }
 
-/* Logo Styles */
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    text-decoration: none;
-}
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+        }
 
-.logo-image {
-    height: 36px; /* Adjust based on your logo's aspect ratio */
-    width: auto;
-    object-fit: contain;
-}
+        .logo-image {
+            height: 36px;
+            width: auto;
+            object-fit: contain;
+        }
 
-.logo-text {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--booking-blue);
-    letter-spacing: -0.5px;
-}
+        .logo-text {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--booking-blue);
+            letter-spacing: -0.5px;
+        }
 
-/* Optional: Different logo for dark theme */
-[data-theme="dark"] .logo-text {
-    color: white; /* Or keep it blue for consistency */
-}
-
-[data-theme="dark"] .logo-image {
-    filter: brightness(1.1); /* Slightly brighten logo for dark theme */
-}
+        [data-theme="dark"] .logo-text {
+            color: white;
+        }
 
         .header-actions {
             display: flex;
@@ -330,6 +524,26 @@ function getUrgencyBadge($urgency) {
         .theme-toggle-btn:hover {
             border-color: var(--booking-blue);
             color: var(--booking-blue);
+        }
+
+        .logout-btn {
+            background: none;
+            border: 1px solid var(--booking-gray-200);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--booking-gray-400);
+            transition: var(--transition);
+            text-decoration: none;
+        }
+
+        .logout-btn:hover {
+            border-color: var(--booking-orange);
+            color: var(--booking-orange);
         }
 
         /* Navigation */
@@ -513,13 +727,6 @@ function getUrgencyBadge($urgency) {
         }
 
         /* Dashboard Grid */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
         .dashboard-card {
             background: var(--booking-white);
             border: 1px solid var(--booking-gray-100);
@@ -546,18 +753,6 @@ function getUrgencyBadge($urgency) {
 
         .card-title i {
             color: var(--booking-blue);
-        }
-
-        .view-all-link {
-            font-size: 0.85rem;
-            color: var(--booking-blue-light);
-            text-decoration: none;
-            font-weight: 500;
-            transition: var(--transition);
-        }
-
-        .view-all-link:hover {
-            text-decoration: underline;
         }
 
         .card-body {
@@ -713,17 +908,6 @@ function getUrgencyBadge($urgency) {
         .btn-secondary:hover {
             background: var(--booking-gray-50);
             border-color: var(--booking-gray-300);
-        }
-
-        .btn-success {
-            background: var(--booking-green);
-            color: white;
-            border: 1px solid var(--booking-green);
-        }
-
-        .btn-success:hover {
-            background: #00b894;
-            border-color: #00b894;
         }
 
         .btn-sm {
@@ -931,6 +1115,12 @@ function getUrgencyBadge($urgency) {
             color: var(--booking-orange);
         }
 
+        .alert-info {
+            border-color: var(--booking-blue);
+            background: #e6f2ff;
+            color: var(--booking-blue);
+        }
+
         .alert i {
             font-size: 1rem;
             margin-top: 0.125rem;
@@ -962,175 +1152,73 @@ function getUrgencyBadge($urgency) {
 
         /* Mobile Responsive */
         @media (max-width: 768px) {
-            .header {
-                padding: 0 1rem;
-            }
-            
-            .main-nav {
-                padding: 0 1rem;
-            }
-            
-            .nav-links {
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                padding-bottom: 0.5rem;
-            }
-            
-            .nav-link {
-                padding: 1rem;
-                font-size: 0.85rem;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-            
-            .page-header {
-                padding: 1.5rem;
-            }
-            
-            .page-title {
-                font-size: 1.5rem;
-            }
-            
-            .header-actions-row {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
-            }
-            
-            .stats-summary {
-                width: 100%;
-                justify-content: space-between;
-            }
-            
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 1rem;
-            }
-            
-            .request-header {
-                flex-direction: column;
-                gap: 1rem;
-                align-items: flex-start;
-            }
-            
-            .request-meta {
-                flex-wrap: wrap;
-            }
-            
-            .request-amounts {
-                flex-direction: column;
-                gap: 0.75rem;
-            }
-            
-            .request-actions {
-                flex-wrap: wrap;
-            }
-            
-            .primary-action-btn {
-                bottom: 1rem;
-                right: 1rem;
-                width: 48px;
-                height: 48px;
-            }
+            .header { padding: 0 1rem; }
+            .main-nav { padding: 0 1rem; }
+            .nav-links { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 0.5rem; }
+            .nav-link { padding: 1rem; font-size: 0.85rem; }
+            .main-content { padding: 1rem; }
+            .page-header { padding: 1.5rem; }
+            .page-title { font-size: 1.5rem; }
+            .header-actions-row { flex-direction: column; align-items: flex-start; gap: 1rem; }
+            .stats-summary { width: 100%; justify-content: space-between; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+            .request-header { flex-direction: column; gap: 1rem; align-items: flex-start; }
+            .request-meta { flex-wrap: wrap; }
+            .request-amounts { flex-direction: column; gap: 0.75rem; }
+            .request-actions { flex-wrap: wrap; }
+            .primary-action-btn { bottom: 1rem; right: 1rem; width: 48px; height: 48px; }
         }
 
         @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .user-name, .user-role {
-                display: none;
-            }
-            
-            .form-actions {
-                flex-direction: column;
-            }
-            
-            .request-actions .btn {
-                width: 100%;
-                justify-content: center;
-            }
+            .stats-grid { grid-template-columns: 1fr; }
+            .user-name, .user-role { display: none; }
+            .form-actions { flex-direction: column; }
+            .request-actions .btn { width: 100%; justify-content: center; }
         }
     </style>
 </head>
 <body>
     <!-- Header -->
-      <!-- Header -->
     <header class="header">
-<a href="dashboard.php" class="logo">
-    <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo-image">
-    <div class="logo-text">Isonga</div>
-</a>
+        <a href="dashboard.php" class="logo">
+            <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo-image">
+            <div class="logo-text">Isonga</div>
+        </a>
         
-<!-- Add this to the header-actions div in dashboard.php -->
-<div class="header-actions">
-    <form method="POST" style="margin: 0;">
-        <button type="submit" name="toggle_theme" class="theme-toggle-btn" title="Toggle Theme">
-            <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-        </button>
-    </form>
-    
-    <!-- Logout Button - Add this -->
-    <a href="../auth/logout.php" class="logout-btn" title="Logout">
-        <i class="fas fa-sign-out-alt"></i>
-    </a>
-    
-    <div class="user-menu">
-        <div class="user-avatar">
-            <?php echo strtoupper(substr($student_name, 0, 1)); ?>
+        <div class="header-actions">
+            <form method="POST" style="margin: 0;">
+                <button type="submit" name="toggle_theme" class="theme-toggle-btn" title="Toggle Theme">
+                    <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
+                </button>
+            </form>
+            
+            <a href="../auth/logout.php" class="logout-btn" title="Logout">
+                <i class="fas fa-sign-out-alt"></i>
+            </a>
+            
+            <div class="user-menu">
+                <div class="user-avatar">
+                    <?php echo strtoupper(substr($student_name, 0, 1)); ?>
+                </div>
+                <div class="user-info">
+                    <span class="user-name"><?php echo safe_display(explode(' ', $student_name)[0]); ?></span>
+                    <span class="user-role">Student</span>
+                </div>
+            </div>
         </div>
-        <div class="user-info">
-            <span class="user-name"><?php echo safe_display(explode(' ', $student_name)[0]); ?></span>
-            <span class="user-role">Student</span>
-        </div>
-    </div>
-</div>
     </header>
 
     <!-- Navigation -->
     <nav class="nav-container">
         <div class="main-nav">
             <ul class="nav-links">
-                <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link">
-                        <i class="fas fa-home"></i>
-                        Dashboard
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="tickets.php" class="nav-link">
-                        <i class="fas fa-ticket-alt"></i>
-                        My Tickets
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="financial_aid.php" class="nav-link active">
-                        <i class="fas fa-hand-holding-usd"></i>
-                        Financial Aid
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="profile.php" class="nav-link">
-                        <i class="fas fa-user"></i>
-                        Profile
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="announcements.php" class="nav-link">
-                        <i class="fas fa-bullhorn"></i>
-                        Announcements
-                    </a>
-                </li>
+                <li class="nav-item"><a href="dashboard.php" class="nav-link"><i class="fas fa-home"></i> Dashboard</a></li>
+                <li class="nav-item"><a href="tickets.php" class="nav-link"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
+                <li class="nav-item"><a href="financial_aid.php" class="nav-link active"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
+                <li class="nav-item"><a href="profile.php" class="nav-link"><i class="fas fa-user"></i> Profile</a></li>
+                <li class="nav-item"><a href="announcements.php" class="nav-link"><i class="fas fa-bullhorn"></i> Announcements</a></li>
                 <?php if ($is_class_rep): ?>
-                <li class="nav-item">
-                    <a href="class_rep_dashboard.php" class="nav-link">
-                        <i class="fas fa-users"></i>
-                        Class Rep
-                    </a>
-                </li>
+                <li class="nav-item"><a href="class_rep_dashboard.php" class="nav-link"><i class="fas fa-users"></i> Class Rep</a></li>
                 <?php endif; ?>
             </ul>
         </div>
@@ -1140,118 +1228,56 @@ function getUrgencyBadge($urgency) {
     <main class="main-content">
         <!-- Page Header -->
         <div class="page-header">
-            <h1 class="page-title">
-                <i class="fas fa-hand-holding-usd"></i>
-                Financial Aid Requests
-            </h1>
-            <p class="page-description">Submit and track your financial aid applications</p>
+            <h1 class="page-title"><i class="fas fa-hand-holding-usd"></i> Financial Aid Requests</h1>
+            <p class="page-description">Submit and track your financial aid applications. You'll receive email confirmation for every request submitted.</p>
             
             <div class="header-actions-row">
                 <div class="stats-summary">
-                    <div class="stat-item">
-                        <span class="stat-label">Total Requests</span>
-                        <span class="stat-value total"><?php echo $financial_stats['total'] ?? 0; ?></span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Total Requested</span>
-                        <span class="stat-value"><?php echo number_format($financial_stats['total_requested'] ?? 0, 2); ?> Rwf</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Total Approved</span>
-                        <span class="stat-value approved"><?php echo number_format($financial_stats['total_approved'] ?? 0, 2); ?> Rwf</span>
-                    </div>
+                    <div class="stat-item"><span class="stat-label">Total Requests</span><span class="stat-value total"><?php echo $financial_stats['total'] ?? 0; ?></span></div>
+                    <div class="stat-item"><span class="stat-label">Total Requested</span><span class="stat-value"><?php echo number_format($financial_stats['total_requested'] ?? 0, 2); ?> Rwf</span></div>
+                    <div class="stat-item"><span class="stat-label">Total Approved</span><span class="stat-value approved"><?php echo number_format($financial_stats['total_approved'] ?? 0, 2); ?> Rwf</span></div>
                 </div>
-                
-                <button class="btn btn-primary" onclick="openRequestModal()">
-                    <i class="fas fa-plus"></i>
-                    New Request
-                </button>
+                <button class="btn btn-primary" onclick="openRequestModal()"><i class="fas fa-plus"></i> New Request</button>
             </div>
         </div>
 
         <!-- Alerts -->
         <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i>
-                <?php echo $_SESSION['success_message']; ?>
-            </div>
+            <div class="alert alert-success"><i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?></div>
             <?php unset($_SESSION['success_message']); ?>
         <?php endif; ?>
         <?php if (isset($error_message)): ?>
-            <div class="alert alert-error">
-                <i class="fas fa-exclamation-triangle"></i>
-                <?php echo $error_message; ?>
-            </div>
+            <div class="alert alert-error"><i class="fas fa-exclamation-triangle"></i> <?php echo $error_message; ?></div>
         <?php endif; ?>
+
+        <!-- Email Info Alert -->
+        <div class="alert alert-info">
+            <i class="fas fa-envelope"></i>
+            <div>
+                <strong>Email Notifications</strong><br>
+                You will receive a confirmation email for every request you submit. Please ensure your email address 
+                (<?php echo !empty($student_email) ? safe_display($student_email) : 'Not set'; ?>) is correct.
+                <?php if (empty($student_email)): ?>
+                    <a href="profile.php" style="color: var(--booking-blue);">Update your email here</a>
+                <?php endif; ?>
+            </div>
+        </div>
 
         <!-- Stats Grid -->
         <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon total">
-                        <i class="fas fa-file-alt"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3><?php echo $financial_stats['total'] ?? 0; ?></h3>
-                        <p>Total Requests</p>
-                    </div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon submitted">
-                        <i class="fas fa-clock"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3><?php echo $financial_stats['submitted'] ?? 0; ?></h3>
-                        <p>Submitted</p>
-                    </div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon review">
-                        <i class="fas fa-spinner"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3><?php echo $financial_stats['under_review'] ?? 0; ?></h3>
-                        <p>Under Review</p>
-                    </div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon approved">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3><?php echo $financial_stats['approved'] ?? 0; ?></h3>
-                        <p>Approved</p>
-                    </div>
-                </div>
-            </div>
+            <div class="stat-card"><div class="stat-header"><div class="stat-icon total"><i class="fas fa-file-alt"></i></div><div class="stat-content"><h3><?php echo $financial_stats['total'] ?? 0; ?></h3><p>Total Requests</p></div></div></div>
+            <div class="stat-card"><div class="stat-header"><div class="stat-icon submitted"><i class="fas fa-clock"></i></div><div class="stat-content"><h3><?php echo $financial_stats['submitted'] ?? 0; ?></h3><p>Submitted</p></div></div></div>
+            <div class="stat-card"><div class="stat-header"><div class="stat-icon review"><i class="fas fa-spinner"></i></div><div class="stat-content"><h3><?php echo $financial_stats['under_review'] ?? 0; ?></h3><p>Under Review</p></div></div></div>
+            <div class="stat-card"><div class="stat-header"><div class="stat-icon approved"><i class="fas fa-check-circle"></i></div><div class="stat-content"><h3><?php echo $financial_stats['approved'] ?? 0; ?></h3><p>Approved</p></div></div></div>
         </div>
 
         <!-- Requests List -->
         <div class="dashboard-card">
-            <div class="card-header">
-                <h3 class="card-title">
-                    <i class="fas fa-history"></i>
-                    My Financial Aid Requests
-                </h3>
-            </div>
+            <div class="card-header"><h3 class="card-title"><i class="fas fa-history"></i> My Financial Aid Requests</h3></div>
             <div class="card-body">
                 <div class="requests-list">
                     <?php if (empty($financial_aid_requests)): ?>
-                        <div class="empty-state">
-                            <i class="fas fa-hand-holding-usd"></i>
-                            <h4>No financial aid requests yet</h4>
-                            <p>Submit your first financial aid request to get started</p>
-                            <button class="btn btn-primary" onclick="openRequestModal()">
-                                <i class="fas fa-plus"></i>
-                                Submit First Request
-                            </button>
-                        </div>
+                        <div class="empty-state"><i class="fas fa-hand-holding-usd"></i><h4>No financial aid requests yet</h4><p>Submit your first financial aid request to get started</p><button class="btn btn-primary" onclick="openRequestModal()"><i class="fas fa-plus"></i> Submit First Request</button></div>
                     <?php else: ?>
                         <?php foreach ($financial_aid_requests as $request): ?>
                             <div class="request-item <?php echo $request['urgency_level'] === 'emergency' || $request['urgency_level'] === 'high' ? 'urgent' : ''; ?>">
@@ -1260,42 +1286,23 @@ function getUrgencyBadge($urgency) {
                                         <div class="request-title"><?php echo safe_display($request['request_title']); ?></div>
                                         <div class="request-meta">
                                             <span>Submitted: <?php echo date('M j, Y', strtotime($request['created_at'])); ?></span>
-                                            <span>Urgency: <span class="request-status status-<?php echo str_replace('_', '-', $request['urgency_level']); ?>">
-                                                <?php echo ucfirst($request['urgency_level']); ?>
-                                            </span></span>
+                                            <span>Urgency: <span class="request-status status-<?php echo str_replace('_', '-', $request['urgency_level']); ?>"><?php echo ucfirst($request['urgency_level']); ?></span></span>
                                         </div>
                                     </div>
-                                    <div class="request-status status-<?php echo str_replace('_', '-', $request['status']); ?>">
-                                        <?php echo ucfirst(str_replace('_', ' ', $request['status'])); ?>
-                                    </div>
+                                    <div class="request-status status-<?php echo str_replace('_', '-', $request['status']); ?>"><?php echo ucfirst(str_replace('_', ' ', $request['status'])); ?></div>
                                 </div>
-                                
                                 <div class="request-details">
                                     <p class="request-purpose"><?php echo safe_display($request['purpose']); ?></p>
-                                    
                                     <div class="request-amounts">
-                                        <div class="amount-item">
-                                            <span class="amount-label">Amount Requested</span>
-                                            <span class="amount-value requested"><?php echo number_format($request['amount_requested'], 2); ?> Rwf</span>
-                                        </div>
+                                        <div class="amount-item"><span class="amount-label">Amount Requested</span><span class="amount-value requested"><?php echo number_format($request['amount_requested'], 2); ?> Rwf</span></div>
                                         <?php if ($request['amount_approved']): ?>
-                                        <div class="amount-item">
-                                            <span class="amount-label">Amount Approved</span>
-                                            <span class="amount-value approved"><?php echo number_format($request['amount_approved'], 2); ?> Rwf</span>
-                                        </div>
+                                        <div class="amount-item"><span class="amount-label">Amount Approved</span><span class="amount-value approved"><?php echo number_format($request['amount_approved'], 2); ?> Rwf</span></div>
                                         <?php endif; ?>
                                     </div>
-                                    
                                     <div class="request-actions">
-                                        <a href="view_financial_aid.php?id=<?php echo $request['id']; ?>" class="btn btn-secondary btn-sm">
-                                            <i class="fas fa-eye"></i>
-                                            View Details
-                                        </a>
+                                        <a href="view_financial_aid.php?id=<?php echo $request['id']; ?>" class="btn btn-secondary btn-sm"><i class="fas fa-eye"></i> View Details</a>
                                         <?php if ($request['status'] === 'approved'): ?>
-                                            <a href="generate_approval_letter.php?id=<?php echo $request['id']; ?>" class="btn btn-success btn-sm">
-                                                <i class="fas fa-download"></i>
-                                                Approval Letter
-                                            </a>
+                                            <a href="generate_approval_letter.php?id=<?php echo $request['id']; ?>" class="btn btn-success btn-sm"><i class="fas fa-download"></i> Approval Letter</a>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -1308,186 +1315,38 @@ function getUrgencyBadge($urgency) {
     </main>
 
     <!-- Primary Action Button -->
-    <a href="#" class="primary-action-btn" onclick="openRequestModal(event)">
-        <i class="fas fa-plus"></i>
-    </a>
+    <a href="#" class="primary-action-btn" onclick="openRequestModal(event)"><i class="fas fa-plus"></i></a>
 
     <!-- Request Modal -->
     <div id="requestModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 class="modal-title">
-                    <i class="fas fa-hand-holding-usd"></i>
-                    Submit Financial Aid Request
-                </h3>
-                <button class="modal-close" onclick="closeRequestModal()">
-                    <i class="fas fa-times"></i>
-                </button>
+                <h3 class="modal-title"><i class="fas fa-hand-holding-usd"></i> Submit Financial Aid Request</h3>
+                <button class="modal-close" onclick="closeRequestModal()"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <form method="POST" enctype="multipart/form-data" id="financialAidForm">
-                    <div class="form-group">
-                        <label class="form-label">Request Title</label>
-                        <input type="text" name="request_title" class="form-control" placeholder="e.g., Tuition Fee Assistance" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Amount Requested (Rwf)</label>
-                        <input type="number" name="amount_requested" class="form-control" step="0.01" min="0" placeholder="0.00" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Urgency Level</label>
-                        <select name="urgency_level" class="form-control" required>
-                            <option value="low">Low</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="high">High</option>
-                            <option value="emergency">Emergency</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Purpose and Justification</label>
-                        <textarea name="purpose" class="form-control" placeholder="Explain why you need financial assistance..." required rows="4"></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Request Letter (Optional)</label>
-                        <div class="file-upload" onclick="document.getElementById('request_letter').click()">
-                            <input type="file" name="request_letter" id="request_letter" class="file-input" accept=".pdf,.doc,.docx,.txt">
-                            <i class="fas fa-upload"></i>
-                            <p>Click to upload request letter</p>
-                            <small>PDF, DOC, DOCX, TXT (Max: 5MB)</small>
-                            <div id="request_letter_name" class="file-list"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Supporting Documents (Optional)</label>
-                        <div class="file-upload" onclick="document.getElementById('supporting_docs').click()">
-                            <input type="file" name="supporting_docs" id="supporting_docs" class="file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx">
-                            <i class="fas fa-file-upload"></i>
-                            <p>Click to upload supporting documents</p>
-                            <small>PDF, Images, DOC (Max: 10MB)</small>
-                            <div id="supporting_docs_name" class="file-list"></div>
-                        </div>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-secondary" onclick="closeRequestModal()">Cancel</button>
-                        <button type="submit" name="submit_financial_aid" class="btn btn-primary">
-                            <i class="fas fa-paper-plane"></i>
-                            Submit Request
-                        </button>
-                    </div>
+                    <div class="form-group"><label class="form-label">Request Title *</label><input type="text" name="request_title" class="form-control" placeholder="e.g., Tuition Fee Assistance" required></div>
+                    <div class="form-group"><label class="form-label">Amount Requested (Rwf) *</label><input type="number" name="amount_requested" class="form-control" step="0.01" min="0" placeholder="0.00" required></div>
+                    <div class="form-group"><label class="form-label">Urgency Level *</label><select name="urgency_level" class="form-control" required><option value="low">Low - Can wait up to 2 weeks</option><option value="medium" selected>Medium - Within 1 week</option><option value="high">High - Within 3 days</option><option value="emergency">Emergency - Immediate attention needed</option></select></div>
+                    <div class="form-group"><label class="form-label">Purpose and Justification *</label><textarea name="purpose" class="form-control" placeholder="Explain why you need financial assistance..." required rows="4"></textarea></div>
+                    <div class="form-group"><label class="form-label">Request Letter (Optional)</label><div class="file-upload" onclick="document.getElementById('request_letter').click()"><input type="file" name="request_letter" id="request_letter" class="file-input" accept=".pdf,.doc,.docx,.txt"><i class="fas fa-upload"></i><p>Click to upload request letter</p><small>PDF, DOC, DOCX, TXT (Max: 5MB)</small><div id="request_letter_name" class="file-list"></div></div></div>
+                    <div class="form-group"><label class="form-label">Supporting Documents (Optional)</label><div class="file-upload" onclick="document.getElementById('supporting_docs').click()"><input type="file" name="supporting_docs" id="supporting_docs" class="file-input" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"><i class="fas fa-file-upload"></i><p>Click to upload supporting documents</p><small>PDF, Images, DOC (Max: 10MB)</small><div id="supporting_docs_name" class="file-list"></div></div></div>
+                    <div class="form-actions"><button type="button" class="btn btn-secondary" onclick="closeRequestModal()">Cancel</button><button type="submit" name="submit_financial_aid" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Submit Request</button></div>
                 </form>
             </div>
         </div>
     </div>
 
     <script>
-        // Modal functions
-        function openRequestModal(e) {
-            if (e) e.preventDefault();
-            document.getElementById('requestModal').style.display = 'flex';
-            document.body.style.overflow = 'hidden';
-        }
-
-        function closeRequestModal() {
-            document.getElementById('requestModal').style.display = 'none';
-            document.getElementById('financialAidForm').reset();
-            document.getElementById('request_letter_name').textContent = '';
-            document.getElementById('supporting_docs_name').textContent = '';
-            document.body.style.overflow = 'auto';
-        }
-
-        // File input display
-        document.getElementById('request_letter').addEventListener('change', function(e) {
-            const fileName = e.target.files[0]?.name || '';
-            const fileList = document.getElementById('request_letter_name');
-            if (fileName) {
-                fileList.textContent = `Selected: ${fileName}`;
-                fileList.style.color = 'var(--booking-green)';
-            } else {
-                fileList.textContent = '';
-            }
-        });
-        
-        document.getElementById('supporting_docs').addEventListener('change', function(e) {
-            const fileName = e.target.files[0]?.name || '';
-            const fileList = document.getElementById('supporting_docs_name');
-            if (fileName) {
-                fileList.textContent = `Selected: ${fileName}`;
-                fileList.style.color = 'var(--booking-green)';
-            } else {
-                fileList.textContent = '';
-            }
-        });
-
-        // Close modal on ESC key
-        document.addEventListener('keydown', function(event) {
-            if (event.key === 'Escape') {
-                closeRequestModal();
-            }
-        });
-
-        // Close modal when clicking outside
-        document.getElementById('requestModal').addEventListener('click', function(event) {
-            if (event.target === this) {
-                closeRequestModal();
-            }
-        });
-
-        // Auto-open request modal if there's an error
-        <?php if (isset($error_message)): ?>
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(() => {
-                openRequestModal();
-            }, 500);
-        });
-        <?php endif; ?>
-
-        // Prevent form resubmission on page refresh
-        if (window.history.replaceState) {
-            window.history.replaceState(null, null, window.location.href);
-        }
-
-        // Add smooth scroll animation
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
-            });
-        });
-
-        // Add loading animation to cards on scroll
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.style.opacity = '1';
-                    entry.target.style.transform = 'translateY(0)';
-                }
-            });
-        }, observerOptions);
-
-        // Observe cards
-        document.querySelectorAll('.stat-card, .dashboard-card, .request-item').forEach(card => {
-            card.style.opacity = '0';
-            card.style.transform = 'translateY(20px)';
-            card.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
-            observer.observe(card);
-        });
+        function openRequestModal(e) { if(e) e.preventDefault(); document.getElementById('requestModal').style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+        function closeRequestModal() { document.getElementById('requestModal').style.display = 'none'; document.getElementById('financialAidForm').reset(); document.getElementById('request_letter_name').textContent = ''; document.getElementById('supporting_docs_name').textContent = ''; document.body.style.overflow = 'auto'; }
+        document.getElementById('request_letter').addEventListener('change', function(e) { const fileName = e.target.files[0]?.name || ''; document.getElementById('request_letter_name').textContent = fileName ? `Selected: ${fileName}` : ''; });
+        document.getElementById('supporting_docs').addEventListener('change', function(e) { const fileName = e.target.files[0]?.name || ''; document.getElementById('supporting_docs_name').textContent = fileName ? `Selected: ${fileName}` : ''; });
+        document.addEventListener('keydown', function(event) { if (event.key === 'Escape') closeRequestModal(); });
+        document.getElementById('requestModal').addEventListener('click', function(event) { if (event.target === this) closeRequestModal(); });
+        <?php if (isset($error_message)): ?> document.addEventListener('DOMContentLoaded', function() { setTimeout(() => { openRequestModal(); }, 500); }); <?php endif; ?>
+        if (window.history.replaceState) window.history.replaceState(null, null, window.location.href);
     </script>
 </body>
 </html>

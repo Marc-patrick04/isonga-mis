@@ -441,24 +441,29 @@ $page_title = "Executive Committee - RPSU Musanze College";
             box-shadow: var(--shadow-lg);
         }
 
+        /* UPDATED: Fixed image container for proper profile photo display */
         .member-image-container {
-            height: 280px;
             width: 100%;
             position: relative;
             overflow: hidden;
             background: linear-gradient(135deg, var(--gray-100) 0%, var(--gray-200) 100%);
+            aspect-ratio: 1 / 1; /* Creates a perfect square container for profile photos */
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .member-image {
             width: 100%;
             height: 100%;
-            object-fit: cover;
-            object-position: center top;
+            object-fit: cover; /* Ensures image covers container without distortion */
+            object-position: center center; /* Centers the image properly */
             transition: var(--transition);
+            display: block;
         }
 
         .member-card:hover .member-image {
-            transform: scale(1.05);
+            transform: scale(1.03);
         }
 
         .member-avatar {
@@ -483,6 +488,7 @@ $page_title = "Executive Committee - RPSU Musanze College";
             font-size: 0.75rem;
             font-weight: 600;
             box-shadow: var(--shadow-sm);
+            z-index: 2;
         }
 
         .member-content {
@@ -636,6 +642,36 @@ $page_title = "Executive Committee - RPSU Musanze College";
             margin: 0 auto;
         }
 
+        /* Statistics */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .stat-card {
+            background: var(--white);
+            padding: 1.5rem;
+            border-radius: var(--border-radius-lg);
+            text-align: center;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--gray-200);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--primary);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            color: var(--gray-600);
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
         /* Footer */
         .footer {
             background: var(--gray-900);
@@ -730,405 +766,273 @@ $page_title = "Executive Committee - RPSU Musanze College";
             font-size: 0.75rem;
         }
 
-        /* Statistics */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 3rem;
-        }
-
-        .stat-card {
-            background: var(--white);
-            padding: 1.5rem;
-            border-radius: var(--border-radius-lg);
-            text-align: center;
-            box-shadow: var(--shadow-sm);
-            border: 1px solid var(--gray-200);
-        }
-
-        .stat-number {
-            font-size: 2rem;
-            font-weight: 800;
-            color: var(--primary);
-            margin-bottom: 0.5rem;
-        }
-
-        .stat-label {
-            color: var(--gray-600);
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
         /* Enhanced Mobile Responsiveness */
+        @media (max-width: 768px) {
+            /* Header & Navigation */
+            .header {
+                padding: 0.5rem 0;
+            }
+            
+            .nav-container {
+                flex-direction: column;
+                gap: 0.75rem;
+                padding: 0 1rem;
+            }
+            
+            .logo-section {
+                width: 100%;
+                justify-content: center;
+                text-align: center;
+            }
+            
+            .logos {
+                justify-content: center;
+            }
+            
+            .brand-text h1 {
+                font-size: 1.25rem;
+            }
+            
+            .brand-text p {
+                font-size: 0.7rem;
+            }
+            
+            .nav-links {
+                gap: 0.75rem;
+                flex-wrap: wrap;
+                justify-content: center;
+                width: 100%;
+            }
+            
+            .nav-links a {
+                font-size: 0.8rem;
+                padding: 0.25rem 0.5rem;
+            }
+            
+            .login-buttons {
+                width: 100%;
+                justify-content: center;
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
+            
+            .login-btn {
+                padding: 0.5rem 1rem;
+                font-size: 0.75rem;
+            }
+            
+            /* Main Content */
+            .main-container {
+                margin-top: 140px;
+                padding: 1rem;
+            }
+            
+            .page-header {
+                margin-bottom: 2rem;
+            }
+            
+            .page-title {
+                font-size: 1.75rem;
+                line-height: 1.2;
+            }
+            
+            .page-subtitle {
+                font-size: 0.9rem;
+                line-height: 1.4;
+            }
+            
+            .academic-year {
+                font-size: 0.8rem;
+                padding: 0.4rem 1.25rem;
+            }
+            
+            /* Statistics */
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+                margin-bottom: 2rem;
+            }
+            
+            .stat-card {
+                padding: 1rem;
+            }
+            
+            .stat-number {
+                font-size: 1.5rem;
+            }
+            
+            .stat-label {
+                font-size: 0.75rem;
+            }
+            
+            /* Members Grid */
+            .members-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1rem;
+            }
+            
+            .member-image-container {
+                aspect-ratio: 1 / 1;
+            }
+            
+            .member-content {
+                padding: 1rem;
+            }
+            
+            .member-name {
+                font-size: 1rem;
+            }
+            
+            .member-role {
+                font-size: 0.75rem;
+                padding: 0.3rem 0.8rem;
+            }
+            
+            .info-item {
+                font-size: 0.75rem;
+            }
+            
+            .member-bio {
+                font-size: 0.75rem;
+            }
+            
+            .contact-btn {
+                width: 32px;
+                height: 32px;
+                font-size: 0.75rem;
+            }
+            
+            /* Section Titles */
+            .section-title {
+                font-size: 1.5rem;
+                margin-bottom: 1.5rem;
+            }
+            
+            /* Role Sections */
+            .role-header {
+                flex-direction: column;
+                text-align: center;
+                gap: 0.75rem;
+                margin-bottom: 1.5rem;
+            }
+            
+            .role-title {
+                font-size: 1.25rem;
+            }
+            
+            .role-description {
+                font-size: 0.85rem;
+                text-align: center;
+            }
+            
+            /* Footer */
+            .footer {
+                padding: 2rem 1rem 1rem;
+                margin-top: 3rem;
+            }
+            
+            .footer-content {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+                text-align: center;
+            }
+            
+            .footer-logo {
+                display: flex;
+                justify-content: center;
+            }
+            
+            .social-links {
+                justify-content: center;
+            }
+            
+            .footer-bottom {
+                margin-top: 1.5rem;
+                font-size: 0.7rem;
+            }
+        }
 
-/* Base mobile-first improvements */
-@media (max-width: 768px) {
-    /* Header & Navigation */
-    .header {
-        padding: 0.5rem 0;
-    }
-    
-    .nav-container {
-        flex-direction: column;
-        gap: 0.75rem;
-        padding: 0 1rem;
-    }
-    
-    .logo-section {
-        width: 100%;
-        justify-content: center;
-        text-align: center;
-    }
-    
-    .logos {
-        justify-content: center;
-    }
-    
-    .brand-text h1 {
-        font-size: 1.25rem;
-    }
-    
-    .brand-text p {
-        font-size: 0.7rem;
-    }
-    
-    .nav-links {
-        gap: 0.75rem;
-        flex-wrap: wrap;
-        justify-content: center;
-        width: 100%;
-    }
-    
-    .nav-links a {
-        font-size: 0.8rem;
-        padding: 0.25rem 0.5rem;
-    }
-    
-    .login-buttons {
-        width: 100%;
-        justify-content: center;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-    }
-    
-    .login-btn {
-        padding: 0.5rem 1rem;
-        font-size: 0.75rem;
-    }
-    
-    /* Main Content */
-    .main-container {
-        margin-top: 120px; /* Increased for mobile header height */
-        padding: 1rem;
-    }
-    
-    .page-header {
-        margin-bottom: 2rem;
-    }
-    
-    .page-title {
-        font-size: 1.75rem;
-        line-height: 1.2;
-    }
-    
-    .page-subtitle {
-        font-size: 0.9rem;
-        line-height: 1.4;
-    }
-    
-    .academic-year {
-        font-size: 0.8rem;
-        padding: 0.4rem 1.25rem;
-    }
-    
-    /* Statistics */
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 1rem;
-        margin-bottom: 2rem;
-    }
-    
-    .stat-card {
-        padding: 1rem;
-    }
-    
-    .stat-number {
-        font-size: 1.5rem;
-    }
-    
-    .stat-label {
-        font-size: 0.75rem;
-    }
-    
-    /* Members Grid */
-    .members-grid {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-    }
-    
-    .member-card {
-        margin-bottom: 0;
-    }
-    
-    .member-image-container {
-        height: 220px;
-    }
-    
-    .member-content {
-        padding: 1.25rem;
-    }
-    
-    .member-name {
-        font-size: 1.1rem;
-    }
-    
-    .member-role {
-        font-size: 0.8rem;
-        padding: 0.4rem 0.8rem;
-    }
-    
-    .info-item {
-        font-size: 0.8rem;
-    }
-    
-    .member-bio {
-        font-size: 0.8rem;
-    }
-    
-    .contact-btn {
-        width: 32px;
-        height: 32px;
-        font-size: 0.75rem;
-    }
-    
-    /* Section Titles */
-    .section-title {
-        font-size: 1.5rem;
-        margin-bottom: 1.5rem;
-    }
-    
-    /* Role Sections */
-    .role-header {
-        flex-direction: column;
-        text-align: center;
-        gap: 0.75rem;
-        margin-bottom: 1.5rem;
-    }
-    
-    .role-title {
-        font-size: 1.25rem;
-    }
-    
-    .role-description {
-        font-size: 0.85rem;
-        text-align: center;
-    }
-    
-    /* Footer */
-    .footer {
-        padding: 2rem 1rem 1rem;
-        margin-top: 3rem;
-    }
-    
-    .footer-content {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-        text-align: center;
-    }
-    
-    .footer-logo {
-        display: flex;
-        justify-content: center;
-    }
-    
-    .social-links {
-        justify-content: center;
-    }
-    
-    .footer-bottom {
-        margin-top: 1.5rem;
-        font-size: 0.7rem;
-    }
-}
+        /* Small mobile devices */
+        @media (max-width: 480px) {
+            .header {
+                padding: 0.4rem 0;
+            }
+            
+            .nav-container {
+                padding: 0 0.75rem;
+            }
+            
+            .logo {
+                height: 32px;
+            }
+            
+            .brand-text h1 {
+                font-size: 1.1rem;
+            }
+            
+            .main-container {
+                margin-top: 150px;
+                padding: 0.75rem;
+            }
+            
+            .page-title {
+                font-size: 1.5rem;
+            }
+            
+            .members-grid {
+                grid-template-columns: 1fr;
+                gap: 1.25rem;
+            }
+            
+            .member-image-container {
+                aspect-ratio: 1 / 1;
+            }
+            
+            .member-badge {
+                font-size: 0.7rem;
+                padding: 0.2rem 0.6rem;
+                top: 0.75rem;
+                right: 0.75rem;
+            }
+        }
 
-/* Small mobile devices */
-@media (max-width: 480px) {
-    .header {
-        padding: 0.4rem 0;
-    }
-    
-    .nav-container {
-        padding: 0 0.75rem;
-    }
-    
-    .logo {
-        height: 32px;
-    }
-    
-    .brand-text h1 {
-        font-size: 1.1rem;
-    }
-    
-    .nav-links {
-        gap: 0.5rem;
-    }
-    
-    .nav-links a {
-        font-size: 0.75rem;
-    }
-    
-    .login-btn {
-        padding: 0.4rem 0.8rem;
-        font-size: 0.7rem;
-    }
-    
-    .main-container {
-        margin-top: 130px;
-        padding: 0.75rem;
-    }
-    
-    .page-title {
-        font-size: 1.5rem;
-    }
-    
-    .page-subtitle {
-        font-size: 0.85rem;
-    }
-    
-    .stats-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .member-image-container {
-        height: 200px;
-    }
-    
-    .member-content {
-        padding: 1rem;
-    }
-    
-    .member-name {
-        font-size: 1rem;
-    }
-    
-    .info-item {
-        font-size: 0.75rem;
-    }
-    
-    .member-badge {
-        font-size: 0.7rem;
-        padding: 0.2rem 0.6rem;
-        top: 0.75rem;
-        right: 0.75rem;
-    }
-    
-    .footer {
-        padding: 1.5rem 0.75rem 0.75rem;
-    }
-    
-    .footer-heading {
-        font-size: 0.9rem;
-    }
-    
-    .footer-links a {
-        font-size: 0.8rem;
-    }
-}
+        /* Touch-friendly improvements */
+        @media (hover: none) and (pointer: coarse) {
+            .member-card:hover {
+                transform: none;
+            }
+            
+            .member-card:hover .member-image {
+                transform: none;
+            }
+            
+            .contact-btn {
+                width: 44px;
+                height: 44px;
+            }
+        }
 
-/* Very small devices (e.g., iPhone 5/SE) */
-@media (max-width: 320px) {
-    .nav-links {
-        gap: 0.25rem;
-    }
-    
-    .nav-links a {
-        font-size: 0.7rem;
-        padding: 0.2rem 0.4rem;
-    }
-    
-    .login-buttons {
-        flex-direction: column;
-        align-items: center;
-    }
-    
-    .login-btn {
-        width: 100%;
-        max-width: 200px;
-        justify-content: center;
-    }
-    
-    .page-title {
-        font-size: 1.3rem;
-    }
-    
-    .member-image-container {
-        height: 180px;
-    }
-}
-
-/* Touch-friendly improvements for mobile */
-@media (hover: none) and (pointer: coarse) {
-    .member-card:hover {
-        transform: none;
-    }
-    
-    .contact-btn:hover {
-        transform: none;
-    }
-    
-    .login-btn:hover {
-        transform: none;
-    }
-    
-    /* Increase tap target sizes */
-    .nav-links a {
-        padding: 0.5rem 0.75rem;
-    }
-    
-    .contact-btn {
-        width: 44px;
-        height: 44px;
-    }
-    
-    .social-links a {
-        width: 44px;
-        height: 44px;
-    }
-}
-
-/* Performance optimizations for mobile */
-@media (max-width: 768px) {
-    .member-card {
-        transform: none !important; /* Disable hover transforms on mobile */
-    }
-    
-    .member-image {
-        transform: none !important; /* Disable image scaling on mobile */
-    }
-}
-
-/* Print styles */
-@media print {
-    .header, .footer, .login-buttons, .contact-btn, .member-badge {
-        display: none;
-    }
-    
-    .main-container {
-        margin-top: 0;
-    }
-    
-    body {
-        background: white;
-        font-size: 12pt;
-    }
-    
-    .member-card {
-        break-inside: avoid;
-        box-shadow: none;
-        border: 1px solid #ccc;
-    }
-}
+        /* Print styles */
+        @media print {
+            .header, .footer, .login-buttons, .contact-btn, .member-badge {
+                display: none;
+            }
+            
+            .main-container {
+                margin-top: 0;
+            }
+            
+            body {
+                background: white;
+                font-size: 12pt;
+            }
+            
+            .member-card {
+                break-inside: avoid;
+                box-shadow: none;
+                border: 1px solid #ccc;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1220,6 +1124,7 @@ $page_title = "Executive Committee - RPSU Musanze College";
                                     <img src="<?php echo htmlspecialchars($image_url); ?>" 
                                          alt="<?php echo htmlspecialchars($member['name']); ?>" 
                                          class="member-image"
+                                         loading="lazy"
                                          onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                                     <div class="member-avatar" style="display: none;">
                                         <i class="fas fa-user"></i>
@@ -1229,19 +1134,20 @@ $page_title = "Executive Committee - RPSU Musanze College";
                                         <i class="fas fa-user"></i>
                                     </div>
                                 <?php endif; ?>
-                                <div class="member-badge"><?php echo $member['role']; ?></div>
+                                <div class="member-badge"><?php echo htmlspecialchars($member['role']); ?></div>
                             </div>
                             
                             <div class="member-content">
                                 <h3 class="member-name"><?php echo htmlspecialchars($member['name']); ?></h3>
-                                <?php if (!empty($member['reg_number'])): ?>
-                                    <div class="info-item">
-                                        <i class="fas fa-id-card"></i>
-                                        <span><?php echo htmlspecialchars($member['reg_number']); ?></span>
-                                    </div>
-                                <?php endif; ?>
                                 
                                 <div class="member-info">
+                                    <?php if (!empty($member['reg_number'])): ?>
+                                        <div class="info-item">
+                                            <i class="fas fa-id-card"></i>
+                                            <span><?php echo htmlspecialchars($member['reg_number']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                    
                                     <?php if (!empty($member['department_name'])): ?>
                                         <div class="info-item">
                                             <i class="fas fa-building"></i>
@@ -1266,13 +1172,13 @@ $page_title = "Executive Committee - RPSU Musanze College";
 
                                 <?php if (!empty($member['bio'])): ?>
                                     <div class="member-bio">
-                                        <?php echo htmlspecialchars($member['bio']); ?>
+                                        <?php echo htmlspecialchars(substr($member['bio'], 0, 120)) . (strlen($member['bio']) > 120 ? '...' : ''); ?>
                                     </div>
                                 <?php endif; ?>
 
                                 <?php if (!empty($member['portfolio_description'])): ?>
                                     <div class="member-bio">
-                                        <strong>Portfolio:</strong> <?php echo htmlspecialchars($member['portfolio_description']); ?>
+                                        <strong>Portfolio:</strong> <?php echo htmlspecialchars(substr($member['portfolio_description'], 0, 100)) . (strlen($member['portfolio_description']) > 100 ? '...' : ''); ?>
                                     </div>
                                 <?php endif; ?>
 
@@ -1297,55 +1203,54 @@ $page_title = "Executive Committee - RPSU Musanze College";
         </section>
     </div>
 
- <footer class="footer">
-    <div class="footer-content">
-        <div class="footer-info">
-            <div class="footer-logo">
-                <img src="assets/images/rp_logo.png" alt="RP Musanze" class="logo">
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-info">
+                <div class="footer-logo">
+                    <img src="assets/images/rp_logo.png" alt="RP Musanze" class="logo">
+                </div>
+                <p class="footer-description">
+                    Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
+                </p>
+                <div class="social-links">
+                    <a href="https://twitter.com/MusanzecollegSU" target="_blank"><i class="fab fa-twitter"></i></a>
+                    <a href="https://www.facebook.com/RP-Musanze-College" target="_blank"><i class="fab fa-facebook-f"></i></a>
+                    <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank"><i class="fab fa-linkedin-in"></i></a>
+                    <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank"><i class="fab fa-instagram"></i></a>
+                </div>
             </div>
-            <p class="footer-description">
-                Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
-            </p>
-            <div class="social-links">
-                <a href="https://twitter.com/MusanzecollegSU" target="_blank"><i class="fab fa-twitter"></i></a>
-                <a href="https://www.facebook.com/RP-Musanze-College" target="_blank"><i class="fab fa-facebook-f"></i></a>
-                <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank"><i class="fab fa-linkedin-in"></i></a>
-                <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank"><i class="fab fa-instagram"></i></a>
+            <div class="footer-links-group">
+                <h4 class="footer-heading">Quick Links</h4>
+                <ul class="footer-links">
+                    <li><a href="announcements.php">Announcements</a></li>
+                    <li><a href="news.php">Campus News</a></li>
+                    <li><a href="events.php">Events</a></li>
+                    <li><a href="committee.php">Committee</a></li>
+                </ul>
+            </div>
+            <div class="footer-links-group">
+                <h4 class="footer-heading">Student Resources</h4>
+                <ul class="footer-links">
+                    <li><a href="https://www.rp.ac.rw/announcement" target="_blank">Academic Calendar</a></li>
+                    <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank">Campus Map</a></li>
+                    <li><a href="../assets/rp_handbook.pdf">Student Handbook</a></li>
+                    <li><a href="gallery.php">Gallery</a></li>
+                </ul>
+            </div>
+            <div class="footer-links-group">
+                <h4 class="footer-heading">Contact Info</h4>
+                <ul class="footer-links">
+                    <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
+                    <li><i class="fas fa-phone"></i> +250 788 123 456</li>
+                    <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
+                    <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
+                </ul>
             </div>
         </div>
-        <div class="footer-links-group">
-            <h4 class="footer-heading">Quick Links</h4>
-            <ul class="footer-links">
-                <li><a href="announcements.php">Announcements</a></li>
-                <li><a href="news.php">Campus News</a></li>
-                <li><a href="events.php">Events</a></li>
-                <li><a href="committee.php">Committee</a></li>
-            </ul>
+        <div class="footer-bottom">
+            <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
         </div>
-        <div class="footer-links-group">
-            <h4 class="footer-heading">Student Resources</h4>
-            <ul class="footer-links">
-                <li><a href="https://www.rp.ac.rw/announcement" target="_blank">Academic Calendar</a></li>
-                <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank">Campus Map</a></li>
-                <li><a href="../assets/rp_handbook.pdf">Student Handbook</a></li>
-                <li><a href="gallery.php">Gallery</a></li>
-            </ul>
-        </div>
-        <div class="footer-links-group">
-            <h4 class="footer-heading">Contact Info</h4>
-            <ul class="footer-links">
-                <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
-                <li><i class="fas fa-phone"></i> +250 788 123 456</li>
-                <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
-                <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
-            </ul>
-        </div>
-    </div>
-    <div class="footer-bottom">
-        <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
-    </div>
-</footer>
-
+    </footer>
 
     <script>
         // Header scroll effect
