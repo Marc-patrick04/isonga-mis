@@ -19,24 +19,173 @@ try {
     $current_admin = [];
 }
 
-// Handle Committee Member Actions
-$message = '';
-$error = '';
+// Handle Excel Import
+// Update the Excel Import section in committee.php with this fixed version:
 
-// Get departments and programs for dropdowns
-try {
-    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
-    $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (PDOException $e) {
-    $departments = [];
-    error_log("Error fetching departments: " . $e->getMessage());
+// Handle Excel Import
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'import_excel') {
+    if (isset($_FILES['excel_file']) && $_FILES['excel_file']['error'] === UPLOAD_ERR_OK) {
+        $file = $_FILES['excel_file'];
+        $file_extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        
+        $allowed_extensions = ['csv'];
+        
+        if (in_array($file_extension, $allowed_extensions)) {
+            try {
+                $upload_dir = '../assets/uploads/excel_imports/';
+                if (!file_exists($upload_dir)) {
+                    mkdir($upload_dir, 0777, true);
+                }
+                
+                $file_name = 'committee_import_' . time() . '.' . $file_extension;
+                $file_path = $upload_dir . $file_name;
+                
+                if (move_uploaded_file($file['tmp_name'], $file_path)) {
+                    $imported_data = [];
+                    $success_count = 0;
+                    $duplicate_count = 0;
+                    $invalid_count = 0;
+                    $errors = [];
+                    
+                    // Parse CSV file with BOM handling
+                    if (($handle = fopen($file_path, "r")) !== FALSE) {
+                        // Read the first line (headers)
+                        $first_line = fgets($handle);
+                        
+                        // Remove BOM if present (UTF-8 BOM is \xEF\xBB\xBF)
+                        $first_line = preg_replace('/^\xEF\xBB\xBF/', '', $first_line);
+                        
+                        // Parse the headers
+                        $headers = str_getcsv($first_line);
+                        
+                        // Clean headers (trim spaces)
+                        $headers = array_map('trim', $headers);
+                        
+                        // Convert headers to lowercase for case-insensitive comparison
+                        $headers_lower = array_map('strtolower', $headers);
+                        
+                        // Required headers (all lowercase for comparison)
+                        $required_headers = ['name', 'role'];
+                        
+                        // Check for missing required headers
+                        $missing_headers = [];
+                        foreach ($required_headers as $required) {
+                            if (!in_array($required, $headers_lower)) {
+                                $missing_headers[] = $required;
+                            }
+                        }
+                        
+                        if (empty($missing_headers)) {
+                            $row_count = 0;
+                            // Now read the remaining rows
+                            while (($line = fgets($handle)) !== FALSE) {
+                                $row_count++;
+                                
+                                // Parse the CSV line
+                                $data = str_getcsv($line);
+                                
+                                // Skip if data is empty or not enough columns
+                                if (empty(array_filter($data)) || count($data) < count($headers)) {
+                                    continue;
+                                }
+                                
+                                // Create associative array with original header case
+                                $row = [];
+                                foreach ($headers as $index => $header) {
+                                    $row[$header] = isset($data[$index]) ? trim($data[$index]) : '';
+                                }
+                                
+                                // Also create lowercase version for easy access
+                                $row_lower = [];
+                                foreach ($headers as $index => $header) {
+                                    $row_lower[strtolower($header)] = isset($data[$index]) ? trim($data[$index]) : '';
+                                }
+                                
+                                // Validate required fields using lowercase keys
+                                $name = $row_lower['name'] ?? '';
+                                $role = $row_lower['role'] ?? '';
+                                
+                                if (empty($name) || empty($role)) {
+                                    $invalid_count++;
+                                    $errors[] = "Row $row_count: Missing name or role";
+                                    continue;
+                                }
+                                
+                                // Check if member already exists by email
+                                $email = $row_lower['email'] ?? '';
+                                if (!empty($email)) {
+                                    $check_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE email = ?");
+                                    $check_stmt->execute([$email]);
+                                    if ($check_stmt->fetch()) {
+                                        $duplicate_count++;
+                                        continue;
+                                    }
+                                }
+                                
+                                try {
+                                    $stmt = $pdo->prepare("
+                                        INSERT INTO committee_members (
+                                            name, role, reg_number, email, phone, 
+                                            academic_year, bio, portfolio_description, 
+                                            role_order, status, created_by, created_at
+                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                                    ");
+                                    
+                                    $stmt->execute([
+                                        $name,
+                                        $role,
+                                        !empty($row_lower['reg_number']) ? $row_lower['reg_number'] : null,
+                                        !empty($email) ? $email : null,
+                                        !empty($row_lower['phone']) ? $row_lower['phone'] : null,
+                                        !empty($row_lower['academic_year']) ? $row_lower['academic_year'] : null,
+                                        !empty($row_lower['bio']) ? $row_lower['bio'] : null,
+                                        !empty($row_lower['portfolio_description']) ? $row_lower['portfolio_description'] : null,
+                                        isset($row_lower['role_order']) && is_numeric($row_lower['role_order']) ? (int)$row_lower['role_order'] : 0,
+                                        isset($row_lower['status']) && in_array(strtolower($row_lower['status']), ['active', 'inactive']) ? strtolower($row_lower['status']) : 'active',
+                                        $user_id
+                                    ]);
+                                    $success_count++;
+                                } catch (PDOException $e) {
+                                    $invalid_count++;
+                                    $errors[] = "Row $row_count: " . $e->getMessage();
+                                }
+                            }
+                            
+                            $message = "Import completed! Success: $success_count, Duplicates: $duplicate_count, Failed: $invalid_count";
+                            if (!empty($errors) && count($errors) <= 5) {
+                                $message .= "<br>Errors: " . implode('<br>', $errors);
+                            } elseif (!empty($errors)) {
+                                $message .= "<br>First few errors: " . implode('<br>', array_slice($errors, 0, 5));
+                            }
+                        } else {
+                            $error = "Missing required columns: " . implode(', ', $missing_headers) . ". Your file headers: " . implode(', ', $headers);
+                        }
+                        fclose($handle);
+                    } else {
+                        $error = "Could not open the CSV file.";
+                    }
+                    
+                    // Delete the uploaded file
+                    if (file_exists($file_path)) {
+                        unlink($file_path);
+                    }
+                } else {
+                    $error = "Failed to upload file.";
+                }
+            } catch (Exception $e) {
+                $error = "Error processing file: " . $e->getMessage();
+            }
+        } else {
+            $error = "Invalid file type. Please upload CSV files.";
+        }
+    } else {
+        $error = "Please select a file to upload.";
+    }
 }
-
 // Handle Add Committee Member
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
         try {
-            // Handle photo upload
             $photo_url = null;
             if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
                 $upload_dir = '../assets/uploads/committee/';
@@ -91,7 +240,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit();
         } catch (PDOException $e) {
             $error = "Error adding committee member: " . $e->getMessage();
-            error_log("Committee member creation error: " . $e->getMessage());
         }
     }
     
@@ -120,11 +268,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         // Delete old photo
                         $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id = ?");
                         $stmt->execute([$member_id]);
-                        $old_member = $stmt->fetch(PDO::FETCH_ASSOC);
-                        if (!empty($old_member['photo_url'])) {
-                            $old_photo_path = '../' . $old_member['photo_url'];
-                            if (file_exists($old_photo_path)) {
-                                unlink($old_photo_path);
+                        $old = $stmt->fetch();
+                        if (!empty($old['photo_url'])) {
+                            $old_path = '../' . $old['photo_url'];
+                            if (file_exists($old_path)) {
+                                unlink($old_path);
                             }
                         }
                     }
@@ -134,11 +282,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updateFields = [];
             $params = [];
             
-            $allowedFields = [
-                'user_id', 'name', 'reg_number', 'role', 'role_order',
-                'department_id', 'program_id', 'academic_year',
-                'email', 'phone', 'bio', 'portfolio_description', 'status'
-            ];
+            $allowedFields = ['name', 'reg_number', 'role', 'role_order', 'department_id', 'program_id', 'academic_year', 'email', 'phone', 'bio', 'portfolio_description', 'status'];
             
             foreach ($allowedFields as $field) {
                 if (isset($_POST[$field])) {
@@ -164,7 +308,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             exit();
         } catch (PDOException $e) {
             $error = "Error updating committee member: " . $e->getMessage();
-            error_log("Committee member update error: " . $e->getMessage());
         }
     }
     
@@ -186,10 +329,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $stmt->execute($selected_ids);
                     $message = count($selected_ids) . " members deactivated.";
                 } elseif ($bulk_action === 'delete') {
+                    // Delete photos first
                     $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
-                    $members_to_delete = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                    foreach ($members_to_delete as $member) {
+                    $members = $stmt->fetchAll();
+                    foreach ($members as $member) {
                         if (!empty($member['photo_url'])) {
                             $photo_path = '../' . $member['photo_url'];
                             if (file_exists($photo_path)) {
@@ -219,17 +363,15 @@ if (isset($_GET['toggle_status']) && isset($_GET['id'])) {
     try {
         $stmt = $pdo->prepare("SELECT status FROM committee_members WHERE id = ?");
         $stmt->execute([$member_id]);
-        $current_status = $stmt->fetchColumn();
-        
-        $new_status = $current_status === 'active' ? 'inactive' : 'active';
+        $current = $stmt->fetchColumn();
+        $new_status = $current === 'active' ? 'inactive' : 'active';
         $stmt = $pdo->prepare("UPDATE committee_members SET status = ? WHERE id = ?");
         $stmt->execute([$new_status, $member_id]);
-        
-        $message = "Member status updated successfully!";
+        $message = "Member status updated!";
         header("Location: committee.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
-        $error = "Error toggling member status: " . $e->getMessage();
+        $error = "Error toggling status";
     }
 }
 
@@ -239,7 +381,7 @@ if (isset($_GET['delete']) && isset($_GET['id'])) {
     try {
         $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id = ?");
         $stmt->execute([$member_id]);
-        $member = $stmt->fetch(PDO::FETCH_ASSOC);
+        $member = $stmt->fetch();
         if (!empty($member['photo_url'])) {
             $photo_path = '../' . $member['photo_url'];
             if (file_exists($photo_path)) {
@@ -249,11 +391,11 @@ if (isset($_GET['delete']) && isset($_GET['id'])) {
         
         $stmt = $pdo->prepare("DELETE FROM committee_members WHERE id = ?");
         $stmt->execute([$member_id]);
-        $message = "Committee member deleted successfully!";
+        $message = "Member deleted successfully!";
         header("Location: committee.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
-        $error = "Error deleting committee member: " . $e->getMessage();
+        $error = "Error deleting member";
     }
 }
 
@@ -261,43 +403,10 @@ if (isset($_GET['delete']) && isset($_GET['id'])) {
 if (isset($_GET['get_member']) && isset($_GET['id'])) {
     header('Content-Type: application/json');
     try {
-        $stmt = $pdo->prepare("
-            SELECT cm.*, 
-                   d.name as department_name, 
-                   p.name as program_name
-            FROM committee_members cm
-            LEFT JOIN departments d ON cm.department_id = d.id
-            LEFT JOIN programs p ON cm.program_id = p.id
-            WHERE cm.id = ?
-        ");
+        $stmt = $pdo->prepare("SELECT * FROM committee_members WHERE id = ?");
         $stmt->execute([$_GET['id']]);
         $member = $stmt->fetch(PDO::FETCH_ASSOC);
         echo json_encode($member);
-    } catch (PDOException $e) {
-        echo json_encode(['error' => $e->getMessage()]);
-    }
-    exit();
-}
-
-// Get students for search via AJAX
-if (isset($_GET['search_students'])) {
-    header('Content-Type: application/json');
-    $search = $_GET['search'] ?? '';
-    
-    try {
-        $stmt = $pdo->prepare("
-            SELECT id, reg_number, full_name, email, phone, department_id, program_id 
-            FROM users 
-            WHERE role = 'student' 
-            AND status = 'active'
-            AND (full_name ILIKE ? OR reg_number ILIKE ? OR email ILIKE ?)
-            ORDER BY full_name ASC 
-            LIMIT 15
-        ");
-        $search_term = "%$search%";
-        $stmt->execute([$search_term, $search_term, $search_term]);
-        $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($students);
     } catch (PDOException $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
@@ -310,8 +419,8 @@ if (isset($_GET['get_programs']) && isset($_GET['department_id'])) {
     try {
         $stmt = $pdo->prepare("SELECT id, name FROM programs WHERE department_id = ? AND is_active = true ORDER BY name");
         $stmt->execute([$_GET['department_id']]);
-        $programs_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($programs_list);
+        $programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode($programs);
     } catch (PDOException $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
@@ -327,7 +436,6 @@ $search = $_GET['search'] ?? '';
 $role_filter = $_GET['role'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $department_filter = $_GET['department'] ?? '';
-$program_filter = $_GET['program'] ?? '';
 
 // Build WHERE clause
 $where_conditions = ["1=1"];
@@ -355,11 +463,6 @@ if (!empty($status_filter)) {
 if (!empty($department_filter)) {
     $where_conditions[] = "department_id = ?";
     $params[] = $department_filter;
-}
-
-if (!empty($program_filter)) {
-    $where_conditions[] = "program_id = ?";
-    $params[] = $program_filter;
 }
 
 $where_clause = implode(" AND ", $where_conditions);
@@ -404,7 +507,15 @@ try {
     $status_stats = [];
 }
 
-// Define available roles for dropdown
+// Get departments for dropdown
+try {
+    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
+    $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $departments = [];
+}
+
+// Define available roles
 $available_roles = [
     'guild_president' => 'Guild President',
     'vice_guild_academic' => 'Vice Guild President - Academic',
@@ -430,11 +541,12 @@ if (isset($_GET['msg'])) {
     $message = $_GET['msg'];
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Committee Management - Isonga RPSU Admin</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -445,43 +557,32 @@ if (isset($_GET['msg'])) {
             box-sizing: border-box;
         }
 
-        /* Light Mode (Default) */
         :root {
             --primary: #0056b3;
             --primary-dark: #004080;
-            --primary-light: #4d8be6;
             --success: #10b981;
             --warning: #f59e0b;
             --danger: #ef4444;
-            --info: #3b82f6;
-            
-            /* Light Mode Colors */
             --bg-primary: #f4f6f9;
             --bg-secondary: #ffffff;
             --text-primary: #1f2937;
             --text-secondary: #6b7280;
             --border-color: #e5e7eb;
-            --sidebar-bg: #ffffff;
             --card-bg: #ffffff;
             --header-bg: #ffffff;
-            --shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow: 0 1px 3px rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1);
             --border-radius: 12px;
-            --transition: all 0.3s ease;
         }
 
-        /* Dark Mode */
         body.dark-mode {
             --bg-primary: #111827;
             --bg-secondary: #1f2937;
             --text-primary: #f3f4f6;
             --text-secondary: #9ca3af;
             --border-color: #374151;
-            --sidebar-bg: #1f2937;
             --card-bg: #1f2937;
             --header-bg: #1f2937;
-            --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
         }
 
         body {
@@ -490,7 +591,6 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
             line-height: 1.5;
             min-height: 100vh;
-            transition: background 0.3s ease, color 0.3s ease;
         }
 
         /* Header */
@@ -528,15 +628,7 @@ if (isset($_GET['msg'])) {
         .logo-text h1 {
             font-size: 1.25rem;
             font-weight: 700;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .logo-text p {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
+            color: var(--primary);
         }
 
         .user-area {
@@ -552,22 +644,8 @@ if (isset($_GET['msg'])) {
             background: var(--bg-primary);
             border-radius: 50%;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
             font-size: 1.1rem;
             color: var(--text-primary);
-            transition: all 0.2s;
-        }
-
-        .theme-toggle:hover {
-            background: var(--border-color);
-        }
-
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
         }
 
         .user-avatar {
@@ -580,21 +658,6 @@ if (isset($_GET['msg'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1rem;
-        }
-
-        .user-details {
-            text-align: right;
-        }
-
-        .user-name {
-            font-weight: 600;
-            font-size: 0.875rem;
-        }
-
-        .user-role {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
         }
 
         .logout-btn {
@@ -604,19 +667,12 @@ if (isset($_GET['msg'])) {
             border-radius: 8px;
             text-decoration: none;
             font-size: 0.75rem;
-            font-weight: 500;
-            transition: all 0.2s;
             display: flex;
             align-items: center;
             gap: 0.5rem;
         }
 
-        .logout-btn:hover {
-            background: #dc2626;
-            transform: translateY(-1px);
-        }
-
-        /* Dashboard Container */
+        /* Dashboard Layout */
         .dashboard-container {
             display: flex;
             max-width: 1400px;
@@ -627,7 +683,7 @@ if (isset($_GET['msg'])) {
         /* Sidebar */
         .sidebar {
             width: 260px;
-            background: var(--sidebar-bg);
+            background: var(--card-bg);
             border-right: 1px solid var(--border-color);
             padding: 1.5rem 0;
             position: sticky;
@@ -640,10 +696,6 @@ if (isset($_GET['msg'])) {
             list-style: none;
         }
 
-        .menu-item {
-            margin-bottom: 0.25rem;
-        }
-
         .menu-item a {
             display: flex;
             align-items: center;
@@ -651,25 +703,14 @@ if (isset($_GET['msg'])) {
             padding: 0.75rem 1.5rem;
             color: var(--text-primary);
             text-decoration: none;
-            transition: all 0.2s;
             border-left: 3px solid transparent;
             font-size: 0.85rem;
         }
 
-        .menu-item a:hover {
-            background: var(--bg-primary);
-            border-left-color: var(--primary);
-        }
-
-        .menu-item a.active {
+        .menu-item a:hover, .menu-item a.active {
             background: var(--bg-primary);
             border-left-color: var(--primary);
             color: var(--primary);
-        }
-
-        .menu-item i {
-            width: 20px;
-            text-align: center;
         }
 
         /* Main Content */
@@ -697,49 +738,25 @@ if (isset($_GET['msg'])) {
             gap: 0.5rem;
         }
 
+        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
             border: none;
             border-radius: 8px;
             cursor: pointer;
             font-weight: 500;
-            text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            transition: all 0.2s;
             font-size: 0.85rem;
+            text-decoration: none;
         }
 
-        .btn-primary {
-            background: var(--primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--primary-dark);
-            transform: translateY(-1px);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: white;
-        }
-
-        .btn-sm {
-            padding: 0.3rem 0.6rem;
-            font-size: 0.75rem;
-        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-warning { background: var(--warning); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
 
         /* Stats Cards */
         .stats-cards {
@@ -755,13 +772,6 @@ if (isset($_GET['msg'])) {
             border-radius: var(--border-radius);
             text-align: center;
             border: 1px solid var(--border-color);
-            box-shadow: var(--shadow);
-            transition: all 0.2s;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
         }
 
         .stat-number {
@@ -773,21 +783,19 @@ if (isset($_GET['msg'])) {
         .stat-label {
             font-size: 0.75rem;
             color: var(--text-secondary);
-            margin-top: 0.25rem;
         }
 
-        /* Filters Bar */
+        /* Filters */
         .filters-bar {
             background: var(--card-bg);
             padding: 1rem;
             border-radius: var(--border-radius);
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
             display: flex;
             gap: 1rem;
             flex-wrap: wrap;
             align-items: center;
             border: 1px solid var(--border-color);
-            box-shadow: var(--shadow);
         }
 
         .filter-group {
@@ -799,15 +807,12 @@ if (isset($_GET['msg'])) {
         .filter-group label {
             font-size: 0.8rem;
             color: var(--text-secondary);
-            font-weight: 500;
         }
 
-        .filter-group select,
-        .filter-group input {
+        .filter-group select, .search-box input {
             padding: 0.5rem;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            font-size: 0.8rem;
             background: var(--bg-primary);
             color: var(--text-primary);
         }
@@ -819,19 +824,14 @@ if (isset($_GET['msg'])) {
         }
 
         .search-box input {
-            padding: 0.5rem;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
             width: 250px;
-            background: var(--bg-primary);
-            color: var(--text-primary);
         }
 
         /* View Toggle */
         .view-toggle {
             display: flex;
             gap: 0.5rem;
-            margin-bottom: 1rem;
+            margin-left: 1rem;
         }
 
         .view-btn {
@@ -840,7 +840,6 @@ if (isset($_GET['msg'])) {
             border: 1px solid var(--border-color);
             border-radius: 6px;
             cursor: pointer;
-            transition: var(--transition);
             font-size: 0.75rem;
             color: var(--text-primary);
         }
@@ -860,162 +859,7 @@ if (isset($_GET['msg'])) {
             display: flex;
             gap: 0.8rem;
             align-items: center;
-            flex-wrap: wrap;
             border: 1px solid var(--border-color);
-            box-shadow: var(--shadow);
-        }
-
-        .bulk-actions-bar select {
-            padding: 0.4rem;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            font-size: 0.75rem;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-        }
-
-        /* Committee Grid */
-        .committee-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1.5rem;
-            margin-top: 0.5rem;
-        }
-
-        .member-card {
-            background: var(--card-bg);
-            border-radius: var(--border-radius);
-            overflow: hidden;
-            box-shadow: var(--shadow);
-            transition: all 0.3s;
-            border: 1px solid var(--border-color);
-        }
-
-        .member-card:hover {
-            transform: translateY(-3px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .member-image {
-            height: 180px;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .member-image img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            object-position: center top;
-        }
-
-        .member-image .placeholder {
-            font-size: 4rem;
-            color: rgba(255, 255, 255, 0.8);
-        }
-
-        .member-status {
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.65rem;
-            font-weight: 600;
-            background: var(--card-bg);
-            color: var(--text-primary);
-        }
-
-        .member-status.active {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .member-status.inactive {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        body.dark-mode .member-status.active {
-            background: rgba(16, 185, 129, 0.2);
-            color: var(--success);
-        }
-
-        body.dark-mode .member-status.inactive {
-            background: rgba(239, 68, 68, 0.2);
-            color: var(--danger);
-        }
-
-        .member-checkbox-wrapper {
-            position: absolute;
-            top: 12px;
-            left: 12px;
-            background: var(--card-bg);
-            border-radius: 6px;
-            padding: 4px;
-        }
-
-        .member-checkbox {
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }
-
-        .member-info {
-            padding: 1rem;
-        }
-
-        .member-name {
-            font-size: 1rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-        }
-
-        .member-role {
-            color: var(--primary);
-            font-size: 0.7rem;
-            font-weight: 600;
-            margin-bottom: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .member-details {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
-            margin-bottom: 0.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .member-details i {
-            width: 14px;
-            color: var(--primary);
-            font-size: 0.7rem;
-        }
-
-        .member-bio {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
-            margin: 0.75rem 0;
-            line-height: 1.4;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        .member-actions {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 0.75rem;
-            padding-top: 0.75rem;
-            border-top: 1px solid var(--border-color);
         }
 
         /* Table View */
@@ -1024,7 +868,6 @@ if (isset($_GET['msg'])) {
             border-radius: var(--border-radius);
             overflow-x: auto;
             border: 1px solid var(--border-color);
-            box-shadow: var(--shadow);
         }
 
         .members-table {
@@ -1044,9 +887,6 @@ if (isset($_GET['msg'])) {
             background: var(--bg-primary);
             font-weight: 600;
             font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-secondary);
         }
 
         .members-table tr:hover {
@@ -1058,13 +898,6 @@ if (isset($_GET['msg'])) {
             height: 40px;
             border-radius: 50%;
             object-fit: cover;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: bold;
-            font-size: 1rem;
         }
 
         .status-badge {
@@ -1095,6 +928,98 @@ if (isset($_GET['msg'])) {
             color: var(--danger);
         }
 
+        /* Grid View */
+        .committee-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .member-card {
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            transition: transform 0.2s;
+        }
+
+        .member-card:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .member-image {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+        }
+
+        .member-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center center;
+        }
+
+        .member-image .placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            font-size: 4rem;
+            color: rgba(255,255,255,0.8);
+        }
+
+        .member-status {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            background: var(--card-bg);
+            z-index: 2;
+        }
+
+        .member-checkbox-wrapper {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            background: var(--card-bg);
+            border-radius: 6px;
+            padding: 4px;
+            z-index: 2;
+        }
+
+        .member-info {
+            padding: 1rem;
+        }
+
+        .member-name {
+            font-size: 1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .member-role {
+            color: var(--primary);
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .member-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border-color);
+        }
+
         /* Modal */
         .modal {
             display: none;
@@ -1103,7 +1028,7 @@ if (isset($_GET['msg'])) {
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.5);
+            background: rgba(0,0,0,0.5);
             z-index: 1000;
             justify-content: center;
             align-items: center;
@@ -1117,12 +1042,10 @@ if (isset($_GET['msg'])) {
             background: var(--card-bg);
             border-radius: var(--border-radius);
             width: 90%;
-            max-width: 900px;
+            max-width: 800px;
             max-height: 90vh;
             overflow-y: auto;
             padding: 1.5rem;
-            border: 1px solid var(--border-color);
-            box-shadow: var(--shadow-md);
         }
 
         .modal-header {
@@ -1134,129 +1057,34 @@ if (isset($_GET['msg'])) {
             border-bottom: 1px solid var(--border-color);
         }
 
-        .modal-header h2 {
-            font-size: 1.25rem;
-            font-weight: 700;
-        }
-
         .close-modal {
             background: none;
             border: none;
             font-size: 1.5rem;
             cursor: pointer;
             color: var(--text-secondary);
-            transition: color 0.2s;
-            padding: 0.5rem;
-        }
-
-        .close-modal:hover {
-            color: var(--danger);
-        }
-
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1rem;
         }
 
         .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.25rem;
-        }
-
-        .form-group.full-width {
-            grid-column: span 2;
+            margin-bottom: 1rem;
         }
 
         .form-group label {
-            font-size: 0.8rem;
+            display: block;
+            margin-bottom: 0.25rem;
             font-weight: 600;
-            color: var(--text-secondary);
+            font-size: 0.8rem;
         }
 
         .form-group input,
         .form-group select,
         .form-group textarea {
+            width: 100%;
             padding: 0.6rem;
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            font-size: 0.85rem;
             background: var(--bg-primary);
             color: var(--text-primary);
-            transition: border-color 0.2s;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-
-        .form-group textarea {
-            resize: vertical;
-            min-height: 80px;
-        }
-
-        .form-group small {
-            font-size: 0.7rem;
-            color: var(--text-secondary);
-        }
-
-        .search-container {
-            position: relative;
-        }
-
-        .student-search-results {
-            position: absolute;
-            top: 100%;
-            left: 0;
-            right: 0;
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            max-height: 250px;
-            overflow-y: auto;
-            z-index: 1001;
-            display: none;
-            box-shadow: var(--shadow-md);
-        }
-
-        .student-result-item {
-            padding: 0.6rem;
-            cursor: pointer;
-            border-bottom: 1px solid var(--border-color);
-            transition: background 0.2s;
-        }
-
-        .student-result-item:hover {
-            background: var(--bg-primary);
-        }
-
-        .student-result-name {
-            font-weight: 600;
-            font-size: 0.8rem;
-        }
-
-        .student-result-reg {
-            font-size: 0.65rem;
-            color: var(--text-secondary);
-        }
-
-        .image-preview {
-            margin-top: 0.5rem;
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            overflow: hidden;
-            border: 2px solid var(--border-color);
-        }
-
-        .image-preview img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
         }
 
         .form-actions {
@@ -1268,39 +1096,37 @@ if (isset($_GET['msg'])) {
             border-top: 1px solid var(--border-color);
         }
 
-        /* Alert Messages */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: 8px;
             margin-bottom: 1rem;
-            font-size: 0.85rem;
         }
 
         .alert-success {
             background: #d4edda;
             color: #155724;
-            border: 1px solid #c3e6cb;
         }
 
         .alert-danger {
             background: #f8d7da;
             color: #721c24;
-            border: 1px solid #f5c6cb;
         }
 
-        body.dark-mode .alert-success {
-            background: rgba(16, 185, 129, 0.2);
-            color: var(--success);
-            border-color: rgba(16, 185, 129, 0.3);
+        .image-preview {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 2px solid var(--border-color);
         }
 
-        body.dark-mode .alert-danger {
-            background: rgba(239, 68, 68, 0.2);
-            color: var(--danger);
-            border-color: rgba(239, 68, 68, 0.3);
+        .image-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
-        /* Pagination */
         .pagination {
             display: flex;
             justify-content: center;
@@ -1308,116 +1134,79 @@ if (isset($_GET['msg'])) {
             margin-top: 1.5rem;
         }
 
-        .pagination a,
-        .pagination span {
+        .pagination a {
             padding: 0.5rem 0.75rem;
             border: 1px solid var(--border-color);
             border-radius: 6px;
             text-decoration: none;
             color: var(--primary);
-            background: var(--card-bg);
-            transition: all 0.2s;
-        }
-
-        .pagination a:hover {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
         }
 
         .pagination .active {
             background: var(--primary);
             color: white;
-            border-color: var(--primary);
         }
 
-        /* Empty State */
         .empty-state {
             text-align: center;
             padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        /* Sample Table Styles */
+        .sample-table-container {
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+        }
+
+        .sample-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.75rem;
+        }
+
+        .sample-table th,
+        .sample-table td {
+            padding: 0.5rem;
+            text-align: left;
+            border: 1px solid var(--border-color);
+        }
+
+        .sample-table th {
             background: var(--card-bg);
-            border-radius: var(--border-radius);
+            font-weight: 600;
         }
 
-        .empty-state i {
-            font-size: 3rem;
-            color: var(--text-secondary);
-            margin-bottom: 1rem;
-            opacity: 0.5;
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid var(--primary);
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 6px;
         }
 
-        .empty-state h3 {
-            font-size: 1rem;
-            margin-bottom: 0.5rem;
+        body.dark-mode .info-box {
+            background: rgba(0, 86, 179, 0.2);
         }
 
-        .empty-state p {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-        }
-
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-            .form-group.full-width {
-                grid-column: span 1;
-            }
+        .role-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.7rem;
         }
 
         @media (max-width: 768px) {
-            .sidebar {
-                display: none;
-            }
-            
-            .filters-bar {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
-            .search-box {
-                margin-left: 0;
-            }
-            
-            .search-box input {
-                width: 100%;
-            }
-            
-            .header-container {
-                padding: 0.75rem 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-            
-            .stats-cards {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .committee-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .stats-cards {
-                grid-template-columns: 1fr;
-            }
-            
-            .action-buttons {
-                flex-direction: column;
-            }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-            }
+            .sidebar { display: none; }
+            .search-box { margin-left: 0; width: 100%; }
+            .search-box input { width: 100%; }
+            .members-table { font-size: 0.7rem; }
+            .members-table th, .members-table td { padding: 0.5rem; }
+            .role-list { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -1425,28 +1214,18 @@ if (isset($_GET['msg'])) {
     <header class="header">
         <div class="header-container">
             <div class="logo-area">
-                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo-img">
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze" class="logo-img">
                 <div class="logo-text">
                     <h1>Isonga Admin</h1>
                     <p>RPSU Management System</p>
                 </div>
             </div>
             <div class="user-area">
-                <button class="theme-toggle" id="themeToggle" title="Toggle Dark/Light Mode">
-                    <i class="fas fa-moon"></i>
-                </button>
-                <div class="user-info">
-                    <div class="user-avatar">
-                        <?php echo strtoupper(substr($current_admin['full_name'] ?? 'A', 0, 1)); ?>
-                    </div>
-                    <div class="user-details">
-                        <div class="user-name"><?php echo htmlspecialchars($current_admin['full_name'] ?? 'Admin'); ?></div>
-                        <div class="user-role">System Administrator</div>
-                    </div>
+                <button class="theme-toggle" id="themeToggle"><i class="fas fa-moon"></i></button>
+                <div class="user-avatar">
+                    <?php echo strtoupper(substr($current_admin['full_name'] ?? 'A', 0, 1)); ?>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Logout?')">
-                    <i class="fas fa-sign-out-alt"></i> Logout
-                </a>
+                <a href="../auth/logout.php" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </div>
         </div>
     </header>
@@ -1455,34 +1234,29 @@ if (isset($_GET['msg'])) {
         <nav class="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item"><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li class="menu-item"><a href="users.php"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php" class="active"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
-                  <li class="menu-item"><a href="representative.php" class="active"><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
-                <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
                 <li class="menu-item"><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
-                <li class="menu-item"><a href="arbitration.php"><i class="fas fa-balance-scale"></i> Arbitration</a></li>
-                <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i> Support Tickets</a></li>
-                <li class="menu-item"><a href="gallery.php"><i class="fas fa-images"></i> Gallery</a></li>
-                <li class="menu-item"><a href="reports.php"><i class="fas fa-chart-bar"></i> Reports</a></li>
+                <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i> Tickets</a></li>
                 <li class="menu-item"><a href="settings.php"><i class="fas fa-cogs"></i> Settings</a></li>
             </ul>
         </nav>
 
         <main class="main-content">
-            <?php if ($message): ?>
+            <?php if (!empty($message)): ?>
                 <div class="alert alert-success"><?php echo htmlspecialchars($message); ?></div>
             <?php endif; ?>
-            <?php if ($error): ?>
+            <?php if (!empty($error)): ?>
                 <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
 
             <div class="page-header">
                 <h1><i class="fas fa-user-tie"></i> Committee Management</h1>
-                <button class="btn btn-primary" onclick="openAddModal()">
-                    <i class="fas fa-plus"></i> Add Committee Member
-                </button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="btn btn-primary" onclick="openAddModal()"><i class="fas fa-plus"></i> Add Member</button>
+                    <button class="btn btn-success" onclick="openImportModal()"><i class="fas fa-file-excel"></i> Import Excel</button>
+                </div>
             </div>
 
             <!-- Statistics Cards -->
@@ -1500,15 +1274,13 @@ if (isset($_GET['msg'])) {
             </div>
 
             <!-- Filters -->
-            <form method="GET" action="" class="filters-bar">
+            <form method="GET" class="filters-bar">
                 <div class="filter-group">
                     <label>Role:</label>
                     <select name="role" onchange="this.form.submit()">
                         <option value="">All Roles</option>
-                        <?php foreach ($available_roles as $key => $role_name): ?>
-                            <option value="<?php echo $key; ?>" <?php echo $role_filter === $key ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($role_name); ?>
-                            </option>
+                        <?php foreach ($available_roles as $key => $name): ?>
+                            <option value="<?php echo $key; ?>" <?php echo $role_filter === $key ? 'selected' : ''; ?>><?php echo htmlspecialchars($name); ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -1520,60 +1292,21 @@ if (isset($_GET['msg'])) {
                         <option value="inactive" <?php echo $status_filter === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
                     </select>
                 </div>
-                <div class="filter-group">
-                    <label>Department:</label>
-                    <select name="department" onchange="this.form.submit()">
-                        <option value="">All Departments</option>
-                        <?php foreach ($departments as $dept): ?>
-                            <option value="<?php echo $dept['id']; ?>" <?php echo $department_filter == $dept['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($dept['name']); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="filter-group">
-                    <label>Program:</label>
-                    <select name="program" id="program_filter" onchange="this.form.submit()">
-                        <option value="">All Programs</option>
-                        <?php 
-                        // Get programs for filter
-                        try {
-                            $stmt = $pdo->query("SELECT id, name FROM programs WHERE is_active = true ORDER BY name");
-                            $filter_programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                            foreach ($filter_programs as $prog): 
-                        ?>
-                            <option value="<?php echo $prog['id']; ?>" <?php echo $program_filter == $prog['id'] ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($prog['name']); ?>
-                            </option>
-                        <?php 
-                            endforeach;
-                        } catch (PDOException $e) {
-                            // Silently fail
-                        }
-                        ?>
-                    </select>
-                </div>
                 <div class="search-box">
                     <input type="text" name="search" placeholder="Search by name, email..." value="<?php echo htmlspecialchars($search); ?>">
                     <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-search"></i></button>
-                    <?php if ($search || $role_filter || $status_filter || $department_filter || $program_filter): ?>
+                    <?php if ($search || $role_filter || $status_filter): ?>
                         <a href="committee.php" class="btn btn-sm">Clear</a>
                     <?php endif; ?>
                 </div>
+                <div class="view-toggle">
+                    <button type="button" class="view-btn" id="tableViewBtn" onclick="toggleView('table')"><i class="fas fa-table"></i> Table</button>
+                    <button type="button" class="view-btn" id="gridViewBtn" onclick="toggleView('grid')"><i class="fas fa-th-large"></i> Grid</button>
+                </div>
             </form>
 
-            <!-- View Toggle -->
-            <div class="view-toggle">
-                <button class="view-btn active" onclick="toggleView('grid')" id="gridViewBtn">
-                    <i class="fas fa-th-large"></i> Grid View
-                </button>
-                <button class="view-btn" onclick="toggleView('table')" id="tableViewBtn">
-                    <i class="fas fa-table"></i> Table View
-                </button>
-            </div>
-
-            <!-- Bulk Actions -->
-            <form method="POST" action="" id="bulkForm">
+            <!-- Bulk Actions Form -->
+            <form method="POST" id="bulkForm">
                 <input type="hidden" name="action" value="bulk">
                 <div class="bulk-actions-bar">
                     <select name="bulk_action" id="bulk_action">
@@ -1585,94 +1318,20 @@ if (isset($_GET['msg'])) {
                     <button type="submit" class="btn btn-primary btn-sm" onclick="return confirmBulk()">Apply</button>
                 </div>
 
-                <!-- Grid View -->
-                <div id="gridView" class="committee-grid">
-                    <?php if (empty($committee_members)): ?>
-                        <div class="empty-state" style="grid-column: 1/-1;">
-                            <i class="fas fa-user-tie"></i>
-                            <h3>No committee members found</h3>
-                            <p>Click "Add Committee Member" to create one.</p>
-                        </div>
-                    <?php else: ?>
-                        <?php foreach ($committee_members as $member): ?>
-                            <div class="member-card">
-                                <div class="member-image">
-                                    <?php if (!empty($member['photo_url']) && file_exists('../' . $member['photo_url'])): ?>
-                                        <img src="../<?php echo htmlspecialchars($member['photo_url']); ?>" alt="<?php echo htmlspecialchars($member['name']); ?>">
-                                    <?php else: ?>
-                                        <div class="placeholder">
-                                            <i class="fas fa-user-circle"></i>
-                                        </div>
-                                    <?php endif; ?>
-                                    <div class="member-status <?php echo $member['status']; ?>">
-                                        <?php echo ucfirst($member['status']); ?>
-                                    </div>
-                                    <div class="member-checkbox-wrapper">
-                                        <input type="checkbox" name="selected_ids[]" value="<?php echo $member['id']; ?>" class="member-checkbox">
-                                    </div>
-                                </div>
-                                <div class="member-info">
-                                    <h3 class="member-name"><?php echo htmlspecialchars($member['name']); ?></h3>
-                                    <div class="member-role">
-                                        <?php 
-                                            $role_display = $available_roles[$member['role']] ?? str_replace('_', ' ', ucfirst($member['role']));
-                                            echo htmlspecialchars($role_display);
-                                        ?>
-                                    </div>
-                                    <?php if (!empty($member['reg_number'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-id-card"></i> <?php echo htmlspecialchars($member['reg_number']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['email'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-envelope"></i> <?php echo htmlspecialchars($member['email']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['department_name'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-building"></i> <?php echo htmlspecialchars($member['department_name']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['program_name'])): ?>
-                                        <div class="member-details">
-                                            <i class="fas fa-graduation-cap"></i> <?php echo htmlspecialchars($member['program_name']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($member['bio'])): ?>
-                                        <div class="member-bio"><?php echo htmlspecialchars(substr($member['bio'], 0, 80)); ?>...</div>
-                                    <?php endif; ?>
-                                    <div class="member-actions">
-                                        <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)">
-                                            <i class="fas fa-edit"></i> Edit
-                                        </button>
-                                        <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle member status?')">
-                                            <i class="fas fa-toggle-on"></i>
-                                        </a>
-                                        <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this member?')">
-                                            <i class="fas fa-trash"></i>
-                                        </a>
-                                    </div>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
-
-                <!-- Table View -->
-                <div id="tableView" class="members-table-container" style="display: none;">
+                <!-- Table View (Default) -->
+                <div id="tableView" class="members-table-container">
                     <table class="members-table">
                         <thead>
                             <tr>
-                                <th><input type="checkbox" class="select-all" onclick="toggleAll(this)"></th>
-                                <th>Photo</th>
+                                <th width="40"><input type="checkbox" id="selectAll" onclick="toggleAll(this)"></th>
+                                <th width="60">Photo</th>
                                 <th>Name</th>
                                 <th>Reg Number</th>
                                 <th>Role</th>
-                                <th>Department</th>
-                                <th>Program</th>
+                                <th>Email</th>
+                                <th>Phone</th>
                                 <th>Status</th>
-                                <th>Actions</th>
+                                <th width="120">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1680,9 +1339,9 @@ if (isset($_GET['msg'])) {
                                 <tr>
                                     <td colspan="9">
                                         <div class="empty-state">
-                                            <i class="fas fa-user-tie"></i>
+                                            <i class="fas fa-user-tie" style="font-size: 3rem; opacity: 0.5;"></i>
                                             <h3>No committee members found</h3>
-                                            <p>Click "Add Committee Member" to create one.</p>
+                                            <p>Click "Add Member" to create one.</p>
                                         </div>
                                     </td>
                                 </tr>
@@ -1694,27 +1353,21 @@ if (isset($_GET['msg'])) {
                                             <?php if (!empty($member['photo_url']) && file_exists('../' . $member['photo_url'])): ?>
                                                 <img src="../<?php echo htmlspecialchars($member['photo_url']); ?>" class="member-avatar-sm" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
                                             <?php else: ?>
-                                                <div class="member-avatar-sm" style="background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);">
+                                                <div class="member-avatar-sm" style="background: var(--primary); display: flex; align-items: center; justify-content: center; color: white;">
                                                     <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
                                                 </div>
                                             <?php endif; ?>
                                         </td>
                                         <td><strong><?php echo htmlspecialchars($member['name']); ?></strong></td>
                                         <td><?php echo htmlspecialchars($member['reg_number'] ?? '-'); ?></td>
-                                        <td><?php echo htmlspecialchars($available_roles[$member['role']] ?? str_replace('_', ' ', ucfirst($member['role']))); ?></td>
-                                        <td><?php echo htmlspecialchars($member['department_name'] ?? '-'); ?></td>
-                                        <td><?php echo htmlspecialchars($member['program_name'] ?? '-'); ?></td>
+                                        <td><?php echo htmlspecialchars($available_roles[$member['role']] ?? str_replace('_', ' ', $member['role'])); ?></td>
+                                        <td><?php echo htmlspecialchars($member['email'] ?? '-'); ?></td>
+                                        <td><?php echo htmlspecialchars($member['phone'] ?? '-'); ?></td>
                                         <td><span class="status-badge <?php echo $member['status']; ?>"><?php echo ucfirst($member['status']); ?></span></td>
-                                        <td class="action-buttons">
-                                            <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                            <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')">
-                                                <i class="fas fa-toggle-on"></i>
-                                            </a>
-                                            <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')">
-                                                <i class="fas fa-trash"></i>
-                                            </a>
+                                        <td>
+                                            <button class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i></button>
+                                            <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')"><i class="fas fa-toggle-on"></i></a>
+                                            <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this member?')"><i class="fas fa-trash"></i></a>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -1722,128 +1375,118 @@ if (isset($_GET['msg'])) {
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Grid View (Hidden by default) -->
+                <div id="gridView" class="committee-grid" style="display: none;">
+                    <?php if (!empty($committee_members)): ?>
+                        <?php foreach ($committee_members as $member): ?>
+                            <div class="member-card">
+                                <div class="member-image">
+                                    <?php if (!empty($member['photo_url']) && file_exists('../' . $member['photo_url'])): ?>
+                                        <img src="../<?php echo htmlspecialchars($member['photo_url']); ?>" alt="<?php echo htmlspecialchars($member['name']); ?>">
+                                    <?php else: ?>
+                                        <div class="placeholder"><i class="fas fa-user-circle"></i></div>
+                                    <?php endif; ?>
+                                    <div class="member-status <?php echo $member['status']; ?>"><?php echo ucfirst($member['status']); ?></div>
+                                    <div class="member-checkbox-wrapper">
+                                        <input type="checkbox" name="selected_ids[]" value="<?php echo $member['id']; ?>" class="member-checkbox">
+                                    </div>
+                                </div>
+                                <div class="member-info">
+                                    <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
+                                    <div class="member-role"><?php echo htmlspecialchars($available_roles[$member['role']] ?? str_replace('_', ' ', $member['role'])); ?></div>
+                                    <div class="member-actions">
+                                        <button class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i> Edit</button>
+                                        <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')"><i class="fas fa-toggle-on"></i></a>
+                                        <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')"><i class="fas fa-trash"></i></a>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
             </form>
 
             <!-- Pagination -->
             <?php if ($total_pages > 1): ?>
                 <div class="pagination">
                     <?php if ($page > 1): ?>
-                        <a href="?page=<?php echo $page-1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>&department=<?php echo $department_filter; ?>&program=<?php echo $program_filter; ?>">
-                            <i class="fas fa-chevron-left"></i> Previous
-                        </a>
+                        <a href="?page=<?php echo $page-1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>"><i class="fas fa-chevron-left"></i> Prev</a>
                     <?php endif; ?>
-                    
                     <?php for ($i = max(1, $page-2); $i <= min($total_pages, $page+2); $i++): ?>
-                        <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>&department=<?php echo $department_filter; ?>&program=<?php echo $program_filter; ?>" 
-                           class="<?php echo $i == $page ? 'active' : ''; ?>">
-                            <?php echo $i; ?>
-                        </a>
+                        <a href="?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>" class="<?php echo $i == $page ? 'active' : ''; ?>"><?php echo $i; ?></a>
                     <?php endfor; ?>
-                    
                     <?php if ($page < $total_pages): ?>
-                        <a href="?page=<?php echo $page+1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>&department=<?php echo $department_filter; ?>&program=<?php echo $program_filter; ?>">
-                            Next <i class="fas fa-chevron-right"></i>
-                        </a>
+                        <a href="?page=<?php echo $page+1; ?>&search=<?php echo urlencode($search); ?>&role=<?php echo $role_filter; ?>&status=<?php echo $status_filter; ?>">Next <i class="fas fa-chevron-right"></i></a>
                     <?php endif; ?>
                 </div>
             <?php endif; ?>
         </main>
     </div>
 
-    <!-- Add/Edit Member Modal -->
+    <!-- Add/Edit Modal -->
     <div id="memberModal" class="modal">
-        <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="modal-content">
             <div class="modal-header">
                 <h2 id="modalTitle">Add Committee Member</h2>
                 <button class="close-modal" onclick="closeModal()">&times;</button>
             </div>
-            <form method="POST" action="" id="memberForm" enctype="multipart/form-data">
+            <form method="POST" enctype="multipart/form-data" id="memberForm">
                 <input type="hidden" name="action" id="formAction" value="add">
-                <input type="hidden" name="member_id" id="memberId" value="">
-                <input type="hidden" name="user_id" id="user_id" value="">
-                
-                <div class="form-grid">
-                    <div class="form-group full-width">
-                        <label>Search Student</label>
-                        <div class="search-container">
-                            <input type="text" id="studentSearch" class="search-input" placeholder="Type reg number or name to search..." autocomplete="off">
-                            <div id="studentSearchResults" class="student-search-results"></div>
-                        </div>
-                        <small>Search for existing students to auto-fill their information</small>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>Full Name *</label>
-                        <input type="text" name="name" id="name" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Registration Number</label>
-                        <input type="text" name="reg_number" id="reg_number">
-                    </div>
-                    <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" name="email" id="email">
-                    </div>
-                    <div class="form-group">
-                        <label>Phone</label>
-                        <input type="text" name="phone" id="phone">
-                    </div>
-                    <div class="form-group">
-                        <label>Role *</label>
-                        <select name="role" id="role" required>
-                            <option value="">Select Role</option>
-                            <?php foreach ($available_roles as $key => $role_name): ?>
-                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($role_name); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Role Order</label>
-                        <input type="number" name="role_order" id="role_order" value="0">
-                    </div>
-                    <div class="form-group">
-                        <label>Department</label>
-                        <select name="department_id" id="department_id">
-                            <option value="">Select Department</option>
-                            <?php foreach ($departments as $dept): ?>
-                                <option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['name']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Program</label>
-                        <select name="program_id" id="program_id">
-                            <option value="">Select Program</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Academic Year</label>
-                        <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
-                    </div>
-                    <div class="form-group full-width">
-                        <label>Bio</label>
-                        <textarea name="bio" id="bio" rows="2" placeholder="Brief biography..."></textarea>
-                    </div>
-                    <div class="form-group full-width">
-                        <label>Portfolio Description</label>
-                        <textarea name="portfolio_description" id="portfolio_description" rows="2" placeholder="Responsibilities..."></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label>Profile Photo</label>
-                        <input type="file" name="photo" id="photo" accept="image/*" onchange="previewImage(this)">
-                        <div id="imagePreview" class="image-preview" style="display: none;">
-                            <img id="previewImg" src="" alt="Preview">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label>Status</label>
-                        <select name="status" id="status">
-                            <option value="active">Active</option>
-                            <option value="inactive">Inactive</option>
-                        </select>
-                    </div>
+                <input type="hidden" name="member_id" id="memberId">
+                <div class="form-group">
+                    <label>Full Name *</label>
+                    <input type="text" name="name" id="name" required>
                 </div>
-                
+                <div class="form-group">
+                    <label>Registration Number</label>
+                    <input type="text" name="reg_number" id="reg_number">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" id="email">
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="text" name="phone" id="phone">
+                </div>
+                <div class="form-group">
+                    <label>Role *</label>
+                    <select name="role" id="role" required>
+                        <option value="">Select Role</option>
+                        <?php foreach ($available_roles as $key => $name): ?>
+                            <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($name); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Role Order</label>
+                    <input type="number" name="role_order" id="role_order" value="0">
+                </div>
+                <div class="form-group">
+                    <label>Academic Year</label>
+                    <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
+                </div>
+                <div class="form-group">
+                    <label>Bio</label>
+                    <textarea name="bio" id="bio" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Portfolio Description</label>
+                    <textarea name="portfolio_description" id="portfolio_description" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Profile Photo</label>
+                    <input type="file" name="photo" id="photo" accept="image/*" onchange="previewImage(this)">
+                    <div id="imagePreview" class="image-preview" style="display: none;"></div>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select name="status" id="status">
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                </div>
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save Member</button>
@@ -1852,49 +1495,162 @@ if (isset($_GET['msg'])) {
         </div>
     </div>
 
+    <!-- Import Modal with Sample Data -->
+    <div id="importModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2><i class="fas fa-file-excel"></i> Import Committee Members</h2>
+                <button class="close-modal" onclick="closeImportModal()">&times;</button>
+            </div>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="action" value="import_excel">
+                <div class="form-group">
+                    <label>Select CSV File</label>
+                    <input type="file" name="excel_file" accept=".csv" required>
+                    <small>Supported format: CSV only (UTF-8 encoding recommended)</small>
+                </div>
+
+                <!-- Sample Data Section -->
+                <div class="info-box">
+                    <strong><i class="fas fa-info-circle"></i> Required Columns:</strong>
+                    <p><strong>name</strong> (required), <strong>role</strong> (required), <strong>email</strong>, <strong>reg_number</strong>, <strong>phone</strong>, <strong>academic_year</strong>, <strong>status</strong> (active/inactive)</p>
+                </div>
+
+                <div class="sample-table-container">
+                    <h4 style="margin-bottom: 0.5rem;"><i class="fas fa-table"></i> Sample Excel Format</h4>
+                    <table class="sample-table">
+                        <thead>
+                            <tr>
+                                <th>name</th>
+                                <th>role</th>
+                                <th>email</th>
+                                <th>reg_number</th>
+                                <th>phone</th>
+                                <th>status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>John Mwiza</td>
+                                <td>guild_president</td>
+                                <td>john.mwiza@rpsu.rw</td>
+                                <td>2024-GP001</td>
+                                <td>0788123456</td>
+                                <td>active</td>
+                            </tr>
+                            <tr>
+                                <td>Alice Uwase</td>
+                                <td>vice_guild_finance</td>
+                                <td>alice.uwase@rpsu.rw</td>
+                                <td>2024-VF001</td>
+                                <td>0788234567</td>
+                                <td>active</td>
+                            </tr>
+                            <tr>
+                                <td>Peter Ndayisaba</td>
+                                <td>general_secretary</td>
+                                <td>peter.ndayisaba@rpsu.rw</td>
+                                <td>2024-GS001</td>
+                                <td>0788345678</td>
+                                <td>active</td>
+                            </tr>
+                            <tr>
+                                <td>Jean Claude Habimana</td>
+                                <td>minister_sports</td>
+                                <td>jean.habimana@rpsu.rw</td>
+                                <td>2024-MS001</td>
+                                <td>0788456789</td>
+                                <td>inactive</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="info-box">
+                    <strong><i class="fas fa-list"></i> Available Role Values:</strong>
+                    <div class="role-list">
+                        <span>• guild_president</span>
+                        <span>• vice_guild_academic</span>
+                        <span>• vice_guild_finance</span>
+                        <span>• general_secretary</span>
+                        <span>• minister_sports</span>
+                        <span>• minister_environment</span>
+                        <span>• minister_public_relations</span>
+                        <span>• minister_health</span>
+                        <span>• minister_culture</span>
+                        <span>• minister_gender</span>
+                        <span>• president_representative_board</span>
+                        <span>• vice_president_representative_board</span>
+                        <span>• secretary_representative_board</span>
+                        <span>• president_arbitration</span>
+                        <span>• vice_president_arbitration</span>
+                        <span>• advisor_arbitration</span>
+                        <span>• secretary_arbitration</span>
+                    </div>
+                </div>
+
+                <div class="info-box">
+                    <strong><i class="fas fa-download"></i> Download Sample:</strong>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="downloadSampleCSV()" style="margin-left: 0.5rem;">
+                        <i class="fas fa-download"></i> Download Sample CSV
+                    </button>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeImportModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Import Members</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
-        // Dark/Light Mode Toggle
+        // Theme Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
-        
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        if (savedTheme === 'dark') {
+        if (localStorage.getItem('theme') === 'dark') {
             body.classList.add('dark-mode');
             themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        } else {
-            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
         }
-        
         themeToggle.addEventListener('click', () => {
             body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            localStorage.setItem('theme', body.classList.contains('dark-mode') ? 'dark' : 'light');
+            themeToggle.innerHTML = body.classList.contains('dark-mode') ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
-        
-        let currentView = 'grid';
-        
-        // View Toggle
+
+        // View Toggle - Default Table View
+        let currentView = 'table';
+
         function toggleView(view) {
-            currentView = view;
-            const gridView = document.getElementById('gridView');
             const tableView = document.getElementById('tableView');
-            const gridBtn = document.getElementById('gridViewBtn');
+            const gridView = document.getElementById('gridView');
             const tableBtn = document.getElementById('tableViewBtn');
+            const gridBtn = document.getElementById('gridViewBtn');
             
-            if (view === 'grid') {
-                gridView.style.display = 'grid';
-                tableView.style.display = 'none';
-                gridBtn.classList.add('active');
-                tableBtn.classList.remove('active');
-            } else {
-                gridView.style.display = 'none';
+            if (view === 'table') {
                 tableView.style.display = 'block';
-                gridBtn.classList.remove('active');
+                gridView.style.display = 'none';
                 tableBtn.classList.add('active');
+                gridBtn.classList.remove('active');
+                currentView = 'table';
+            } else {
+                tableView.style.display = 'none';
+                gridView.style.display = 'grid';
+                tableBtn.classList.remove('active');
+                gridBtn.classList.add('active');
+                currentView = 'grid';
             }
+            localStorage.setItem('committee_view', view);
         }
-        
+
+        // Load saved view preference
+        const savedView = localStorage.getItem('committee_view');
+        if (savedView === 'grid') {
+            toggleView('grid');
+        } else {
+            toggleView('table');
+        }
+
         // Modal functions
         function openAddModal() {
             document.getElementById('modalTitle').textContent = 'Add Committee Member';
@@ -1902,22 +1658,13 @@ if (isset($_GET['msg'])) {
             document.getElementById('memberId').value = '';
             document.getElementById('memberForm').reset();
             document.getElementById('imagePreview').style.display = 'none';
-            document.getElementById('studentSearch').value = '';
-            document.getElementById('user_id').value = '';
-            document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
             document.getElementById('memberModal').classList.add('active');
-            document.body.classList.add('modal-open');
         }
-        
-        function openEditModal(memberId) {
-            fetch(`committee.php?get_member=1&id=${memberId}`)
-                .then(response => response.json())
+
+        function openEditModal(id) {
+            fetch(`committee.php?get_member=1&id=${id}`)
+                .then(res => res.json())
                 .then(member => {
-                    if (member.error) {
-                        alert('Error loading member data');
-                        return;
-                    }
-                    
                     document.getElementById('modalTitle').textContent = 'Edit Committee Member';
                     document.getElementById('formAction').value = 'edit';
                     document.getElementById('memberId').value = member.id;
@@ -1927,195 +1674,95 @@ if (isset($_GET['msg'])) {
                     document.getElementById('phone').value = member.phone || '';
                     document.getElementById('role').value = member.role;
                     document.getElementById('role_order').value = member.role_order || 0;
-                    document.getElementById('department_id').value = member.department_id || '';
                     document.getElementById('academic_year').value = member.academic_year || '';
                     document.getElementById('bio').value = member.bio || '';
                     document.getElementById('portfolio_description').value = member.portfolio_description || '';
                     document.getElementById('status').value = member.status;
-                    document.getElementById('user_id').value = member.user_id || '';
                     
-                    if (member.department_id) {
-                        loadPrograms(member.department_id, member.program_id);
-                    } else {
-                        document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
-                    }
-                    
-                    if (member.photo_url && member.photo_url !== 'null') {
+                    if (member.photo_url) {
                         const preview = document.getElementById('imagePreview');
-                        const previewImg = document.getElementById('previewImg');
-                        previewImg.src = '../' + member.photo_url;
+                        preview.innerHTML = `<img src="../${member.photo_url}" alt="Preview">`;
                         preview.style.display = 'block';
-                    } else {
-                        document.getElementById('imagePreview').style.display = 'none';
                     }
-                    
                     document.getElementById('memberModal').classList.add('active');
-                    document.body.classList.add('modal-open');
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('Error loading member data');
                 });
         }
-        
+
         function closeModal() {
             document.getElementById('memberModal').classList.remove('active');
-            document.body.classList.remove('modal-open');
         }
-        
-        // Load programs based on department
-        function loadPrograms(departmentId, selectedProgramId = null) {
-            if (!departmentId) {
-                document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
-                return;
-            }
-            
-            fetch(`committee.php?get_programs=1&department_id=${departmentId}`)
-                .then(response => response.json())
-                .then(programs => {
-                    let options = '<option value="">Select Program</option>';
-                    if (!programs.error && programs.length > 0) {
-                        programs.forEach(program => {
-                            const selected = selectedProgramId == program.id ? 'selected' : '';
-                            options += `<option value="${program.id}" ${selected}>${escapeHtml(program.name)}</option>`;
-                        });
-                    }
-                    document.getElementById('program_id').innerHTML = options;
-                })
-                .catch(error => {
-                    console.error('Error loading programs:', error);
-                });
+
+        function openImportModal() {
+            document.getElementById('importModal').classList.add('active');
         }
-        
-        document.getElementById('department_id').addEventListener('change', function() {
-            loadPrograms(this.value);
-        });
-        
-        // Image preview - circular
+
+        function closeImportModal() {
+            document.getElementById('importModal').classList.remove('active');
+        }
+
         function previewImage(input) {
             const preview = document.getElementById('imagePreview');
-            const previewImg = document.getElementById('previewImg');
-            
             if (input.files && input.files[0]) {
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    previewImg.src = e.target.result;
+                    preview.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
                     preview.style.display = 'block';
                 };
                 reader.readAsDataURL(input.files[0]);
-            } else {
-                preview.style.display = 'none';
             }
         }
-        
-        // Student search
-        let searchTimeout;
-        const studentSearch = document.getElementById('studentSearch');
-        const searchResults = document.getElementById('studentSearchResults');
-        
-        if (studentSearch) {
-            studentSearch.addEventListener('input', function() {
-                clearTimeout(searchTimeout);
-                const query = this.value.trim();
-                
-                if (query.length < 2) {
-                    searchResults.style.display = 'none';
-                    return;
-                }
-                
-                searchTimeout = setTimeout(() => {
-                    fetch(`committee.php?search_students=1&search=${encodeURIComponent(query)}`)
-                        .then(response => response.json())
-                        .then(students => {
-                            if (students.error || students.length === 0) {
-                                searchResults.innerHTML = '<div class="student-result-item">No students found</div>';
-                                searchResults.style.display = 'block';
-                                return;
-                            }
-                            
-                            let html = '';
-                            students.forEach(student => {
-                                html += `
-                                    <div class="student-result-item" onclick="selectStudent(${student.id}, '${escapeHtml(student.full_name)}', '${escapeHtml(student.reg_number || '')}', '${escapeHtml(student.email || '')}', '${escapeHtml(student.phone || '')}', ${student.department_id || 'null'}, ${student.program_id || 'null'})">
-                                        <div class="student-result-name">${escapeHtml(student.full_name)}</div>
-                                        <div class="student-result-reg">${escapeHtml(student.reg_number || 'No reg number')} | ${escapeHtml(student.email || 'No email')}</div>
-                                    </div>
-                                `;
-                            });
-                            searchResults.innerHTML = html;
-                            searchResults.style.display = 'block';
-                        });
-                }, 300);
-            });
-        }
-        
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-        
-        function selectStudent(userId, fullName, regNumber, email, phone, departmentId, programId) {
-            document.getElementById('name').value = fullName;
-            document.getElementById('reg_number').value = regNumber;
-            document.getElementById('email').value = email;
-            document.getElementById('phone').value = phone;
-            document.getElementById('user_id').value = userId;
-            
-            if (departmentId && departmentId !== 'null') {
-                document.getElementById('department_id').value = departmentId;
-                loadPrograms(departmentId, programId !== 'null' ? programId : null);
-            }
-            
-            studentSearch.value = fullName;
-            searchResults.style.display = 'none';
-        }
-        
-        // Close search results when clicking outside
-        document.addEventListener('click', function(event) {
-            if (studentSearch && !studentSearch.contains(event.target) && searchResults && !searchResults.contains(event.target)) {
-                if (searchResults) searchResults.style.display = 'none';
-            }
-        });
-        
-        // Bulk actions
+
         function toggleAll(source) {
-            const checkboxes = document.querySelectorAll('.member-checkbox');
-            checkboxes.forEach(cb => cb.checked = source.checked);
+            document.querySelectorAll('.member-checkbox').forEach(cb => cb.checked = source.checked);
         }
-        
+
         function confirmBulk() {
             const action = document.getElementById('bulk_action').value;
             const checked = document.querySelectorAll('.member-checkbox:checked').length;
-            
-            if (!action) {
-                alert('Please select an action');
-                return false;
-            }
-            
-            if (checked === 0) {
-                alert('Please select at least one member');
-                return false;
-            }
-            
-            return confirm(`Are you sure you want to ${action} ${checked} member(s)?`);
+            if (!action) { alert('Select an action'); return false; }
+            if (checked === 0) { alert('Select members'); return false; }
+            return confirm(`${action} ${checked} member(s)?`);
         }
-        
-        // Close modal on outside click
-        window.onclick = function(event) {
-            const modal = document.getElementById('memberModal');
-            if (event.target === modal) {
-                closeModal();
+
+        // Update the downloadSampleCSV function in the JavaScript section
+function downloadSampleCSV() {
+    // Create sample data without BOM issues
+    const sampleData = [
+        ['name', 'role', 'email', 'reg_number', 'phone', 'academic_year', 'status'],
+        ['John Mwiza', 'guild_president', 'john.mwiza@rpsu.rw', '2024-GP001', '0788123456', '2024-2025', 'active'],
+        ['Alice Uwase', 'vice_guild_finance', 'alice.uwase@rpsu.rw', '2024-VF001', '0788234567', '2024-2025', 'active'],
+        ['Peter Ndayisaba', 'general_secretary', 'peter.ndayisaba@rpsu.rw', '2024-GS001', '0788345678', '2024-2025', 'active'],
+        ['Jean Claude Habimana', 'minister_sports', 'jean.habimana@rpsu.rw', '2024-MS001', '0788456789', '2024-2025', 'active']
+    ];
+    
+    // Convert to CSV - NO BOM to avoid header issues
+    const csvContent = sampleData.map(row => {
+        return row.map(cell => {
+            // Escape quotes and wrap in quotes if needed
+            if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))) {
+                return '"' + cell.replace(/"/g, '""') + '"';
             }
-        }
-        
-        // Prevent modal content click from bubbling
-        document.querySelectorAll('.modal-content').forEach(content => {
-            content.addEventListener('click', function(e) {
-                e.stopPropagation();
-            });
-        });
+            return cell;
+        }).join(',');
+    }).join('\n');
+    
+    // Use standard CSV without BOM
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', 'committee_sample.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+        window.onclick = function(e) {
+            if (e.target.classList.contains('modal')) closeModal();
+            if (e.target.classList.contains('modal')) closeImportModal();
+        };
     </script>
 </body>
 </html>
