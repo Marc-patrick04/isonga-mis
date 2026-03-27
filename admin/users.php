@@ -32,6 +32,27 @@ try {
     error_log("Error fetching departments: " . $e->getMessage());
 }
 
+// Get committee roles for display
+$committee_roles = [
+    'guild_president' => 'Guild President',
+    'vice_guild_academic' => 'Vice Guild President - Academic',
+    'vice_guild_finance' => 'Vice Guild President - Finance',
+    'general_secretary' => 'General Secretary',
+    'minister_sports' => 'Minister of Sports',
+    'minister_environment' => 'Minister of Environment',
+    'minister_public_relations' => 'Minister of Public Relations',
+    'minister_health' => 'Minister of Health',
+    'minister_culture' => 'Minister of Culture',
+    'minister_gender' => 'Minister of Gender',
+    'president_representative_board' => 'President - Rep Board',
+    'vice_president_representative_board' => 'Vice President - Rep Board',
+    'secretary_representative_board' => 'Secretary - Rep Board',
+    'president_arbitration' => 'President - Arbitration',
+    'vice_president_arbitration' => 'Vice President - Arbitration',
+    'advisor_arbitration' => 'Advisor - Arbitration',
+    'secretary_arbitration' => 'Secretary - Arbitration'
+];
+
 // Handle Add User
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
@@ -51,6 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 throw new Exception("Email '{$_POST['email']}' already exists.");
             }
             
+            // If role is committee, also add to committee_members table
             $stmt = $pdo->prepare("
                 INSERT INTO users (
                     reg_number, username, password, role, full_name, email, phone, 
@@ -88,6 +110,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 !empty($_POST['program_id']) ? $_POST['program_id'] : null,
                 $_SESSION['user_id']
             ]);
+            
+            $new_user_id = $pdo->lastInsertId();
+            
+            // If role is committee, add to committee_members table
+            if ($_POST['role'] === 'committee') {
+                $committee_stmt = $pdo->prepare("
+                    INSERT INTO committee_members (
+                        user_id, name, role, reg_number, email, phone, 
+                        department_id, program_id, academic_year, 
+                        status, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW())
+                ");
+                $committee_stmt->execute([
+                    $new_user_id,
+                    $_POST['full_name'],
+                    $_POST['committee_role'] ?? 'general_secretary',
+                    $_POST['reg_number'] ?? null,
+                    $_POST['email'],
+                    $_POST['phone'] ?? null,
+                    !empty($_POST['department_id']) ? $_POST['department_id'] : null,
+                    !empty($_POST['program_id']) ? $_POST['program_id'] : null,
+                    $_POST['academic_year'] ?? null,
+                    $_SESSION['user_id']
+                ]);
+            }
             
             $message = "User created successfully!";
             header("Location: users.php?msg=" . urlencode($message));
@@ -145,6 +192,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             
+            // Update committee_members if user is committee
+            if ($_POST['role'] === 'committee') {
+                $committee_update = [];
+                $committee_params = [];
+                
+                $committee_fields = ['name' => 'full_name', 'reg_number' => 'reg_number', 'email' => 'email', 'phone' => 'phone', 
+                                     'department_id' => 'department_id', 'program_id' => 'program_id', 'academic_year' => 'academic_year'];
+                
+                foreach ($committee_fields as $cm_field => $form_field) {
+                    if (isset($_POST[$form_field])) {
+                        $committee_update[] = "$cm_field = ?";
+                        $committee_params[] = $_POST[$form_field] !== '' ? $_POST[$form_field] : null;
+                    }
+                }
+                
+                if (!empty($_POST['committee_role'])) {
+                    $committee_update[] = "role = ?";
+                    $committee_params[] = $_POST['committee_role'];
+                }
+                
+                if (!empty($committee_update)) {
+                    $committee_update[] = "updated_at = NOW()";
+                    $committee_params[] = $user_id_edit;
+                    
+                    $committee_sql = "UPDATE committee_members SET " . implode(", ", $committee_update) . " WHERE user_id = ?";
+                    $committee_stmt = $pdo->prepare($committee_sql);
+                    $committee_stmt->execute($committee_params);
+                }
+            }
+            
             $message = "User updated successfully!";
             header("Location: users.php?msg=" . urlencode($message));
             exit();
@@ -199,6 +276,10 @@ if (isset($_GET['toggle_status']) && isset($_GET['id'])) {
         $stmt = $pdo->prepare("UPDATE users SET status = ? WHERE id = ?");
         $stmt->execute([$new_status, $user_id_toggle]);
         
+        // Also update committee_members status if exists
+        $cm_stmt = $pdo->prepare("UPDATE committee_members SET status = ? WHERE user_id = ?");
+        $cm_stmt->execute([$new_status, $user_id_toggle]);
+        
         $message = "User status updated successfully!";
         header("Location: users.php?msg=" . urlencode($message));
         exit();
@@ -213,6 +294,11 @@ if (isset($_GET['delete']) && isset($_GET['id'])) {
     try {
         $stmt = $pdo->prepare("UPDATE users SET deleted_at = NOW(), status = 'deleted' WHERE id = ?");
         $stmt->execute([$user_id_delete]);
+        
+        // Also update committee_members status
+        $cm_stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive' WHERE user_id = ?");
+        $cm_stmt->execute([$user_id_delete]);
+        
         $message = "User deleted successfully!";
         header("Location: users.php?msg=" . urlencode($message));
         exit();
@@ -225,7 +311,12 @@ if (isset($_GET['delete']) && isset($_GET['id'])) {
 if (isset($_GET['get_user']) && isset($_GET['id'])) {
     header('Content-Type: application/json');
     try {
-        $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+        $stmt = $pdo->prepare("
+            SELECT u.*, cm.role as committee_role 
+            FROM users u
+            LEFT JOIN committee_members cm ON u.id = cm.user_id
+            WHERE u.id = ?
+        ");
         $stmt->execute([$_GET['id']]);
         $user_data = $stmt->fetch(PDO::FETCH_ASSOC);
         echo json_encode($user_data);
@@ -302,10 +393,12 @@ try {
 
 try {
     $sql = "
-        SELECT u.*, d.name as department_name, p.name as program_name
+        SELECT u.*, d.name as department_name, p.name as program_name,
+               cm.role as committee_role, cm.id as committee_id
         FROM users u
         LEFT JOIN departments d ON u.department_id = d.id
         LEFT JOIN programs p ON u.program_id = p.id
+        LEFT JOIN committee_members cm ON u.id = cm.user_id
         WHERE $where_clause
         ORDER BY u.created_at DESC
         LIMIT $limit OFFSET $offset
@@ -640,7 +733,7 @@ if (isset($_GET['msg'])) {
             font-size: 0.75rem;
         }
 
-        /* Stats Cards - Like departments.php */
+        /* Stats Cards */
         .stats-cards {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -675,7 +768,7 @@ if (isset($_GET['msg'])) {
             margin-top: 0.25rem;
         }
 
-        /* Filters Bar - Like departments.php */
+        /* Filters Bar */
         .filters-bar {
             background: var(--card-bg);
             padding: 1rem;
@@ -726,7 +819,7 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
         }
 
-        /* Bulk Actions - Like departments.php */
+        /* Bulk Actions */
         .bulk-actions-bar {
             background: var(--card-bg);
             padding: 0.8rem;
@@ -749,7 +842,7 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
         }
 
-        /* Users Table Container - Like departments.php */
+        /* Users Table Container */
         .users-table-container {
             background: var(--card-bg);
             border-radius: var(--border-radius);
@@ -766,7 +859,7 @@ if (isset($_GET['msg'])) {
 
         .users-table th,
         .users-table td {
-            padding: 0.55rem;
+            padding: 0.75rem;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
         }
@@ -784,7 +877,7 @@ if (isset($_GET['msg'])) {
             background: var(--bg-primary);
         }
 
-        /* Status Badges - Like departments.php */
+        /* Status Badges */
         .status-badge {
             padding: 0.2rem 0.6rem;
             border-radius: 20px;
@@ -814,10 +907,10 @@ if (isset($_GET['msg'])) {
         }
 
         .role-badge {
-            padding: 0px;
+            padding: 0.2rem 0.6rem;
             border-radius: 3px;
             font-size: 0.7rem;
-            font-weight: 200;
+            font-weight: 600;
             display: inline-block;
         }
 
@@ -851,13 +944,20 @@ if (isset($_GET['msg'])) {
             color: var(--warning);
         }
 
+        .committee-role {
+            display: block;
+            font-size: 0.65rem;
+            color: var(--text-secondary);
+            margin-top: 0.2rem;
+        }
+
         .action-buttons {
             display: flex;
             gap: 0.4rem;
             flex-wrap: wrap;
         }
 
-        /* Modal - Like departments.php */
+        /* Modal */
         .modal {
             display: none;
             position: fixed;
@@ -1019,7 +1119,7 @@ if (isset($_GET['msg'])) {
             border-color: rgba(239, 68, 68, 0.3);
         }
 
-        /* Pagination - Like departments.php */
+        /* Pagination */
         .pagination {
             display: flex;
             justify-content: center;
@@ -1125,11 +1225,6 @@ if (isset($_GET['msg'])) {
             .stats-cards {
                 grid-template-columns: repeat(2, 1fr);
             }
-            
-            .users-table th,
-            .users-table td {
-                padding: 0.1rem;
-            }
         }
 
         @media (max-width: 480px) {
@@ -1185,7 +1280,7 @@ if (isset($_GET['msg'])) {
                 <li class="menu-item"><a href="users.php" class="active"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
-                  <li class="menu-item"><a href="representative.php" ><i class="fas fa-user-check"></i> Class Representatives</a></li>
+                <li class="menu-item"><a href="representative.php" ><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
                 <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
                 <li class="menu-item"><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
@@ -1218,12 +1313,7 @@ if (isset($_GET['msg'])) {
                     <div class="stat-number"><?php echo $total_users; ?></div>
                     <div class="stat-label">Total Users</div>
                 </div>
-                <!-- <?php foreach ($role_stats as $stat): ?>
-                    <div class="stat-card">
-                        <div class="stat-number"><?php echo $stat['count']; ?></div>
-                        <div class="stat-label"><?php echo ucfirst($stat['role']); ?>s</div>
-                    </div>
-                <?php endforeach; ?> -->
+                
             </div>
 
             <!-- Filters -->
@@ -1297,7 +1387,7 @@ if (isset($_GET['msg'])) {
                         <tbody>
                             <?php if (empty($users)): ?>
                                 <tr>
-                                    <td colspan="11">
+                                    <td colspan="9">
                                         <div class="empty-state">
                                             <i class="fas fa-users"></i>
                                             <h3>No users found</h3>
@@ -1309,7 +1399,6 @@ if (isset($_GET['msg'])) {
                                 <?php foreach ($users as $user): ?>
                                     <tr>
                                         <td><input type="checkbox" name="selected_ids[]" value="<?php echo $user['id']; ?>" class="user-checkbox"></td>
-                                       
                                         <td><?php echo htmlspecialchars($user['reg_number'] ?? '-'); ?></td>
                                         <td>
                                             <strong><?php echo htmlspecialchars($user['full_name']); ?></strong>
@@ -1320,6 +1409,11 @@ if (isset($_GET['msg'])) {
                                             <span class="role-badge role-<?php echo $user['role']; ?>">
                                                 <?php echo ucfirst($user['role']); ?>
                                             </span>
+                                            <?php if ($user['role'] === 'committee' && !empty($user['committee_role'])): ?>
+                                                <span class="committee-role">
+                                                    <?php echo htmlspecialchars($committee_roles[$user['committee_role']] ?? $user['committee_role']); ?>
+                                                </span>
+                                            <?php endif; ?>
                                             <?php if ($user['is_class_rep']): ?>
                                                 <br><small style="color: var(--warning);">Class Rep</small>
                                             <?php endif; ?>
@@ -1331,7 +1425,6 @@ if (isset($_GET['msg'])) {
                                                 <?php echo ucfirst($user['status']); ?>
                                             </span>
                                         </td>
-                                        
                                         <td class="action-buttons">
                                             <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $user['id']; ?>)">
                                                 <i class="fas fa-edit"></i>
@@ -1411,10 +1504,19 @@ if (isset($_GET['msg'])) {
                     </div>
                     <div class="form-group">
                         <label>Role *</label>
-                        <select name="role" id="role" required>
+                        <select name="role" id="role" required onchange="toggleCommitteeRoleField()">
                             <option value="student">Student</option>
                             <option value="committee">Committee Member</option>
                             <option value="admin">Administrator</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="committeeRoleGroup" style="display: none;">
+                        <label>Committee Role</label>
+                        <select name="committee_role" id="committee_role">
+                            <option value="">Select Committee Role</option>
+                            <?php foreach ($committee_roles as $key => $name): ?>
+                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($name); ?></option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="form-group">
@@ -1442,7 +1544,6 @@ if (isset($_GET['msg'])) {
                             <option value="">Select</option>
                             <option value="male">Male</option>
                             <option value="female">Female</option>
-                     
                         </select>
                     </div>
                     <div class="form-group">
@@ -1520,6 +1621,19 @@ if (isset($_GET['msg'])) {
     </div>
 
     <script>
+        // Toggle committee role field based on selected role
+        function toggleCommitteeRoleField() {
+            const roleSelect = document.getElementById('role');
+            const committeeRoleGroup = document.getElementById('committeeRoleGroup');
+            if (roleSelect.value === 'committee') {
+                committeeRoleGroup.style.display = 'block';
+                document.getElementById('committee_role').required = true;
+            } else {
+                committeeRoleGroup.style.display = 'none';
+                document.getElementById('committee_role').required = false;
+            }
+        }
+        
         // Dark/Light Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
@@ -1548,6 +1662,7 @@ if (isset($_GET['msg'])) {
             document.getElementById('password').required = true;
             document.getElementById('passwordHint').textContent = 'Password is required for new users';
             document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
+            document.getElementById('committeeRoleGroup').style.display = 'none';
             document.getElementById('userModal').classList.add('active');
             document.body.classList.add('modal-open');
         }
@@ -1570,6 +1685,15 @@ if (isset($_GET['msg'])) {
                     document.getElementById('email').value = user.email;
                     document.getElementById('phone').value = user.phone || '';
                     document.getElementById('role').value = user.role;
+                    
+                    // Show/hide committee role field
+                    if (user.role === 'committee') {
+                        document.getElementById('committeeRoleGroup').style.display = 'block';
+                        document.getElementById('committee_role').value = user.committee_role || '';
+                    } else {
+                        document.getElementById('committeeRoleGroup').style.display = 'none';
+                    }
+                    
                     document.getElementById('department_id').value = user.department_id || '';
                     document.getElementById('date_of_birth').value = user.date_of_birth || '';
                     document.getElementById('gender').value = user.gender || '';
@@ -1640,6 +1764,8 @@ if (isset($_GET['msg'])) {
         document.getElementById('department_id').addEventListener('change', function() {
             loadPrograms(this.value);
         });
+        
+        document.getElementById('role').addEventListener('change', toggleCommitteeRoleField);
         
         function toggleAll(source) {
             const checkboxes = document.querySelectorAll('.user-checkbox');
