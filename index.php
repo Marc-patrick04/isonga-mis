@@ -9,7 +9,6 @@ function safeQuery($pdo, $sql, $params = []) {
         $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
-        // Log error but don't expose to user
         error_log("Database error: " . $e->getMessage());
         return [];
     }
@@ -36,16 +35,20 @@ $committee_members = safeQuery($pdo,
      ORDER BY role_order, name ASC LIMIT 4"
 );
 
-// Get upcoming events
+// Get upcoming events - PostgreSQL compatible
 $events = safeQuery($pdo,
     "SELECT * FROM events 
-     WHERE event_date >= CURDATE() 
+     WHERE event_date >= CURRENT_DATE 
      AND status = 'published' 
      ORDER BY event_date ASC LIMIT 3"
 );
 
 // Get statistics with caching consideration
-$stats = [];
+$student_count = 0;
+$resolved_tickets = 0;
+$active_committees = 0;
+$active_clubs = 0;
+
 $stat_queries = [
     'student_count' => "SELECT COUNT(*) as total FROM users WHERE role = 'student' AND status = 'active'",
     'resolved_tickets' => "SELECT COUNT(*) as total FROM tickets WHERE status = 'resolved'",
@@ -198,6 +201,152 @@ foreach ($stat_queries as $key => $query) {
             font-size: var(--text-base);
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Loading Screen */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--white);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+
+        .loading-screen.fade-out {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .loader-container {
+            text-align: center;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        .loader-logo {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 1.5rem;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .loader-logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .loader-text {
+            font-size: 1.5rem;
+            font-weight: 800;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 1rem;
+        }
+
+        .loader-subtext {
+            color: var(--gray-600);
+            font-size: 0.9rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .loader-progress {
+            width: 200px;
+            height: 4px;
+            background: var(--gray-200);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0 auto;
+        }
+
+        .loader-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: var(--gradient-primary);
+            border-radius: 4px;
+            animation: loading 3s ease-out forwards;
+        }
+
+        .loader-dots {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .loader-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--primary);
+            border-radius: 50%;
+            opacity: 0.4;
+            animation: dotPulse 1.5s ease-in-out infinite;
+        }
+
+        .loader-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        .loader-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes loading {
+            0% { width: 0%; }
+            20% { width: 30%; }
+            40% { width: 55%; }
+            60% { width: 75%; }
+            80% { width: 90%; }
+            100% { width: 100%; }
+        }
+
+        @keyframes dotPulse {
+            0%, 100% {
+                opacity: 0.4;
+                transform: scale(1);
+            }
+            50% {
+                opacity: 1;
+                transform: scale(1.2);
+            }
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Main Content - Initially Hidden */
+        .main-content {
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+
+        .main-content.visible {
+            opacity: 1;
+            visibility: visible;
         }
 
         /* Typography */
@@ -1063,177 +1212,71 @@ foreach ($stat_queries as $key => $query) {
             }
         }
 
-/* Committee Preview - Updated Image Styling */
-.committee-preview {
-    padding: var(--space-lg) var(--space-sm);
-    background: var(--light);
-}
-
-@media (min-width: 768px) {
-    .committee-preview {
-        padding: var(--space-xl) var(--space-md);
-    }
-}
-
-.committee-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 1rem;
-}
-
-@media (min-width: 640px) {
-    .committee-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 1.25rem;
-    }
-}
-
-@media (min-width: 1024px) {
-    .committee-grid {
-        grid-template-columns: repeat(4, 1fr);
-        gap: 2rem;
-    }
-}
-
-.member-card {
-    background: var(--white);
-    border-radius: var(--border-radius);
-    overflow: hidden;
-    transition: var(--transition);
-    box-shadow: var(--shadow-sm);
-    text-align: center;
-    border: 1px solid var(--gray-200);
-}
-
-@media (min-width: 768px) {
-    .member-card {
-        border-radius: var(--border-radius-lg);
-    }
-}
-
-.member-image-container {
-    width: 100%;
-    height: auto;
-    position: relative;
-    overflow: hidden;
-    background: var(--gray-100);
-    aspect-ratio: 1 / 1; /* Creates a perfect square container */
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.member-image {
-    width: 100%;
-    height: 100%;
-    object-fit: cover; /* Ensures image covers the container without distortion */
-    object-position: center center; /* Centers the image */
-    display: block;
-}
-
-@media (min-width: 768px) {
-    .member-image-container {
-        aspect-ratio: 1 / 1; /* Maintain square ratio on desktop */
-    }
-}
-
-.member-image-placeholder {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 2.5rem;
-    background: var(--gradient-primary);
-}
-
-@media (min-width: 768px) {
-    .member-image-placeholder {
-        font-size: 3rem;
-    }
-}
-
-.member-content {
-    padding: 1rem;
-}
-
-@media (min-width: 768px) {
-    .member-content {
-        padding: 1.5rem;
-    }
-}
-
-.member-name {
-    font-size: 0.95rem;
-    font-weight: 700;
-    margin-bottom: 0.35rem;
-    color: var(--gray-900);
-}
-
-@media (min-width: 768px) {
-    .member-name {
-        font-size: 1.1rem;
-        margin-bottom: 0.5rem;
-    }
-}
-
-.member-role {
-    color: var(--primary);
-    font-weight: 600;
-    font-size: 0.7rem;
-    margin-bottom: 0.5rem;
-    padding: 0.2rem 0.6rem;
-    background: var(--gray-100);
-    border-radius: 20px;
-    display: inline-block;
-}
-
-@media (min-width: 768px) {
-    .member-role {
-        font-size: 0.8rem;
-        margin-bottom: 0.75rem;
-        padding: 0.25rem 0.75rem;
-    }
-}
-
-.member-bio {
-    color: var(--gray-600);
-    font-size: 0.7rem;
-    line-height: 1.4;
-}
-
-@media (min-width: 768px) {
-    .member-bio {
-        font-size: 0.8rem;
-        line-height: 1.5;
-    }
-}
-
-.view-all {
-    text-align: center;
-    margin-top: 1.5rem;
-}
-
-@media (min-width: 768px) {
-    .view-all {
-        margin-top: 2.5rem;
-    }
-}
-
-/* Ensure actual images load properly */
-.member-image-container img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center center;
-    display: block;
-}
+        /* Committee Preview */
+        .committee-preview {
+            padding: var(--space-lg) var(--space-sm);
+            background: var(--light);
+        }
 
         @media (min-width: 768px) {
-            .member-image-container {
-                height: 200px;
+            .committee-preview {
+                padding: var(--space-xl) var(--space-md);
             }
+        }
+
+        .committee-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+
+        @media (min-width: 640px) {
+            .committee-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 1.25rem;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .committee-grid {
+                grid-template-columns: repeat(4, 1fr);
+                gap: 2rem;
+            }
+        }
+
+        .member-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            transition: var(--transition);
+            box-shadow: var(--shadow-sm);
+            text-align: center;
+            border: 1px solid var(--gray-200);
+        }
+
+        @media (min-width: 768px) {
+            .member-card {
+                border-radius: var(--border-radius-lg);
+            }
+        }
+
+        .member-image-container {
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+            background: var(--gray-100);
+            aspect-ratio: 1 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .member-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center center;
+            display: block;
         }
 
         .member-image-placeholder {
@@ -1532,7 +1575,6 @@ foreach ($stat_queries as $key => $query) {
                 transform: none;
             }
             
-            /* Larger touch targets */
             .nav-links a,
             .footer-links a {
                 padding: 0.5rem 0;
@@ -1541,15 +1583,6 @@ foreach ($stat_queries as $key => $query) {
             .btn,
             .login-btn {
                 min-height: 44px;
-            }
-        }
-
-        /* High contrast mode support */
-        @media (prefers-contrast: high) {
-            :root {
-                --primary: #0047ab;
-                --primary-dark: #003078;
-                --warning: #b35900;
             }
         }
 
@@ -1563,17 +1596,30 @@ foreach ($stat_queries as $key => $query) {
                 transition-duration: 0.01ms !important;
                 scroll-behavior: auto !important;
             }
+            
+            .loader-progress-bar {
+                animation: none;
+                width: 100%;
+            }
         }
 
         /* Dark mode support */
         @media (prefers-color-scheme: dark) {
+            .loading-screen {
+                background: #0f172a;
+            }
+            
+            .loader-subtext {
+                color: #94a3b8;
+            }
+            
             .header {
                 background: rgba(15, 23, 42, 0.98);
                 border-bottom-color: rgba(255, 255, 255, 0.05);
             }
             
             .nav-links a {
-                color: #e2e8f0;
+                color: #ffffff;
             }
             
             .link-card,
@@ -1595,390 +1641,553 @@ foreach ($stat_queries as $key => $query) {
                 color: #94a3b8;
             }
         }
+        /* Mobile Navigation - Fixed visibility */
+.mobile-menu {
+    position: fixed;
+    top: 60px;
+    left: 0;
+    width: 100%;
+    height: calc(100vh - 60px);
+    background: var(--white);
+    z-index: 999;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+@media (min-width: 768px) {
+    .mobile-menu {
+        display: none;
+    }
+}
+
+.mobile-menu.active {
+    transform: translateX(0);
+}
+
+.mobile-nav {
+    padding: var(--space-sm);
+}
+
+.mobile-nav .nav-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    width: 100%;
+}
+
+.mobile-nav .nav-links a {
+    display: block;
+    padding: 1rem;
+    color: var(--gray-800);
+    background: transparent;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 1rem;
+    transition: var(--transition);
+    border-bottom: 1px solid var(--gray-200);
+}
+
+.mobile-nav .nav-links a:last-child {
+    border-bottom: none;
+}
+
+.mobile-nav .nav-links a:hover,
+.mobile-nav .nav-links a:focus,
+.mobile-nav .nav-links a.active {
+    background: var(--primary);
+    color: white;
+    padding-left: 1.5rem;
+}
+
+.mobile-login-buttons {
+    padding: var(--space-md);
+    border-top: 1px solid var(--gray-200);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.mobile-login-buttons .login-btn {
+    width: 100%;
+    justify-content: center;
+    padding: 1rem;
+    font-size: 1rem;
+    text-decoration: none;
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 48px;
+}
+
+.mobile-login-buttons .btn-student {
+    background: var(--gradient-secondary);
+    color: white;
+}
+
+.mobile-login-buttons .btn-committee {
+    background: var(--gradient-primary);
+    color: white;
+}
+
+.mobile-login-buttons .login-btn:hover,
+.mobile-login-buttons .login-btn:focus {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+/* Dark mode support for mobile menu */
+@media (prefers-color-scheme: dark) {
+    .mobile-menu {
+        background: #1e293b;
+    }
+    
+    .mobile-nav .nav-links a {
+        color: #e2e8f0;
+        border-bottom-color: #334155;
+    }
+    
+    .mobile-nav .nav-links a:hover,
+    .mobile-nav .nav-links a:focus,
+    .mobile-nav .nav-links a.active {
+        background: var(--primary);
+        color: white;
+    }
+    
+    .mobile-login-buttons {
+        border-top-color: #334155;
+    }
+}
     </style>
 </head>
 <body>
-    <!-- Header -->
-    <header class="header" id="header">
-        <div class="container nav-container">
-            <div class="logo-section">
-                <div class="logos">
-                    <img src="assets/images/logo.png" alt="RPSU Logo" class="logo logo-rpsu" loading="lazy">
-                </div>
-                <div class="brand-text">
-                    <h1>Isonga</h1>
-                    <p>RPSU Management System</p>
-                </div>
+    <!-- Loading Screen -->
+    <div class="loading-screen" id="loadingScreen">
+        <div class="loader-container">
+            <div class="loader-logo">
+                <img src="assets/images/logo.png" alt="RPSU Logo">
             </div>
-            
-            <!-- Desktop Navigation -->
-            <div class="desktop-nav">
-                <nav class="nav-links" aria-label="Main Navigation">
-                    <a href="announcements.php">Announcements</a>
-                    <a href="news.php">News</a>
-                    <a href="events.php">Events</a>
-                    <a href="committee.php">Committee</a>
-                    <a href="gallery.php">Gallery</a>
-                </nav>
-                <div class="login-buttons">
-                    <a href="auth/student_login.php" class="login-btn btn-student">
-                        <i class="fas fa-user-graduate"></i> Student
-                    </a>
-                    <a href="auth/login.php" class="login-btn btn-committee">
-                        <i class="fas fa-users"></i> Committee
-                    </a>
-                </div>
+            <div class="loader-text">Isonga</div>
+            <div class="loader-subtext">RPSU Management System</div>
+            <div class="loader-progress">
+                <div class="loader-progress-bar"></div>
             </div>
-            
-            <!-- Mobile Menu Button -->
-            <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle mobile menu" aria-expanded="false">
-                <i class="fas fa-bars"></i>
-            </button>
-        </div>
-        
-        <!-- Mobile Menu -->
-        <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
-            <div class="mobile-nav">
-                <nav class="nav-links" aria-label="Mobile Navigation">
-                    <a href="announcements.php">Announcements</a>
-                    <a href="news.php">News</a>
-                    <a href="events.php">Events</a>
-                    <a href="committee.php">Committee</a>
-                    <a href="gallery.php">Gallery</a>
-                </nav>
-            </div>
-            <div class="mobile-login-buttons">
-                <a href="auth/student_login.php" class="login-btn btn-student">
-                    <i class="fas fa-user-graduate"></i> Student Portal
-                </a>
-                <a href="auth/login.php" class="login-btn btn-committee">
-                    <i class="fas fa-users"></i> Committee Portal
-                </a>
+            <div class="loader-dots">
+                <div class="loader-dot"></div>
+                <div class="loader-dot"></div>
+                <div class="loader-dot"></div>
+                <div class="loader-dot"></div>
+                <div class="loader-dot"></div>
             </div>
         </div>
-    </header>
+    </div>
 
-    <!-- Hero Section -->
-    <section class="hero" aria-labelledby="hero-title">
-        <div class="container hero-content">
-            <div class="hero-text" data-aos="fade-up" data-aos-duration="800">
-                <h2 id="hero-title">RPSU Musanze College</h2>
-                <p>Empowering students through effective representation and innovative solutions. Your voice, our priority.</p>
+    <!-- Main Content -->
+    <div class="main-content" id="mainContent">
+        <!-- Header -->
+        <header class="header" id="header">
+            <div class="container nav-container">
+                <div class="logo-section">
+                    <div class="logos">
+                        <img src="assets/images/logo.png" alt="RPSU Logo" class="logo logo-rpsu" loading="lazy">
+                    </div>
+                    <div class="brand-text">
+                        <h1>Isonga</h1>
+                        <p>RPSU Management System</p>
+                    </div>
+                </div>
                 
-                <div class="hero-stats">
-                    <?php 
-                    $stats = [
-                        ['number' => $student_count, 'label' => 'Students'],
-                        ['number' => $resolved_tickets, 'label' => 'Issues Resolved'],
-                        ['number' => $active_committees, 'label' => 'Committee Members'],
-                        ['number' => $active_clubs, 'label' => 'Active Clubs']
-                    ];
-                    
-                    foreach ($stats as $index => $stat): ?>
-                        <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-                            <span class="stat-number"><?= htmlspecialchars($stat['number']) ?><?= $stat['label'] === 'Students' || $stat['label'] === 'Issues Resolved' ? '+' : '' ?></span>
-                            <span class="stat-label"><?= htmlspecialchars($stat['label']) ?></span>
-                        </div>
-                    <?php endforeach; ?>
+                <!-- Desktop Navigation -->
+                <div class="desktop-nav">
+                    <nav class="nav-links" aria-label="Main Navigation">
+                        <a href="announcements.php">Announcements</a>
+                        <a href="news.php">News</a>
+                        <a href="events.php">Events</a>
+                        <a href="committee.php">Committee</a>
+                        <a href="gallery.php">Gallery</a>
+                    </nav>
+                    <div class="login-buttons">
+                        <a href="auth/student_login.php" class="login-btn btn-student">
+                            <i class="fas fa-user-graduate"></i> Student
+                        </a>
+                        <a href="auth/login.php" class="login-btn btn-committee">
+                            <i class="fas fa-users"></i> Committee
+                        </a>
+                    </div>
                 </div>
-
-                <div class="hero-actions">
-                    <a href="auth/student_login.php" class="btn btn-primary" data-aos="fade-up" data-aos-delay="500">
+                
+                <!-- Mobile Menu Button -->
+                <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle mobile menu" aria-expanded="false">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+            
+            <!-- Mobile Menu -->
+            <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
+                <div class="mobile-nav">
+                    <nav class="nav-links" aria-label="Mobile Navigation">
+                        <a href="announcements.php">Announcements</a>
+                        <a href="news.php">News</a>
+                        <a href="events.php">Events</a>
+                        <a href="committee.php">Committee</a>
+                        <a href="gallery.php">Gallery</a>
+                    </nav>
+                </div>
+                <div class="mobile-login-buttons">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
                         <i class="fas fa-user-graduate"></i> Student Portal
                     </a>
-                    <a href="auth/login.php" class="btn btn-secondary" data-aos="fade-up" data-aos-delay="600">
+                    <a href="auth/login.php" class="login-btn btn-committee">
                         <i class="fas fa-users"></i> Committee Portal
                     </a>
                 </div>
             </div>
-        </div>
-    </section>
+        </header>
 
-    <!-- Quick Links Section -->
-    <section class="quick-links" aria-labelledby="quick-links-title">
-        <div class="container">
-            <div class="section-header" data-aos="fade-up">
-                <span class="section-badge">Quick Access</span>
-                <h2 id="quick-links-title" class="section-title">Explore Our Platform</h2>
-                <p class="section-subtitle">Everything you need to stay connected and informed about campus life</p>
+        <!-- Hero Section -->
+        <section class="hero" aria-labelledby="hero-title">
+            <div class="container hero-content">
+                <div class="hero-text" data-aos="fade-up" data-aos-duration="800">
+                    <h2 id="hero-title">RPSU Musanze College</h2>
+                    <p>Empowering students through effective representation and innovative solutions. Your voice, our priority.</p>
+                    
+                    <div class="hero-stats">
+                        <?php 
+                        $stats = [
+                            ['number' => $student_count, 'label' => 'Students'],
+                            ['number' => $resolved_tickets, 'label' => 'Issues Resolved'],
+                            ['number' => $active_committees, 'label' => 'Committee Members'],
+                            ['number' => $active_clubs, 'label' => 'Active Clubs']
+                        ];
+                        
+                        foreach ($stats as $index => $stat): ?>
+                            <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                                <span class="stat-number"><?= htmlspecialchars($stat['number']) ?><?= $stat['label'] === 'Students' || $stat['label'] === 'Issues Resolved' ? '+' : '' ?></span>
+                                <span class="stat-label"><?= htmlspecialchars($stat['label']) ?></span>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <div class="hero-actions">
+                        <a href="auth/student_login.php" class="btn btn-primary" data-aos="fade-up" data-aos-delay="500">
+                            <i class="fas fa-user-graduate"></i> Student Portal
+                        </a>
+                        <a href="auth/login.php" class="btn btn-secondary" data-aos="fade-up" data-aos-delay="600">
+                            <i class="fas fa-users"></i> Committee Portal
+                        </a>
+                    </div>
+                </div>
             </div>
-            <div class="links-grid">
-                <?php 
-                $quick_links = [
-                    [
-                        'href' => 'announcements.php',
-                        'icon' => 'fas fa-bullhorn',
-                        'title' => 'Announcements',
-                        'description' => 'Official communications from RPSU leadership and college administration'
-                    ],
-                    [
-                        'href' => 'news.php',
-                        'icon' => 'fas fa-newspaper',
-                        'title' => 'Campus News',
-                        'description' => 'Latest happenings, achievements, and stories from around campus'
-                    ],
-                    [
-                        'href' => 'events.php',
-                        'icon' => 'fas fa-calendar-alt',
-                        'title' => 'Events',
-                        'description' => 'Upcoming academic, cultural, and social events calendar'
-                    ],
-                    [
-                        'href' => 'committee.php',
-                        'icon' => 'fas fa-users',
-                        'title' => 'Committee',
-                        'description' => 'Meet your dedicated student representatives and leaders'
-                    ]
-                ];
+        </section>
+
+        <!-- Quick Links Section -->
+        <section class="quick-links" aria-labelledby="quick-links-title">
+            <div class="container">
+                <div class="section-header" data-aos="fade-up">
+                    <span class="section-badge">Quick Access</span>
+                    <h2 id="quick-links-title" class="section-title">Explore Our Platform</h2>
+                    <p class="section-subtitle">Everything you need to stay connected and informed about campus life</p>
+                </div>
+                <div class="links-grid">
+                    <?php 
+                    $quick_links = [
+                        [
+                            'href' => 'announcements.php',
+                            'icon' => 'fas fa-bullhorn',
+                            'title' => 'Announcements',
+                            'description' => 'Official communications from RPSU leadership and college administration'
+                        ],
+                        [
+                            'href' => 'news.php',
+                            'icon' => 'fas fa-newspaper',
+                            'title' => 'Campus News',
+                            'description' => 'Latest happenings, achievements, and stories from around campus'
+                        ],
+                        [
+                            'href' => 'events.php',
+                            'icon' => 'fas fa-calendar-alt',
+                            'title' => 'Events',
+                            'description' => 'Upcoming academic, cultural, and social events calendar'
+                        ],
+                        [
+                            'href' => 'committee.php',
+                            'icon' => 'fas fa-users',
+                            'title' => 'Committee',
+                            'description' => 'Meet your dedicated student representatives and leaders'
+                        ]
+                    ];
+                    
+                    foreach ($quick_links as $index => $link): ?>
+                        <a href="<?= $link['href'] ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                            <div class="link-icon">
+                                <i class="<?= $link['icon'] ?>"></i>
+                            </div>
+                            <h3 class="link-title"><?= htmlspecialchars($link['title']) ?></h3>
+                            <p class="link-description"><?= htmlspecialchars($link['description']) ?></p>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        </section>
+
+        <!-- Highlights Section -->
+        <section class="highlights" aria-labelledby="highlights-title">
+            <div class="container">
+                <div class="section-header" data-aos="fade-up">
+                    <span class="section-badge">Latest Updates</span>
+                    <h2 id="highlights-title" class="section-title">What's Happening</h2>
+                    <p class="section-subtitle">Stay informed with the latest from RPSU and campus community</p>
+                </div>
                 
-                foreach ($quick_links as $index => $link): ?>
-                    <a href="<?= $link['href'] ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-                        <div class="link-icon">
-                            <i class="<?= $link['icon'] ?>"></i>
-                        </div>
-                        <h3 class="link-title"><?= htmlspecialchars($link['title']) ?></h3>
-                        <p class="link-description"><?= htmlspecialchars($link['description']) ?></p>
-                    </a>
-                <?php endforeach; ?>
-            </div>
-        </div>
-    </section>
-
-    <!-- Highlights Section -->
-    <section class="highlights" aria-labelledby="highlights-title">
-        <div class="container">
-            <div class="section-header" data-aos="fade-up">
-                <span class="section-badge">Latest Updates</span>
-                <h2 id="highlights-title" class="section-title">What's Happening</h2>
-                <p class="section-subtitle">Stay informed with the latest from RPSU and campus community</p>
-            </div>
-            
-            <div class="highlights-grid">
-                <!-- Announcements -->
-                <div class="highlight-card" data-aos="fade-up" data-aos-delay="100">
-                    <div class="highlight-image">
-                        <div class="highlight-image-placeholder">
-                            <i class="fas fa-bullhorn"></i>
-                        </div>
-                    </div>
-                    <div class="highlight-content">
-                        <h3 class="highlight-title">Announcements</h3>
-                        <div class="highlight-items">
-                            <?php if (empty($announcements)): ?>
-                                <p class="highlight-excerpt">No announcements at this time. Check back later for updates.</p>
-                            <?php else: ?>
-                                <?php foreach (array_slice($announcements, 0, 2) as $announcement): ?>
-                                    <div class="highlight-item">
-                                        <div class="highlight-date">
-                                            <i class="fas fa-calendar"></i>
-                                            <?= date('M j, Y', strtotime($announcement['created_at'])) ?>
-                                        </div>
-                                        <div class="highlight-item-title"><?= htmlspecialchars($announcement['title']) ?></div>
-                                        <p class="highlight-excerpt"><?= htmlspecialchars(substr($announcement['excerpt'] ?? $announcement['content'], 0, 80)) . '...' ?></p>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                        <a href="announcements.php" class="read-more">
-                            View All <i class="fas fa-arrow-right"></i>
-                        </a>
-                    </div>
-                </div>
-
-                <!-- News -->
-                <div class="highlight-card" data-aos="fade-up" data-aos-delay="200">
-                    <div class="highlight-image">
-                        <div class="highlight-image-placeholder">
-                            <i class="fas fa-newspaper"></i>
-                        </div>
-                    </div>
-                    <div class="highlight-content">
-                        <h3 class="highlight-title">Campus News</h3>
-                        <div class="highlight-items">
-                            <?php if (empty($news)): ?>
-                                <p class="highlight-excerpt">No news articles at this time. Stay tuned for updates.</p>
-                            <?php else: ?>
-                                <?php foreach (array_slice($news, 0, 2) as $news_item): ?>
-                                    <div class="highlight-item">
-                                        <div class="highlight-date">
-                                            <i class="fas fa-calendar"></i>
-                                            <?= date('M j, Y', strtotime($news_item['created_at'])) ?>
-                                        </div>
-                                        <div class="highlight-item-title"><?= htmlspecialchars($news_item['title']) ?></div>
-                                        <p class="highlight-excerpt"><?= htmlspecialchars(substr($news_item['excerpt'] ?? $news_item['content'], 0, 80)) . '...' ?></p>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                        <a href="news.php" class="read-more">
-                            Read More <i class="fas fa-arrow-right"></i>
-                        </a>
-                    </div>
-                </div>
-
-                <!-- Events -->
-                <div class="highlight-card" data-aos="fade-up" data-aos-delay="300">
-                    <div class="highlight-image">
-                        <div class="highlight-image-placeholder">
-                            <i class="fas fa-calendar-check"></i>
-                        </div>
-                    </div>
-                    <div class="highlight-content">
-                        <h3 class="highlight-title">Upcoming Events</h3>
-                        <div class="highlight-items">
-                            <?php if (empty($events)): ?>
-                                <p class="highlight-excerpt">No upcoming events scheduled. Check back later for updates.</p>
-                            <?php else: ?>
-                                <?php foreach (array_slice($events, 0, 2) as $event): ?>
-                                    <div class="highlight-item">
-                                        <div class="highlight-date">
-                                            <i class="fas fa-calendar"></i>
-                                            <?= date('M j, Y', strtotime($event['event_date'])) ?>
-                                        </div>
-                                        <div class="highlight-item-title"><?= htmlspecialchars($event['title']) ?></div>
-                                        <p class="highlight-excerpt">
-                                            <i class="fas fa-clock"></i> <?= date('g:i A', strtotime($event['start_time'])) ?><br>
-                                            <i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($event['location']) ?>
-                                        </p>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                        <a href="events.php" class="read-more">
-                            View Calendar <i class="fas fa-arrow-right"></i>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Committee Preview -->
-    <section class="committee-preview" aria-labelledby="committee-title">
-        <div class="container">
-            <div class="section-header" data-aos="fade-up">
-                <span class="section-badge">Leadership</span>
-                <h2 id="committee-title" class="section-title">Meet Your Committee</h2>
-                <p class="section-subtitle">Your dedicated student leaders working to enhance campus experience</p>
-            </div>
-            
-            <div class="committee-grid">
-                <?php if (empty($committee_members)): ?>
-                    <div class="member-card" data-aos="fade-up" data-aos-delay="100">
-                        <div class="member-image-container">
-                            <div class="member-image-placeholder">
-                                <i class="fas fa-user"></i>
+                <div class="highlights-grid">
+                    <!-- Announcements -->
+                    <div class="highlight-card" data-aos="fade-up" data-aos-delay="100">
+                        <div class="highlight-image">
+                            <div class="highlight-image-placeholder">
+                                <i class="fas fa-bullhorn"></i>
                             </div>
                         </div>
-                        <div class="member-content">
-                            <h3 class="member-name">Committee Information</h3>
-                            <div class="member-role">Coming Soon</div>
-                            <p class="member-bio">Committee member information will be displayed here once available.</p>
-                        </div>
-                    </div>
-                <?php else: ?>
-                    <?php foreach ($committee_members as $index => $member): ?>
-                        <div class="member-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-                            <div class="member-image-container">
-                                <?php if (!empty($member['photo_url'])): ?>
-                                    <img src="<?= htmlspecialchars($member['photo_url']) ?>" 
-                                         alt="<?= htmlspecialchars($member['name']) ?>" 
-                                         class="member-image"
-                                         loading="lazy"
-                                         style="object-position: top center;">
+                        <div class="highlight-content">
+                            <h3 class="highlight-title">Announcements</h3>
+                            <div class="highlight-items">
+                                <?php if (empty($announcements)): ?>
+                                    <p class="highlight-excerpt">No announcements at this time. Check back later for updates.</p>
                                 <?php else: ?>
-                                    <div class="member-image-placeholder">
-                                        <i class="fas fa-user"></i>
-                                    </div>
+                                    <?php foreach (array_slice($announcements, 0, 2) as $announcement): ?>
+                                        <div class="highlight-item">
+                                            <div class="highlight-date">
+                                                <i class="fas fa-calendar"></i>
+                                                <?= date('M j, Y', strtotime($announcement['created_at'])) ?>
+                                            </div>
+                                            <div class="highlight-item-title"><?= htmlspecialchars($announcement['title']) ?></div>
+                                            <p class="highlight-excerpt"><?= htmlspecialchars(substr($announcement['excerpt'] ?? $announcement['content'], 0, 80)) . '...' ?></p>
+                                        </div>
+                                    <?php endforeach; ?>
                                 <?php endif; ?>
                             </div>
-                            <div class="member-content">
-                                <h3 class="member-name"><?= htmlspecialchars($member['name']) ?></h3>
-                                <div class="member-role"><?= htmlspecialchars($member['role']) ?></div>
-                                <p class="member-bio"><?= htmlspecialchars(substr($member['bio'] ?? 'Dedicated student representative working to improve campus life.', 0, 100)) . '...' ?></p>
+                            <a href="announcements.php" class="read-more">
+                                View All <i class="fas fa-arrow-right"></i>
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- News -->
+                    <div class="highlight-card" data-aos="fade-up" data-aos-delay="200">
+                        <div class="highlight-image">
+                            <div class="highlight-image-placeholder">
+                                <i class="fas fa-newspaper"></i>
                             </div>
                         </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </div>
-            
-            <div class="view-all">
-                <a href="committee.php" class="btn btn-primary" data-aos="fade-up">
-                    <i class="fas fa-users"></i> View Full Committee
-                </a>
-            </div>
-        </div>
-    </section>
+                        <div class="highlight-content">
+                            <h3 class="highlight-title">Campus News</h3>
+                            <div class="highlight-items">
+                                <?php if (empty($news)): ?>
+                                    <p class="highlight-excerpt">No news articles at this time. Stay tuned for updates.</p>
+                                <?php else: ?>
+                                    <?php foreach (array_slice($news, 0, 2) as $news_item): ?>
+                                        <div class="highlight-item">
+                                            <div class="highlight-date">
+                                                <i class="fas fa-calendar"></i>
+                                                <?= date('M j, Y', strtotime($news_item['created_at'])) ?>
+                                            </div>
+                                            <div class="highlight-item-title"><?= htmlspecialchars($news_item['title']) ?></div>
+                                            <p class="highlight-excerpt"><?= htmlspecialchars(substr($news_item['excerpt'] ?? $news_item['content'], 0, 80)) . '...' ?></p>
+                                        </div>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </div>
+                            <a href="news.php" class="read-more">
+                                Read More <i class="fas fa-arrow-right"></i>
+                            </a>
+                        </div>
+                    </div>
 
-    <!-- Footer -->
-    <footer class="footer" aria-labelledby="footer-heading">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-info">
-                    <div class="footer-logo">
-                        <img src="assets/images/rp_logo.png" alt="RP Musanze College" class="logo" loading="lazy">
+                    <!-- Events -->
+                    <div class="highlight-card" data-aos="fade-up" data-aos-delay="300">
+                        <div class="highlight-image">
+                            <div class="highlight-image-placeholder">
+                                <i class="fas fa-calendar-check"></i>
+                            </div>
+                        </div>
+                        <div class="highlight-content">
+                            <h3 class="highlight-title">Upcoming Events</h3>
+                            <div class="highlight-items">
+                                <?php if (empty($events)): ?>
+                                    <p class="highlight-excerpt">No upcoming events scheduled. Check back later for updates.</p>
+                                <?php else: ?>
+                                    <?php foreach (array_slice($events, 0, 2) as $event): ?>
+                                        <div class="highlight-item">
+                                            <div class="highlight-date">
+                                                <i class="fas fa-calendar"></i>
+                                                <?= date('M j, Y', strtotime($event['event_date'])) ?>
+                                            </div>
+                                            <div class="highlight-item-title"><?= htmlspecialchars($event['title']) ?></div>
+                                            <p class="highlight-excerpt">
+                                                <i class="fas fa-clock"></i> <?= date('g:i A', strtotime($event['start_time'])) ?><br>
+                                                <i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($event['location']) ?>
+                                            </p>
+                                        </div>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </div>
+                            <a href="events.php" class="read-more">
+                                View Calendar <i class="fas fa-arrow-right"></i>
+                            </a>
+                        </div>
                     </div>
-                    <p class="footer-description">
-                        Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
-                    </p>
-                    <div class="social-links">
-                        <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
-                            <i class="fab fa-twitter"></i>
-                        </a>
-                        <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
-                            <i class="fab fa-facebook-f"></i>
-                        </a>
-                        <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
-                            <i class="fab fa-linkedin-in"></i>
-                        </a>
-                        <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
-                            <i class="fab fa-instagram"></i>
-                        </a>
-                    </div>
-                </div>
-                
-                <div class="footer-links-group">
-                    <h4 class="footer-heading">Quick Links</h4>
-                    <ul class="footer-links">
-                        <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
-                        <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
-                        <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
-                        <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
-                    </ul>
-                </div>
-                
-                <div class="footer-links-group">
-                    <h4 class="footer-heading">Student Resources</h4>
-                    <ul class="footer-links">
-                        <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
-                        <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
-                        <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
-                        <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
-                    </ul>
-                </div>
-                
-                <div class="footer-links-group">
-                    <h4 class="footer-heading">Contact Info</h4>
-                    <ul class="footer-links">
-                        <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
-                        <li><i class="fas fa-phone"></i> +250 788 123 456</li>
-                        <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
-                        <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
-                    </ul>
                 </div>
             </div>
-            
-            <div class="footer-bottom">
-                <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
+        </section>
+
+        <!-- Committee Preview -->
+        <section class="committee-preview" aria-labelledby="committee-title">
+            <div class="container">
+                <div class="section-header" data-aos="fade-up">
+                    <span class="section-badge">Leadership</span>
+                    <h2 id="committee-title" class="section-title">Meet Your Committee</h2>
+                    <p class="section-subtitle">Your dedicated student leaders working to enhance campus experience</p>
+                </div>
+                
+                <div class="committee-grid">
+                    <?php if (empty($committee_members)): ?>
+                        <div class="member-card" data-aos="fade-up" data-aos-delay="100">
+                            <div class="member-image-container">
+                                <div class="member-image-placeholder">
+                                    <i class="fas fa-user"></i>
+                                </div>
+                            </div>
+                            <div class="member-content">
+                                <h3 class="member-name">Committee Information</h3>
+                                <div class="member-role">Coming Soon</div>
+                                <p class="member-bio">Committee member information will be displayed here once available.</p>
+                            </div>
+                        </div>
+                    <?php else: ?>
+                        <?php foreach ($committee_members as $index => $member): ?>
+                            <div class="member-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                                <div class="member-image-container">
+                                    <?php if (!empty($member['photo_url'])): ?>
+                                        <img src="<?= htmlspecialchars($member['photo_url']) ?>" 
+                                             alt="<?= htmlspecialchars($member['name']) ?>" 
+                                             class="member-image"
+                                             loading="lazy">
+                                    <?php else: ?>
+                                        <div class="member-image-placeholder">
+                                            <i class="fas fa-user"></i>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="member-content">
+                                    <h3 class="member-name"><?= htmlspecialchars($member['name']) ?></h3>
+                                    <div class="member-role"><?= htmlspecialchars($member['role']) ?></div>
+                                    <p class="member-bio"><?= htmlspecialchars(substr($member['bio'] ?? 'Dedicated student representative working to improve campus life.', 0, 100)) . '...' ?></p>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+                
+                <div class="view-all">
+                    <a href="committee.php" class="btn btn-primary" data-aos="fade-up">
+                        <i class="fas fa-users"></i> View Full Committee
+                    </a>
+                </div>
             </div>
-        </div>
-    </footer>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer" aria-labelledby="footer-heading">
+            <div class="container">
+                <div class="footer-content">
+                    <div class="footer-info">
+                        <div class="footer-logo">
+                            <img src="assets/images/rp_logo.png" alt="RP Musanze College" class="logo" loading="lazy">
+                        </div>
+                        <p class="footer-description">
+                            Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
+                        </p>
+                        <div class="social-links">
+                            <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
+                                <i class="fab fa-twitter"></i>
+                            </a>
+                            <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
+                                <i class="fab fa-facebook-f"></i>
+                            </a>
+                            <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+                                <i class="fab fa-linkedin-in"></i>
+                            </a>
+                            <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+                                <i class="fab fa-instagram"></i>
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="footer-links-group">
+                        <h4 class="footer-heading">Quick Links</h4>
+                        <ul class="footer-links">
+                            <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                            <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                            <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
+                            <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                        </ul>
+                    </div>
+                    
+                    <div class="footer-links-group">
+                        <h4 class="footer-heading">Student Resources</h4>
+                        <ul class="footer-links">
+                            <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
+                            <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
+                            <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
+                            <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                        </ul>
+                    </div>
+                    
+                    <div class="footer-links-group">
+                        <h4 class="footer-heading">Contact Info</h4>
+                        <ul class="footer-links">
+                            <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
+                            <li><i class="fas fa-phone"></i> +250 788 123 456</li>
+                            <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
+                            <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="footer-bottom">
+                    <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
+                </div>
+            </div>
+        </footer>
+    </div>
 
     <!-- JavaScript -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.js"></script>
     <script>
-        // Initialize AOS with reduced motion support
+        // Loading screen functionality
         document.addEventListener('DOMContentLoaded', function() {
+            const loadingScreen = document.getElementById('loadingScreen');
+            const mainContent = document.getElementById('mainContent');
+            
+            // Show loading screen for 5 seconds
+            setTimeout(function() {
+                // Fade out loading screen
+                loadingScreen.classList.add('fade-out');
+                
+                // Show main content
+                mainContent.classList.add('visible');
+                
+                // Remove loading screen from DOM after animation
+                setTimeout(function() {
+                    loadingScreen.style.display = 'none';
+                }, 700);
+            }, 4000);
+            
             // Check for reduced motion preference
             const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             
@@ -1999,7 +2208,6 @@ foreach ($stat_queries as $key => $query) {
                 }
             }
             
-            // Throttle scroll events for performance
             let ticking = false;
             window.addEventListener('scroll', function() {
                 if (!ticking) {
@@ -2011,7 +2219,7 @@ foreach ($stat_queries as $key => $query) {
                 }
             });
             
-            updateHeader(); // Initial check
+            updateHeader();
 
             // Mobile menu functionality
             const mobileMenuBtn = document.getElementById('mobileMenuBtn');
@@ -2027,17 +2235,16 @@ foreach ($stat_queries as $key => $query) {
                 if (mobileMenu.classList.contains('active')) {
                     menuIcon.classList.remove('fa-bars');
                     menuIcon.classList.add('fa-times');
-                    document.body.style.overflow = 'hidden'; // Prevent scrolling
+                    document.body.style.overflow = 'hidden';
                 } else {
                     menuIcon.classList.remove('fa-times');
                     menuIcon.classList.add('fa-bars');
-                    document.body.style.overflow = ''; // Restore scrolling
+                    document.body.style.overflow = '';
                 }
             }
             
             mobileMenuBtn.addEventListener('click', toggleMobileMenu);
             
-            // Close mobile menu when clicking outside or pressing Escape
             document.addEventListener('click', function(event) {
                 if (mobileMenu.classList.contains('active') && 
                     !mobileMenu.contains(event.target) && 
@@ -2052,7 +2259,7 @@ foreach ($stat_queries as $key => $query) {
                 }
             });
 
-            // Animated counters with intersection observer
+            // Animated counters
             const statNumbers = document.querySelectorAll('.stat-number');
             const observerOptions = {
                 threshold: 0.5,
@@ -2066,9 +2273,6 @@ foreach ($stat_queries as $key => $query) {
                         const hasPlus = entry.target.textContent.includes('+');
                         let current = 0;
                         const increment = target / 30;
-                        const duration = 1500;
-                        const steps = 30;
-                        const stepDuration = duration / steps;
                         
                         const timer = setInterval(() => {
                             current += increment;
@@ -2079,90 +2283,12 @@ foreach ($stat_queries as $key => $query) {
                             } else {
                                 entry.target.textContent = Math.floor(current) + (hasPlus ? '+' : '');
                             }
-                        }, stepDuration);
+                        }, 50);
                     }
                 });
             }, observerOptions);
             
             statNumbers.forEach(stat => counterObserver.observe(stat));
-
-            // Smooth scrolling for anchor links
-            document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-                anchor.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const targetId = this.getAttribute('href');
-                    if (targetId === '#') return;
-                    
-                    const target = document.querySelector(targetId);
-                    if (target) {
-                        if (mobileMenu.classList.contains('active')) {
-                            toggleMobileMenu();
-                        }
-                        
-                        const headerHeight = header.offsetHeight;
-                        const targetPosition = target.getBoundingClientRect().top + window.pageYOffset;
-                        const offsetPosition = targetPosition - headerHeight - 20;
-                        
-                        window.scrollTo({
-                            top: offsetPosition,
-                            behavior: 'smooth'
-                        });
-                    }
-                });
-            });
-
-            // Lazy loading for images
-            if ('loading' in HTMLImageElement.prototype) {
-                const images = document.querySelectorAll('img[loading="lazy"]');
-                images.forEach(img => {
-                    if (img.complete) {
-                        img.classList.add('loaded');
-                    } else {
-                        img.addEventListener('load', function() {
-                            this.classList.add('loaded');
-                        });
-                    }
-                });
-            }
-
-            // Add loading states to buttons
-            document.querySelectorAll('a[href]').forEach(link => {
-                link.addEventListener('click', function() {
-                    if (this.classList.contains('btn') || this.classList.contains('login-btn')) {
-                        this.classList.add('loading');
-                        setTimeout(() => {
-                            this.classList.remove('loading');
-                        }, 2000);
-                    }
-                });
-            });
-
-            // Performance monitoring
-            if ('performance' in window) {
-                window.addEventListener('load', function() {
-                    setTimeout(() => {
-                        const timing = performance.timing;
-                        const loadTime = timing.loadEventEnd - timing.navigationStart;
-                        console.log('Page load time: ' + loadTime + 'ms');
-                    }, 0);
-                });
-            }
-        });
-
-        // Error handling
-        window.addEventListener('error', function(e) {
-            console.error('Error occurred:', e.error);
-        });
-
-        // Offline detection
-        window.addEventListener('online', function() {
-            document.body.classList.remove('offline');
-            console.log('You are online');
-        });
-
-        window.addEventListener('offline', function() {
-            document.body.classList.add('offline');
-            console.log('You are offline');
         });
     </script>
 </body>

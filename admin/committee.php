@@ -20,9 +20,6 @@ try {
 }
 
 // Handle Excel Import
-// Update the Excel Import section in committee.php with this fixed version:
-
-// Handle Excel Import
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'import_excel') {
     if (isset($_FILES['excel_file']) && $_FILES['excel_file']['error'] === UPLOAD_ERR_OK) {
         $file = $_FILES['excel_file'];
@@ -52,19 +49,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         // Read the first line (headers)
                         $first_line = fgets($handle);
                         
-                        // Remove BOM if present (UTF-8 BOM is \xEF\xBB\xBF)
+                        // Remove BOM if present
                         $first_line = preg_replace('/^\xEF\xBB\xBF/', '', $first_line);
                         
                         // Parse the headers
                         $headers = str_getcsv($first_line);
-                        
-                        // Clean headers (trim spaces)
                         $headers = array_map('trim', $headers);
-                        
-                        // Convert headers to lowercase for case-insensitive comparison
                         $headers_lower = array_map('strtolower', $headers);
                         
-                        // Required headers (all lowercase for comparison)
+                        // Required headers
                         $required_headers = ['name', 'role'];
                         
                         // Check for missing required headers
@@ -77,31 +70,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         
                         if (empty($missing_headers)) {
                             $row_count = 0;
-                            // Now read the remaining rows
                             while (($line = fgets($handle)) !== FALSE) {
                                 $row_count++;
-                                
-                                // Parse the CSV line
                                 $data = str_getcsv($line);
                                 
-                                // Skip if data is empty or not enough columns
                                 if (empty(array_filter($data)) || count($data) < count($headers)) {
                                     continue;
                                 }
                                 
-                                // Create associative array with original header case
-                                $row = [];
-                                foreach ($headers as $index => $header) {
-                                    $row[$header] = isset($data[$index]) ? trim($data[$index]) : '';
-                                }
-                                
-                                // Also create lowercase version for easy access
                                 $row_lower = [];
                                 foreach ($headers as $index => $header) {
                                     $row_lower[strtolower($header)] = isset($data[$index]) ? trim($data[$index]) : '';
                                 }
                                 
-                                // Validate required fields using lowercase keys
                                 $name = $row_lower['name'] ?? '';
                                 $role = $row_lower['role'] ?? '';
                                 
@@ -122,16 +103,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     }
                                 }
                                 
+                                // Check if student exists and get their details
+                                $user_id_val = null;
+                                if (!empty($email)) {
+                                    $user_stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND role = 'student'");
+                                    $user_stmt->execute([$email]);
+                                    $user_id_val = $user_stmt->fetchColumn();
+                                }
+                                
                                 try {
                                     $stmt = $pdo->prepare("
                                         INSERT INTO committee_members (
-                                            name, role, reg_number, email, phone, 
+                                            user_id, name, role, reg_number, email, phone, 
                                             academic_year, bio, portfolio_description, 
                                             role_order, status, created_by, created_at
-                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                                     ");
                                     
                                     $stmt->execute([
+                                        $user_id_val,
                                         $name,
                                         $role,
                                         !empty($row_lower['reg_number']) ? $row_lower['reg_number'] : null,
@@ -182,6 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $error = "Please select a file to upload.";
     }
 }
+
 // Handle Add Committee Member
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
@@ -413,6 +404,29 @@ if (isset($_GET['get_member']) && isset($_GET['id'])) {
     exit();
 }
 
+// Search student via AJAX
+if (isset($_GET['search_student']) && isset($_GET['query'])) {
+    header('Content-Type: application/json');
+    $query = trim($_GET['query']);
+    
+    try {
+        $stmt = $pdo->prepare("
+            SELECT id, full_name, reg_number, email, phone, department_id, program_id, academic_year 
+            FROM users 
+            WHERE (role = 'student' AND status = 'active') 
+            AND (reg_number ILIKE ? OR full_name ILIKE ?)
+            LIMIT 5
+        ");
+        $search_term = "%$query%";
+        $stmt->execute([$search_term, $search_term]);
+        $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        echo json_encode($students);
+    } catch (PDOException $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit();
+}
+
 // Get programs by department via AJAX
 if (isset($_GET['get_programs']) && isset($_GET['department_id'])) {
     header('Content-Type: application/json');
@@ -540,6 +554,9 @@ $available_roles = [
 if (isset($_GET['msg'])) {
     $message = $_GET['msg'];
 }
+
+// Get logo path
+$logo_path = '../assets/images/rp_logo.png';
 ?>
 
 <!DOCTYPE html>
@@ -548,6 +565,7 @@ if (isset($_GET['msg'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Committee Management - Isonga RPSU Admin</title>
+    <link rel="icon" type="image/png" href="<?php echo $logo_path; ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -628,13 +646,27 @@ if (isset($_GET['msg'])) {
         .logo-text h1 {
             font-size: 1.25rem;
             font-weight: 700;
-            color: var(--primary);
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .logo-text p {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
         }
 
         .user-area {
             display: flex;
             align-items: center;
             gap: 1rem;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .theme-toggle {
@@ -648,6 +680,20 @@ if (isset($_GET['msg'])) {
             color: var(--text-primary);
         }
 
+        .user-details {
+            text-align: right;
+        }
+
+        .user-name {
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        .user-role {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
         .user-avatar {
             width: 44px;
             height: 44px;
@@ -658,6 +704,7 @@ if (isset($_GET['msg'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
+            font-size: 1rem;
         }
 
         .logout-btn {
@@ -756,7 +803,54 @@ if (isset($_GET['msg'])) {
         .btn-success { background: var(--success); color: white; }
         .btn-warning { background: var(--warning); color: white; }
         .btn-danger { background: var(--danger); color: white; }
+        .btn-secondary { background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); }
         .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; }
+
+        /* Student Search Results */
+        .student-search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: var(--shadow-md);
+        }
+
+        .student-search-result {
+            padding: 0.75rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border-color);
+            transition: var(--transition);
+        }
+
+        .student-search-result:hover {
+            background: var(--bg-primary);
+        }
+
+        .student-search-result:last-child {
+            border-bottom: none;
+        }
+
+        .student-result-name {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .student-result-details {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .search-container {
+            position: relative;
+            margin-bottom: 1rem;
+        }
 
         /* Stats Cards */
         .stats-cards {
@@ -1112,6 +1206,11 @@ if (isset($_GET['msg'])) {
             color: #721c24;
         }
 
+        .alert-info {
+            background: #e3f2fd;
+            color: #0056b3;
+        }
+
         .image-preview {
             width: 80px;
             height: 80px;
@@ -1214,18 +1313,28 @@ if (isset($_GET['msg'])) {
     <header class="header">
         <div class="header-container">
             <div class="logo-area">
-                <img src="../assets/images/rp_logo.png" alt="RP Musanze" class="logo-img">
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo-img">
                 <div class="logo-text">
                     <h1>Isonga Admin</h1>
                     <p>RPSU Management System</p>
                 </div>
             </div>
             <div class="user-area">
-                <button class="theme-toggle" id="themeToggle"><i class="fas fa-moon"></i></button>
-                <div class="user-avatar">
-                    <?php echo strtoupper(substr($current_admin['full_name'] ?? 'A', 0, 1)); ?>
+                <button class="theme-toggle" id="themeToggle" title="Toggle Dark/Light Mode">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <?php echo strtoupper(substr($current_admin['full_name'] ?? 'A', 0, 1)); ?>
+                    </div>
+                    <div class="user-details">
+                        <div class="user-name"><?php echo htmlspecialchars($current_admin['full_name'] ?? 'Admin'); ?></div>
+                        <div class="user-role">System Administrator</div>
+                    </div>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn"><i class="fas fa-sign-out-alt"></i> Logout</a>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
             </div>
         </div>
     </header>
@@ -1234,11 +1343,20 @@ if (isset($_GET['msg'])) {
         <nav class="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item"><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                <li class="menu-item"><a href="users.php"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php" class="active"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
+                <li class="menu-item"><a href="representative.php"><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
+                <li class="menu-item"><a href="programs.php"><i class="fas fa-graduation-cap"></i> Programs</a></li>
+                <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
+                <li class="menu-item"><a href="associations.php"><i class="fas fa-handshake"></i> Associations</a></li>
                 <li class="menu-item"><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
-                <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i> Tickets</a></li>
+                <li class="menu-item"><a href="content.php"><i class="fas fa-newspaper"></i> Content</a></li>
+                <li class="menu-item"><a href="arbitration.php"><i class="fas fa-balance-scale"></i> Arbitration</a></li>
+                <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i> Support Tickets</a></li>
+                <li class="menu-item"><a href="gallery.php"><i class="fas fa-images"></i> Gallery</a></li>
+                <li class="menu-item"><a href="reports.php"><i class="fas fa-chart-bar"></i> Reports</a></li>
                 <li class="menu-item"><a href="settings.php"><i class="fas fa-cogs"></i> Settings</a></li>
             </ul>
         </nav>
@@ -1318,7 +1436,7 @@ if (isset($_GET['msg'])) {
                     <button type="submit" class="btn btn-primary btn-sm" onclick="return confirmBulk()">Apply</button>
                 </div>
 
-                <!-- Table View (Default) -->
+                <!-- Table View -->
                 <div id="tableView" class="members-table-container">
                     <table class="members-table">
                         <thead>
@@ -1353,7 +1471,7 @@ if (isset($_GET['msg'])) {
                                             <?php if (!empty($member['photo_url']) && file_exists('../' . $member['photo_url'])): ?>
                                                 <img src="../<?php echo htmlspecialchars($member['photo_url']); ?>" class="member-avatar-sm" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover;">
                                             <?php else: ?>
-                                                <div class="member-avatar-sm" style="background: var(--primary); display: flex; align-items: center; justify-content: center; color: white;">
+                                                <div class="member-avatar-sm" style="background: var(--primary); display: flex; align-items: center; justify-content: center; color: white; border-radius: 50%; width: 40px; height: 40px;">
                                                     <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
                                                 </div>
                                             <?php endif; ?>
@@ -1365,7 +1483,7 @@ if (isset($_GET['msg'])) {
                                         <td><?php echo htmlspecialchars($member['phone'] ?? '-'); ?></td>
                                         <td><span class="status-badge <?php echo $member['status']; ?>"><?php echo ucfirst($member['status']); ?></span></td>
                                         <td>
-                                            <button class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i></button>
+                                            <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i></button>
                                             <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')"><i class="fas fa-toggle-on"></i></a>
                                             <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this member?')"><i class="fas fa-trash"></i></a>
                                         </td>
@@ -1376,7 +1494,7 @@ if (isset($_GET['msg'])) {
                     </table>
                 </div>
 
-                <!-- Grid View (Hidden by default) -->
+                <!-- Grid View -->
                 <div id="gridView" class="committee-grid" style="display: none;">
                     <?php if (!empty($committee_members)): ?>
                         <?php foreach ($committee_members as $member): ?>
@@ -1396,7 +1514,7 @@ if (isset($_GET['msg'])) {
                                     <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
                                     <div class="member-role"><?php echo htmlspecialchars($available_roles[$member['role']] ?? str_replace('_', ' ', $member['role'])); ?></div>
                                     <div class="member-actions">
-                                        <button class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i> Edit</button>
+                                        <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i> Edit</button>
                                         <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')"><i class="fas fa-toggle-on"></i></a>
                                         <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')"><i class="fas fa-trash"></i></a>
                                     </div>
@@ -1424,16 +1542,28 @@ if (isset($_GET['msg'])) {
         </main>
     </div>
 
-    <!-- Add/Edit Modal -->
+    <!-- Add/Edit Modal with Student Search -->
     <div id="memberModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="modalTitle">Add Committee Member</h2>
-                <button class="close-modal" onclick="closeModal()">&times;</button>
+                <button type="button" class="close-modal" onclick="closeModal()">&times;</button>
             </div>
             <form method="POST" enctype="multipart/form-data" id="memberForm">
                 <input type="hidden" name="action" id="formAction" value="add">
                 <input type="hidden" name="member_id" id="memberId">
+                
+                <!-- Student Search Section -->
+                <div class="alert alert-info" style="margin-bottom: 1rem;">
+                    <i class="fas fa-info-circle"></i> <strong>Quick Student Search:</strong> Search by registration number or name to auto-fill student details.
+                </div>
+                
+                <div class="form-group search-container">
+                    <label>Search Student</label>
+                    <input type="text" id="studentSearchInput" class="form-control" placeholder="Enter registration number or name..." autocomplete="off">
+                    <div id="studentSearchResults" class="student-search-results"></div>
+                </div>
+                
                 <div class="form-group">
                     <label>Full Name *</label>
                     <input type="text" name="name" id="name" required>
@@ -1451,6 +1581,25 @@ if (isset($_GET['msg'])) {
                     <input type="text" name="phone" id="phone">
                 </div>
                 <div class="form-group">
+                    <label>Department</label>
+                    <select name="department_id" id="department_id">
+                        <option value="">Select Department</option>
+                        <?php foreach ($departments as $dept): ?>
+                            <option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['name']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Program</label>
+                    <select name="program_id" id="program_id">
+                        <option value="">Select Program</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Academic Year</label>
+                    <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
+                </div>
+                <div class="form-group">
                     <label>Role *</label>
                     <select name="role" id="role" required>
                         <option value="">Select Role</option>
@@ -1462,10 +1611,6 @@ if (isset($_GET['msg'])) {
                 <div class="form-group">
                     <label>Role Order</label>
                     <input type="number" name="role_order" id="role_order" value="0">
-                </div>
-                <div class="form-group">
-                    <label>Academic Year</label>
-                    <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
                 </div>
                 <div class="form-group">
                     <label>Bio</label>
@@ -1495,12 +1640,12 @@ if (isset($_GET['msg'])) {
         </div>
     </div>
 
-    <!-- Import Modal with Sample Data -->
+    <!-- Import Modal -->
     <div id="importModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h2><i class="fas fa-file-excel"></i> Import Committee Members</h2>
-                <button class="close-modal" onclick="closeImportModal()">&times;</button>
+                <button type="button" class="close-modal" onclick="closeImportModal()">&times;</button>
             </div>
             <form method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="action" value="import_excel">
@@ -1510,83 +1655,21 @@ if (isset($_GET['msg'])) {
                     <small>Supported format: CSV only (UTF-8 encoding recommended)</small>
                 </div>
 
-                <!-- Sample Data Section -->
                 <div class="info-box">
                     <strong><i class="fas fa-info-circle"></i> Required Columns:</strong>
                     <p><strong>name</strong> (required), <strong>role</strong> (required), <strong>email</strong>, <strong>reg_number</strong>, <strong>phone</strong>, <strong>academic_year</strong>, <strong>status</strong> (active/inactive)</p>
                 </div>
 
                 <div class="sample-table-container">
-                    <h4 style="margin-bottom: 0.5rem;"><i class="fas fa-table"></i> Sample Excel Format</h4>
+                    <h4 style="margin-bottom: 0.5rem;"><i class="fas fa-table"></i> Sample Format</h4>
                     <table class="sample-table">
                         <thead>
-                            <tr>
-                                <th>name</th>
-                                <th>role</th>
-                                <th>email</th>
-                                <th>reg_number</th>
-                                <th>phone</th>
-                                <th>status</th>
-                            </tr>
+                            <tr><th>name</th><th>role</th><th>email</th><th>reg_number</th><th>phone</th><th>status</th></tr>
                         </thead>
                         <tbody>
-                            <tr>
-                                <td>John Mwiza</td>
-                                <td>guild_president</td>
-                                <td>john.mwiza@rpsu.rw</td>
-                                <td>2024-GP001</td>
-                                <td>0788123456</td>
-                                <td>active</td>
-                            </tr>
-                            <tr>
-                                <td>Alice Uwase</td>
-                                <td>vice_guild_finance</td>
-                                <td>alice.uwase@rpsu.rw</td>
-                                <td>2024-VF001</td>
-                                <td>0788234567</td>
-                                <td>active</td>
-                            </tr>
-                            <tr>
-                                <td>Peter Ndayisaba</td>
-                                <td>general_secretary</td>
-                                <td>peter.ndayisaba@rpsu.rw</td>
-                                <td>2024-GS001</td>
-                                <td>0788345678</td>
-                                <td>active</td>
-                            </tr>
-                            <tr>
-                                <td>Jean Claude Habimana</td>
-                                <td>minister_sports</td>
-                                <td>jean.habimana@rpsu.rw</td>
-                                <td>2024-MS001</td>
-                                <td>0788456789</td>
-                                <td>inactive</td>
-                            </tr>
+                            <tr><td>John Doe</td><td>guild_president</td><td>john@rpsu.rw</td><td>20RP000</td><td>0788123456</td><td>active</td></tr>
                         </tbody>
                     </table>
-                </div>
-
-                <div class="info-box">
-                    <strong><i class="fas fa-list"></i> Available Role Values:</strong>
-                    <div class="role-list">
-                        <span>• guild_president</span>
-                        <span>• vice_guild_academic</span>
-                        <span>• vice_guild_finance</span>
-                        <span>• general_secretary</span>
-                        <span>• minister_sports</span>
-                        <span>• minister_environment</span>
-                        <span>• minister_public_relations</span>
-                        <span>• minister_health</span>
-                        <span>• minister_culture</span>
-                        <span>• minister_gender</span>
-                        <span>• president_representative_board</span>
-                        <span>• vice_president_representative_board</span>
-                        <span>• secretary_representative_board</span>
-                        <span>• president_arbitration</span>
-                        <span>• vice_president_arbitration</span>
-                        <span>• advisor_arbitration</span>
-                        <span>• secretary_arbitration</span>
-                    </div>
                 </div>
 
                 <div class="info-box">
@@ -1605,6 +1688,8 @@ if (isset($_GET['msg'])) {
     </div>
 
     <script>
+        let searchTimeout;
+        
         // Theme Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
@@ -1618,9 +1703,8 @@ if (isset($_GET['msg'])) {
             themeToggle.innerHTML = body.classList.contains('dark-mode') ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // View Toggle - Default Table View
+        // View Toggle
         let currentView = 'table';
-
         function toggleView(view) {
             const tableView = document.getElementById('tableView');
             const gridView = document.getElementById('gridView');
@@ -1643,13 +1727,132 @@ if (isset($_GET['msg'])) {
             localStorage.setItem('committee_view', view);
         }
 
-        // Load saved view preference
         const savedView = localStorage.getItem('committee_view');
         if (savedView === 'grid') {
             toggleView('grid');
         } else {
             toggleView('table');
         }
+
+        // Student Search Functionality
+        const studentSearchInput = document.getElementById('studentSearchInput');
+        const searchResults = document.getElementById('studentSearchResults');
+        
+        studentSearchInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            const query = this.value.trim();
+            
+            if (query.length < 2) {
+                searchResults.style.display = 'none';
+                return;
+            }
+            
+            searchTimeout = setTimeout(() => {
+                fetch(`committee.php?search_student=1&query=${encodeURIComponent(query)}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.error) {
+                            console.error(data.error);
+                            return;
+                        }
+                        
+                        if (data.length === 0) {
+                            searchResults.innerHTML = '<div class="student-search-result">No students found</div>';
+                            searchResults.style.display = 'block';
+                            return;
+                        }
+                        
+                        searchResults.innerHTML = data.map(student => `
+                            <div class="student-search-result" onclick="selectStudent(${student.id}, '${escapeHtml(student.full_name)}', '${escapeHtml(student.reg_number)}', '${escapeHtml(student.email)}', '${escapeHtml(student.phone)}', ${student.department_id || 'null'}, ${student.program_id || 'null'}, '${escapeHtml(student.academic_year)}')">
+                                <div class="student-result-name">${escapeHtml(student.full_name)}</div>
+                                <div class="student-result-details">Reg: ${escapeHtml(student.reg_number)} | Email: ${escapeHtml(student.email)}</div>
+                            </div>
+                        `).join('');
+                        searchResults.style.display = 'block';
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                    });
+            }, 300);
+        });
+        
+        // Close search results when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!studentSearchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                searchResults.style.display = 'none';
+            }
+        });
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function selectStudent(id, name, regNumber, email, phone, departmentId, programId, academicYear) {
+            // Fill form fields
+            document.getElementById('name').value = name;
+            document.getElementById('reg_number').value = regNumber;
+            document.getElementById('email').value = email;
+            document.getElementById('phone').value = phone;
+            document.getElementById('academic_year').value = academicYear;
+            
+            // Set hidden user_id field
+            const userIdField = document.createElement('input');
+            userIdField.type = 'hidden';
+            userIdField.name = 'user_id';
+            userIdField.value = id;
+            
+            // Remove existing user_id if present
+            const existingUserId = document.querySelector('input[name="user_id"]');
+            if (existingUserId) {
+                existingUserId.remove();
+            }
+            document.getElementById('memberForm').appendChild(userIdField);
+            
+            // Set department
+            if (departmentId) {
+                document.getElementById('department_id').value = departmentId;
+                // Trigger program loading
+                loadPrograms(departmentId, programId);
+            }
+            
+            // Clear search and hide results
+            studentSearchInput.value = '';
+            searchResults.style.display = 'none';
+            
+            // Show success message
+            const alertDiv = document.createElement('div');
+            alertDiv.className = 'alert alert-success';
+            alertDiv.style.marginBottom = '1rem';
+            alertDiv.innerHTML = '<i class="fas fa-check-circle"></i> Student details loaded! You can now edit and assign a committee role.';
+            document.getElementById('memberForm').insertBefore(alertDiv, document.getElementById('memberForm').firstChild);
+            setTimeout(() => alertDiv.remove(), 3000);
+        }
+        
+        function loadPrograms(departmentId, selectedProgramId = null) {
+            if (!departmentId) {
+                document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
+                return;
+            }
+            
+            fetch(`committee.php?get_programs=1&department_id=${departmentId}`)
+                .then(res => res.json())
+                .then(data => {
+                    let options = '<option value="">Select Program</option>';
+                    data.forEach(program => {
+                        const selected = selectedProgramId == program.id ? 'selected' : '';
+                        options += `<option value="${program.id}" ${selected}>${escapeHtml(program.name)}</option>`;
+                    });
+                    document.getElementById('program_id').innerHTML = options;
+                })
+                .catch(error => console.error('Error loading programs:', error));
+        }
+        
+        // Department change handler
+        document.getElementById('department_id').addEventListener('change', function() {
+            loadPrograms(this.value);
+        });
 
         // Modal functions
         function openAddModal() {
@@ -1658,13 +1861,29 @@ if (isset($_GET['msg'])) {
             document.getElementById('memberId').value = '';
             document.getElementById('memberForm').reset();
             document.getElementById('imagePreview').style.display = 'none';
+            document.getElementById('studentSearchInput').value = '';
+            
+            // Remove any existing user_id field
+            const existingUserId = document.querySelector('input[name="user_id"]');
+            if (existingUserId) {
+                existingUserId.remove();
+            }
+            
             document.getElementById('memberModal').classList.add('active');
         }
 
         function openEditModal(id) {
+            event.stopPropagation();
+            
             fetch(`committee.php?get_member=1&id=${id}`)
                 .then(res => res.json())
                 .then(member => {
+                    if (member.error) {
+                        console.error('Error:', member.error);
+                        alert('Error loading member data');
+                        return;
+                    }
+                    
                     document.getElementById('modalTitle').textContent = 'Edit Committee Member';
                     document.getElementById('formAction').value = 'edit';
                     document.getElementById('memberId').value = member.id;
@@ -1679,12 +1898,25 @@ if (isset($_GET['msg'])) {
                     document.getElementById('portfolio_description').value = member.portfolio_description || '';
                     document.getElementById('status').value = member.status;
                     
-                    if (member.photo_url) {
-                        const preview = document.getElementById('imagePreview');
-                        preview.innerHTML = `<img src="../${member.photo_url}" alt="Preview">`;
-                        preview.style.display = 'block';
+                    if (member.department_id) {
+                        document.getElementById('department_id').value = member.department_id;
+                        loadPrograms(member.department_id, member.program_id);
                     }
+                    
+                    const preview = document.getElementById('imagePreview');
+                    if (member.photo_url && member.photo_url.trim() !== '') {
+                        preview.innerHTML = `<img src="../${member.photo_url}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;">`;
+                        preview.style.display = 'block';
+                    } else {
+                        preview.innerHTML = '';
+                        preview.style.display = 'none';
+                    }
+                    
                     document.getElementById('memberModal').classList.add('active');
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Error loading member data');
                 });
         }
 
@@ -1705,10 +1937,13 @@ if (isset($_GET['msg'])) {
             if (input.files && input.files[0]) {
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    preview.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
+                    preview.innerHTML = `<img src="${e.target.result}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;">`;
                     preview.style.display = 'block';
                 };
                 reader.readAsDataURL(input.files[0]);
+            } else {
+                preview.innerHTML = '';
+                preview.style.display = 'none';
             }
         }
 
@@ -1724,45 +1959,47 @@ if (isset($_GET['msg'])) {
             return confirm(`${action} ${checked} member(s)?`);
         }
 
-        // Update the downloadSampleCSV function in the JavaScript section
-function downloadSampleCSV() {
-    // Create sample data without BOM issues
-    const sampleData = [
-        ['name', 'role', 'email', 'reg_number', 'phone', 'academic_year', 'status'],
-        ['John Mwiza', 'guild_president', 'john.mwiza@rpsu.rw', '2024-GP001', '0788123456', '2024-2025', 'active'],
-        ['Alice Uwase', 'vice_guild_finance', 'alice.uwase@rpsu.rw', '2024-VF001', '0788234567', '2024-2025', 'active'],
-        ['Peter Ndayisaba', 'general_secretary', 'peter.ndayisaba@rpsu.rw', '2024-GS001', '0788345678', '2024-2025', 'active'],
-        ['Jean Claude Habimana', 'minister_sports', 'jean.habimana@rpsu.rw', '2024-MS001', '0788456789', '2024-2025', 'active']
-    ];
-    
-    // Convert to CSV - NO BOM to avoid header issues
-    const csvContent = sampleData.map(row => {
-        return row.map(cell => {
-            // Escape quotes and wrap in quotes if needed
-            if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))) {
-                return '"' + cell.replace(/"/g, '""') + '"';
-            }
-            return cell;
-        }).join(',');
-    }).join('\n');
-    
-    // Use standard CSV without BOM
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'committee_sample.csv');
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-}
+        function downloadSampleCSV() {
+            const sampleData = [
+                ['name', 'role', 'email', 'reg_number', 'phone', 'academic_year', 'status'],
+                ['John Doe', 'guild_president', 'john@rpsu.rw', '20RP000', '0788123456', '2024-2025', 'active'],
+            ];
+            
+            const csvContent = sampleData.map(row => {
+                return row.map(cell => {
+                    if (typeof cell === 'string' && (cell.includes(',') || cell.includes('"') || cell.includes('\n'))) {
+                        return '"' + cell.replace(/"/g, '""') + '"';
+                    }
+                    return cell;
+                }).join(',');
+            }).join('\n');
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'committee_sample.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
 
+        // Close modals when clicking outside
         window.onclick = function(e) {
-            if (e.target.classList.contains('modal')) closeModal();
-            if (e.target.classList.contains('modal')) closeImportModal();
+            const memberModal = document.getElementById('memberModal');
+            const importModal = document.getElementById('importModal');
+            if (e.target === memberModal) closeModal();
+            if (e.target === importModal) closeImportModal();
         };
+        
+        // Prevent modal close when clicking inside modal content
+        document.querySelectorAll('.modal-content').forEach(modalContent => {
+            modalContent.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+        });
     </script>
 </body>
 </html>

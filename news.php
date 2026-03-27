@@ -2,7 +2,7 @@
 session_start();
 require_once 'config/database.php';
 
-// Get all news categories - FIXED: use 'active' string
+// Get all news categories
 try {
     $categories_stmt = $pdo->query("SELECT * FROM news_categories WHERE is_active = 'active' ORDER BY name");
     $categories = $categories_stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -10,7 +10,7 @@ try {
     $categories = [];
 }
 
-// Get featured news - FIXED: use true for boolean
+// Get featured news
 try {
     $featured_stmt = $pdo->prepare("
         SELECT n.*, nc.name as category_name, nc.color as category_color, nc.icon as category_icon,
@@ -44,7 +44,7 @@ $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $per_page = 9;
 $offset = ($page - 1) * $per_page;
 
-// Get total news count for pagination - FIXED: use parameter binding
+// Get total news count for pagination
 $count_sql = "
     SELECT COUNT(*) as total 
     FROM news n 
@@ -56,7 +56,7 @@ $count_stmt->execute($params);
 $total_news = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'];
 $total_pages = ceil($total_news / $per_page);
 
-// Get news with pagination - FIXED: PostgreSQL syntax with OFFSET
+// Get news with pagination
 try {
     $news_sql = "
         SELECT n.*, nc.name as category_name, nc.color as category_color, nc.icon as category_icon,
@@ -97,7 +97,7 @@ try {
     $popular_news = [];
 }
 
-// Get category counts - FIXED: use proper PostgreSQL syntax
+// Get category counts
 try {
     $category_counts_stmt = $pdo->prepare("
         SELECT nc.id, nc.name, nc.slug, nc.color, COUNT(n.id) as news_count
@@ -113,7 +113,7 @@ try {
     $category_counts = [];
 }
 
-// Get this month's news count - FIXED: PostgreSQL date functions
+// Get this month's news count
 try {
     $month_count_stmt = $pdo->prepare("
         SELECT COUNT(*) as count 
@@ -134,12 +134,28 @@ $page_title = "Campus News - RPSU Musanze College";
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <meta name="description" content="Latest campus news, stories, and updates from RP Musanze College community">
     <title><?php echo $page_title; ?></title>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style">
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" as="style">
+    
+    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-        <link rel="icon" href="assets/images/logo.png">
+    
+    <!-- AOS Animation -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="assets/images/logo.png" type="image/png">
+    
     <style>
+        /* CSS Variables - Matching index.php */
         :root {
             --primary: #0056b3;
             --primary-dark: #003d82;
@@ -162,11 +178,41 @@ $page_title = "Campus News - RPSU Musanze College";
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
             --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.1);
-            --shadow-xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
             --border-radius: 8px;
             --border-radius-lg: 12px;
-            --border-radius-xl: 16px;
-            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            
+            /* Spacing */
+            --space-xs: 0.5rem;
+            --space-sm: 0.75rem;
+            --space-md: 1rem;
+            --space-lg: 1.5rem;
+            --space-xl: 2rem;
+            
+            /* Typography */
+            --text-xs: 0.7rem;
+            --text-sm: 0.8rem;
+            --text-base: 0.9rem;
+            --text-md: 1rem;
+            --text-lg: 1.1rem;
+            --text-xl: 1.25rem;
+            --text-2xl: 1.5rem;
+            --text-3xl: 1.75rem;
+        }
+
+        @media (min-width: 768px) {
+            :root {
+                --space-md: 1.5rem;
+                --space-lg: 2rem;
+                --space-xl: 3rem;
+                --text-sm: 0.875rem;
+                --text-base: 1rem;
+                --text-md: 1.125rem;
+                --text-lg: 1.25rem;
+                --text-xl: 1.5rem;
+                --text-2xl: 1.875rem;
+                --text-3xl: 2.25rem;
+            }
         }
 
         * {
@@ -177,19 +223,19 @@ $page_title = "Campus News - RPSU Musanze College";
 
         body {
             font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            line-height: 1.6;
+            line-height: 1.5;
             color: var(--gray-900);
             background: var(--light);
             overflow-x: hidden;
-            font-size: 14px;
+            font-size: var(--text-base);
         }
 
-        /* Header & Navigation */
+        /* Header & Navigation - Matching index.php */
         .header {
             background: rgba(255, 255, 255, 0.98);
             backdrop-filter: blur(20px);
             border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-            padding: 0.75rem 0;
+            padding: 0.5rem 0;
             position: fixed;
             width: 100%;
             top: 0;
@@ -199,6 +245,7 @@ $page_title = "Campus News - RPSU Musanze College";
 
         .header.scrolled {
             box-shadow: var(--shadow-md);
+            padding: 0.4rem 0;
         }
 
         .nav-container {
@@ -207,55 +254,93 @@ $page_title = "Campus News - RPSU Musanze College";
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0 1.5rem;
+            padding: 0 1rem;
+            gap: var(--space-sm);
+        }
+
+        @media (min-width: 768px) {
+            .nav-container {
+                padding: 0 1.5rem;
+            }
         }
 
         .logo-section {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: var(--space-xs);
+            min-width: 0;
         }
 
         .logos {
             display: flex;
-            gap: 0.75rem;
+            gap: var(--space-xs);
             align-items: center;
+            flex-shrink: 0;
         }
 
         .logo {
-            height: 40px;
+            height: 32px;
             width: auto;
             transition: var(--transition);
         }
 
-        .logo-rp {
-            max-width: 100px;
+        @media (min-width: 768px) {
+            .logo {
+                height: 40px;
+            }
         }
 
-        .logo-rpsu {
-            max-width: 60px;
+        .brand-text {
+            flex-shrink: 1;
+            min-width: 0;
         }
 
         .brand-text h1 {
-            font-size: 1.4rem;
+            font-size: 1rem;
             font-weight: 800;
             background: var(--gradient-primary);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             letter-spacing: -0.025em;
+            white-space: nowrap;
+        }
+
+        @media (min-width: 768px) {
+            .brand-text h1 {
+                font-size: 1.4rem;
+            }
         }
 
         .brand-text p {
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             color: var(--gray-600);
             font-weight: 500;
+            white-space: nowrap;
+        }
+
+        @media (min-width: 768px) {
+            .brand-text p {
+                font-size: 0.75rem;
+            }
+        }
+
+        /* Desktop Navigation */
+        .desktop-nav {
+            display: none;
+            align-items: center;
+            gap: var(--space-md);
+        }
+
+        @media (min-width: 768px) {
+            .desktop-nav {
+                display: flex;
+            }
         }
 
         .nav-links {
             display: flex;
-            gap: 2rem;
-            align-items: center;
+            gap: var(--space-lg);
         }
 
         .nav-links a {
@@ -265,10 +350,11 @@ $page_title = "Campus News - RPSU Musanze College";
             font-size: 0.875rem;
             transition: var(--transition);
             position: relative;
-            padding: 0.5rem 0;
+            padding: var(--space-xs) 0;
+            white-space: nowrap;
         }
 
-        .nav-links a:after {
+        .nav-links a::after {
             content: '';
             position: absolute;
             width: 0;
@@ -280,38 +366,43 @@ $page_title = "Campus News - RPSU Musanze College";
             border-radius: 1px;
         }
 
-        .nav-links a:hover:after {
+        .nav-links a:hover::after,
+        .nav-links a.active::after {
             width: 100%;
         }
 
-        .nav-links a:hover {
-            color: var(--primary);
-        }
-
+        .nav-links a:hover,
         .nav-links a.active {
             color: var(--primary);
         }
 
-        .nav-links a.active:after {
-            width: 100%;
-        }
-
         .login-buttons {
             display: flex;
-            gap: 0.75rem;
+            gap: var(--space-xs);
             align-items: center;
         }
 
         .login-btn {
-            padding: 0.6rem 1.25rem;
+            padding: 0.4rem 0.75rem;
             border-radius: 6px;
             text-decoration: none;
             font-weight: 600;
             transition: var(--transition);
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            font-size: 0.8rem;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+            border: none;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        @media (min-width: 768px) {
+            .login-btn {
+                padding: 0.6rem 1.25rem;
+                font-size: 0.8rem;
+                gap: 0.5rem;
+            }
         }
 
         .btn-student {
@@ -331,69 +422,142 @@ $page_title = "Campus News - RPSU Musanze College";
             box-shadow: var(--shadow-md);
         }
 
-        /* Mobile Menu */
-        .mobile-menu-toggle {
-            display: none;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            width: 30px;
-            height: 30px;
-            background: transparent;
+        /* Mobile Navigation */
+        .mobile-menu-btn {
+            display: flex;
+            background: none;
             border: none;
+            width: 40px;
+            height: 40px;
+            font-size: 1.25rem;
+            color: var(--gray-800);
             cursor: pointer;
-            padding: 0;
-            z-index: 1001;
-        }
-
-        .mobile-menu-toggle span {
-            width: 25px;
-            height: 3px;
-            background: var(--gray-800);
-            margin: 2px 0;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--border-radius);
             transition: var(--transition);
-            border-radius: 2px;
         }
 
-        .mobile-menu-toggle.active span:nth-child(1) {
-            transform: rotate(45deg) translate(5px, 5px);
+        @media (min-width: 768px) {
+            .mobile-menu-btn {
+                display: none;
+            }
         }
 
-        .mobile-menu-toggle.active span:nth-child(2) {
-            opacity: 0;
+        .mobile-menu-btn:hover {
+            background: var(--gray-100);
         }
 
-        .mobile-menu-toggle.active span:nth-child(3) {
-            transform: rotate(-45deg) translate(7px, -6px);
+        .mobile-menu {
+            position: fixed;
+            top: 60px;
+            left: 0;
+            width: 100%;
+            height: calc(100vh - 60px);
+            background: var(--white);
+            z-index: 999;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        @media (min-width: 768px) {
+            .mobile-menu {
+                display: none;
+            }
+        }
+
+        .mobile-menu.active {
+            transform: translateX(0);
+        }
+
+        .mobile-nav {
+            padding: var(--space-sm);
+        }
+
+        .mobile-nav .nav-links {
+            flex-direction: column;
+            gap: 0;
+        }
+
+        .mobile-nav .nav-links a {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--gray-200);
+            font-size: 0.9rem;
+        }
+
+        .mobile-nav .nav-links a:last-child {
+            border-bottom: none;
+        }
+
+        .mobile-login-buttons {
+            padding: var(--space-sm);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-xs);
+        }
+
+        .mobile-login-buttons .login-btn {
+            width: 100%;
+            justify-content: center;
+            padding: 0.75rem;
+            font-size: 0.85rem;
         }
 
         /* Main Content */
         .main-container {
             max-width: 1200px;
-            margin: 80px auto 0;
-            padding: 2rem 1.5rem;
+            margin: 70px auto 0;
+            padding: 1.5rem 1rem;
+        }
+
+        @media (min-width: 768px) {
+            .main-container {
+                margin: 80px auto 0;
+                padding: 2rem 1.5rem;
+            }
         }
 
         /* Page Header */
         .page-header {
             text-align: center;
-            margin-bottom: 3rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (min-width: 768px) {
+            .page-header {
+                margin-bottom: 3rem;
+            }
         }
 
         .page-title {
-            font-size: 2.5rem;
+            font-size: 1.75rem;
             font-weight: 800;
             color: var(--gray-900);
             margin-bottom: 0.5rem;
             letter-spacing: -0.025em;
         }
 
+        @media (min-width: 768px) {
+            .page-title {
+                font-size: 2.5rem;
+            }
+        }
+
         .page-subtitle {
             color: var(--gray-600);
-            font-size: 1.1rem;
+            font-size: 0.9rem;
             line-height: 1.5;
             max-width: 600px;
             margin: 0 auto;
+        }
+
+        @media (min-width: 768px) {
+            .page-subtitle {
+                font-size: 1.1rem;
+            }
         }
 
         /* Category Filter */
@@ -401,23 +565,37 @@ $page_title = "Campus News - RPSU Musanze College";
             display: flex;
             justify-content: center;
             flex-wrap: wrap;
-            gap: 0.75rem;
-            margin-bottom: 3rem;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (min-width: 768px) {
+            .category-filter {
+                gap: 0.75rem;
+                margin-bottom: 3rem;
+            }
         }
 
         .category-btn {
-            padding: 0.75rem 1.5rem;
+            padding: 0.5rem 1rem;
             border: 2px solid var(--gray-200);
             border-radius: 50px;
             background: var(--white);
             color: var(--gray-700);
             text-decoration: none;
             font-weight: 600;
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             transition: var(--transition);
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .category-btn {
+                padding: 0.75rem 1.5rem;
+                font-size: 0.875rem;
+            }
         }
 
         .category-btn:hover {
@@ -432,19 +610,32 @@ $page_title = "Campus News - RPSU Musanze College";
             color: var(--white);
         }
 
-        /* Featured News */
+        /* Featured Section */
         .featured-section {
-            margin-bottom: 4rem;
+            margin-bottom: 2.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .featured-section {
+                margin-bottom: 4rem;
+            }
         }
 
         .section-title {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--gray-900);
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .section-title {
+                font-size: 1.5rem;
+                margin-bottom: 1.5rem;
+            }
         }
 
         .section-title i {
@@ -453,8 +644,15 @@ $page_title = "Campus News - RPSU Musanze College";
 
         .featured-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 2rem;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+
+        @media (min-width: 768px) {
+            .featured-grid {
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                gap: 2rem;
+            }
         }
 
         .featured-card {
@@ -473,10 +671,16 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .featured-image {
-            height: 200px;
+            height: 180px;
             width: 100%;
             position: relative;
             overflow: hidden;
+        }
+
+        @media (min-width: 768px) {
+            .featured-image {
+                height: 200px;
+            }
         }
 
         .featured-image img {
@@ -498,12 +702,18 @@ $page_title = "Campus News - RPSU Musanze College";
             color: var(--white);
             padding: 0.25rem 0.75rem;
             border-radius: 20px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
         }
 
         .featured-content {
-            padding: 1.5rem;
+            padding: 1rem;
+        }
+
+        @media (min-width: 768px) {
+            .featured-content {
+                padding: 1.5rem;
+            }
         }
 
         .featured-category {
@@ -512,46 +722,96 @@ $page_title = "Campus News - RPSU Musanze College";
             gap: 0.5rem;
             padding: 0.25rem 0.75rem;
             border-radius: 20px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             margin-bottom: 0.75rem;
         }
 
         .featured-title {
-            font-size: 1.2rem;
+            font-size: 1rem;
             font-weight: 700;
             color: var(--gray-900);
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
             line-height: 1.3;
+        }
+
+        @media (min-width: 768px) {
+            .featured-title {
+                font-size: 1.2rem;
+                margin-bottom: 0.75rem;
+            }
+        }
+
+        .featured-title a {
+            color: inherit;
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .featured-title a:hover {
+            color: var(--primary);
         }
 
         .featured-excerpt {
             color: var(--gray-600);
             line-height: 1.5;
-            margin-bottom: 1rem;
-            font-size: 0.875rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        @media (min-width: 768px) {
+            .featured-excerpt {
+                font-size: 0.875rem;
+                margin-bottom: 1rem;
+            }
         }
 
         .featured-meta {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--gray-600);
         }
 
-        /* News Grid */
+        @media (min-width: 768px) {
+            .featured-meta {
+                font-size: 0.75rem;
+            }
+        }
+
+        /* News Layout */
         .news-section {
             display: grid;
-            grid-template-columns: 1fr 300px;
-            gap: 2rem;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
             align-items: start;
+        }
+
+        @media (min-width: 1024px) {
+            .news-section {
+                grid-template-columns: 1fr 300px;
+                gap: 2rem;
+            }
         }
 
         .news-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1.5rem;
+            grid-template-columns: 1fr;
+            gap: 1rem;
+        }
+
+        @media (min-width: 640px) {
+            .news-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .news-grid {
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 1.5rem;
+            }
         }
 
         .news-card {
@@ -561,6 +821,7 @@ $page_title = "Campus News - RPSU Musanze College";
             transition: var(--transition);
             box-shadow: var(--shadow-sm);
             border: 1px solid var(--gray-200);
+            cursor: pointer;
         }
 
         .news-card:hover {
@@ -569,11 +830,17 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .news-image {
-            height: 160px;
+            height: 140px;
             width: 100%;
             position: relative;
             overflow: hidden;
             background: var(--gray-200);
+        }
+
+        @media (min-width: 768px) {
+            .news-image {
+                height: 160px;
+            }
         }
 
         .news-image img {
@@ -588,7 +855,13 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .news-content {
-            padding: 1.25rem;
+            padding: 1rem;
+        }
+
+        @media (min-width: 768px) {
+            .news-content {
+                padding: 1.25rem;
+            }
         }
 
         .news-category {
@@ -597,32 +870,69 @@ $page_title = "Campus News - RPSU Musanze College";
             gap: 0.5rem;
             padding: 0.25rem 0.5rem;
             border-radius: 15px;
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             font-weight: 600;
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .news-category {
+                font-size: 0.7rem;
+                margin-bottom: 0.75rem;
+            }
         }
 
         .news-title {
-            font-size: 1rem;
+            font-size: 0.9rem;
             font-weight: 700;
             color: var(--gray-900);
             margin-bottom: 0.5rem;
             line-height: 1.3;
         }
 
+        @media (min-width: 768px) {
+            .news-title {
+                font-size: 1rem;
+                margin-bottom: 0.5rem;
+            }
+        }
+
+        .news-title a {
+            color: inherit;
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        .news-title a:hover {
+            color: var(--primary);
+        }
+
         .news-excerpt {
             color: var(--gray-600);
-            line-height: 1.5;
-            margin-bottom: 1rem;
-            font-size: 0.8rem;
+            line-height: 1.4;
+            margin-bottom: 0.75rem;
+            font-size: 0.75rem;
+        }
+
+        @media (min-width: 768px) {
+            .news-excerpt {
+                font-size: 0.8rem;
+                margin-bottom: 1rem;
+            }
         }
 
         .news-meta {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             color: var(--gray-600);
+        }
+
+        @media (min-width: 768px) {
+            .news-meta {
+                font-size: 0.7rem;
+            }
         }
 
         .news-views {
@@ -635,25 +945,44 @@ $page_title = "Campus News - RPSU Musanze College";
         .sidebar {
             display: flex;
             flex-direction: column;
-            gap: 1.5rem;
+            gap: 1rem;
+        }
+
+        @media (min-width: 768px) {
+            .sidebar {
+                gap: 1.5rem;
+            }
         }
 
         .sidebar-card {
             background: var(--white);
             border-radius: var(--border-radius-lg);
-            padding: 1.5rem;
+            padding: 1rem;
             box-shadow: var(--shadow-sm);
             border: 1px solid var(--gray-200);
         }
 
+        @media (min-width: 768px) {
+            .sidebar-card {
+                padding: 1.5rem;
+            }
+        }
+
         .sidebar-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
             color: var(--gray-900);
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .sidebar-title {
+                font-size: 1.1rem;
+                margin-bottom: 1rem;
+            }
         }
 
         .sidebar-title i {
@@ -665,7 +994,7 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .popular-item {
-            padding: 0.75rem 0;
+            padding: 0.5rem 0;
             border-bottom: 1px solid var(--gray-200);
         }
 
@@ -677,10 +1006,16 @@ $page_title = "Campus News - RPSU Musanze College";
             color: var(--gray-800);
             text-decoration: none;
             font-weight: 500;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             transition: var(--transition);
             display: block;
             line-height: 1.4;
+        }
+
+        @media (min-width: 768px) {
+            .popular-item a {
+                font-size: 0.875rem;
+            }
         }
 
         .popular-item a:hover {
@@ -692,8 +1027,14 @@ $page_title = "Campus News - RPSU Musanze College";
             justify-content: space-between;
             align-items: center;
             margin-top: 0.25rem;
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             color: var(--gray-600);
+        }
+
+        @media (min-width: 768px) {
+            .popular-meta {
+                font-size: 0.7rem;
+            }
         }
 
         .categories-list {
@@ -701,17 +1042,29 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .category-item {
-            padding: 0.5rem 0;
+            padding: 0.4rem 0;
+        }
+
+        @media (min-width: 768px) {
+            .category-item {
+                padding: 0.5rem 0;
+            }
         }
 
         .category-item a {
             color: var(--gray-600);
             text-decoration: none;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             transition: var(--transition);
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+
+        @media (min-width: 768px) {
+            .category-item a {
+                font-size: 0.875rem;
+            }
         }
 
         .category-item a:hover {
@@ -721,10 +1074,17 @@ $page_title = "Campus News - RPSU Musanze College";
         .category-count {
             background: var(--gray-200);
             color: var(--gray-600);
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.4rem;
             border-radius: 12px;
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             font-weight: 600;
+        }
+
+        @media (min-width: 768px) {
+            .category-count {
+                padding: 0.25rem 0.5rem;
+                font-size: 0.75rem;
+            }
         }
 
         /* Pagination */
@@ -732,19 +1092,34 @@ $page_title = "Campus News - RPSU Musanze College";
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 0.5rem;
-            margin-top: 3rem;
+            gap: 0.25rem;
+            margin-top: 2rem;
+            flex-wrap: wrap;
+        }
+
+        @media (min-width: 768px) {
+            .pagination {
+                gap: 0.5rem;
+                margin-top: 3rem;
+            }
         }
 
         .pagination a, .pagination span {
-            padding: 0.5rem 1rem;
+            padding: 0.4rem 0.8rem;
             border: 1px solid var(--gray-300);
             border-radius: var(--border-radius);
             text-decoration: none;
             color: var(--gray-700);
             font-weight: 500;
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             transition: var(--transition);
+        }
+
+        @media (min-width: 768px) {
+            .pagination a, .pagination span {
+                padding: 0.5rem 1rem;
+                font-size: 0.875rem;
+            }
         }
 
         .pagination a:hover {
@@ -767,72 +1142,108 @@ $page_title = "Campus News - RPSU Musanze College";
         /* Empty State */
         .empty-state {
             text-align: center;
-            padding: 4rem 2rem;
+            padding: 2rem 1rem;
             color: var(--gray-600);
             grid-column: 1 / -1;
         }
 
+        @media (min-width: 768px) {
+            .empty-state {
+                padding: 4rem 2rem;
+            }
+        }
+
         .empty-state i {
-            font-size: 4rem;
+            font-size: 3rem;
             margin-bottom: 1rem;
             color: var(--gray-400);
         }
 
         .empty-state h3 {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             margin-bottom: 0.5rem;
             color: var(--gray-600);
         }
 
-        /* Footer */
+        /* Footer - Matching index.php */
         .footer {
             background: var(--gray-900);
             color: white;
-            padding: 3rem 1.5rem 1.5rem;
-            margin-top: 4rem;
+            padding: 2rem 1rem 1rem;
+            margin-top: 2rem;
+        }
+
+        @media (min-width: 768px) {
+            .footer {
+                padding: 3rem 1.5rem 1.5rem;
+                margin-top: 4rem;
+            }
         }
 
         .footer-content {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
-            gap: 2rem;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (min-width: 768px) {
+            .footer-content {
+                grid-template-columns: 2fr 1fr 1fr 1fr;
+                gap: 2rem;
+            }
         }
 
         .footer-logo {
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
         }
 
         .footer-logo .logo {
-            height: 35px;
+            height: 30px;
             filter: brightness(0) invert(1);
         }
 
         .footer-description {
             color: #9ca3af;
             line-height: 1.5;
-            margin-bottom: 1.5rem;
-            font-size: 0.875rem;
+            margin-bottom: 1rem;
+            font-size: 0.8rem;
+        }
+
+        @media (min-width: 768px) {
+            .footer-description {
+                font-size: 0.875rem;
+                margin-bottom: 1.5rem;
+            }
         }
 
         .social-links {
             display: flex;
-            gap: 0.75rem;
+            gap: 0.6rem;
         }
 
         .social-links a {
-            width: 36px;
-            height: 36px;
+            width: 32px;
+            height: 32px;
             background: rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
+            border-radius: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
             text-decoration: none;
             transition: var(--transition);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
+        }
+
+        @media (min-width: 768px) {
+            .social-links a {
+                width: 36px;
+                height: 36px;
+                font-size: 0.875rem;
+                border-radius: 8px;
+            }
         }
 
         .social-links a:hover {
@@ -841,10 +1252,17 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .footer-heading {
-            font-size: 1rem;
+            font-size: 0.9rem;
             font-weight: 700;
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
             color: var(--warning);
+        }
+
+        @media (min-width: 768px) {
+            .footer-heading {
+                font-size: 1rem;
+                margin-bottom: 1rem;
+            }
         }
 
         .footer-links {
@@ -852,14 +1270,30 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .footer-links li {
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.4rem;
+        }
+
+        @media (min-width: 768px) {
+            .footer-links li {
+                margin-bottom: 0.5rem;
+            }
         }
 
         .footer-links a {
             color: #9ca3af;
             text-decoration: none;
             transition: var(--transition);
-            font-size: 0.875rem;
+            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        @media (min-width: 768px) {
+            .footer-links a {
+                font-size: 0.875rem;
+                gap: 0.5rem;
+            }
         }
 
         .footer-links a:hover {
@@ -868,305 +1302,24 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         .footer-bottom {
-            max-width: 1000px;
-            margin: 0 auto;
-            padding-top: 1.5rem;
+            max-width: 1200px;
+            margin: 1rem auto 0;
+            padding-top: 1rem;
             border-top: 1px solid rgba(255, 255, 255, 0.1);
             text-align: center;
             color: #6b7280;
-            margin-top: 2rem;
-            font-size: 0.75rem;
+            font-size: 0.65rem;
         }
 
-        /* Responsive Design */
-        @media (max-width: 1024px) {
-            .news-section {
-                grid-template-columns: 1fr;
-            }
-
-            .sidebar {
-                order: -1;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .nav-container {
-                flex-direction: column;
-                gap: 1rem;
-                padding: 0 1rem;
-            }
-
-            .nav-links {
-                gap: 1rem;
-                flex-wrap: wrap;
-                justify-content: center;
-            }
-
-            .login-buttons {
-                width: 100%;
-                justify-content: center;
-            }
-
-            .page-title {
-                font-size: 2rem;
-            }
-
-            .featured-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .news-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .footer-content {
-                grid-template-columns: 1fr;
-                gap: 2rem;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .nav-links {
-                flex-direction: column;
-                gap: 0.5rem;
-            }
-
-            .category-filter {
-                flex-direction: column;
-                align-items: center;
-            }
-
-            .category-btn {
-                width: 100%;
-                max-width: 250px;
-                justify-content: center;
-            }
-        }
-
-        /* Enhanced Mobile Responsiveness */
-        @media (max-width: 768px) {
-            .mobile-menu-toggle {
-                display: flex;
-            }
-
-            .nav-links {
-                display: none;
-                position: fixed;
-                top: 80px;
-                left: 0;
-                width: 100%;
-                background: var(--white);
-                flex-direction: column;
-                padding: 1.5rem;
-                box-shadow: var(--shadow-lg);
-                z-index: 999;
-                gap: 1rem;
-            }
-
-            .nav-links.active {
-                display: flex;
-            }
-
-            .login-buttons {
-                display: none;
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                width: 100%;
-                background: var(--white);
-                padding: 1rem;
-                box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-                z-index: 999;
-            }
-
-            .login-buttons.active {
-                display: flex;
-            }
-
-            .main-container {
-                margin-top: 70px;
-                padding: 1.5rem 1rem;
-            }
-
-            .page-title {
-                font-size: 1.8rem;
-            }
-
-            .page-subtitle {
-                font-size: 1rem;
-            }
-
-            .featured-section {
-                margin-bottom: 2.5rem;
-            }
-
-            .featured-grid {
-                gap: 1.5rem;
-            }
-
-            .featured-image {
-                height: 180px;
-            }
-
-            .featured-content {
-                padding: 1.25rem;
-            }
-
-            .featured-title {
-                font-size: 1.1rem;
-            }
-
-            .news-grid {
-                gap: 1.25rem;
-            }
-
-            .news-image {
-                height: 140px;
-            }
-
-            .news-content {
-                padding: 1rem;
-            }
-
-            .news-title {
-                font-size: 0.95rem;
-            }
-
-            .sidebar {
-                gap: 1.25rem;
-            }
-
-            .sidebar-card {
-                padding: 1.25rem;
-            }
-
-            .pagination {
-                flex-wrap: wrap;
-                gap: 0.25rem;
-            }
-
-            .pagination a, .pagination span {
-                padding: 0.4rem 0.8rem;
-                font-size: 0.8rem;
-            }
-
-            .footer {
-                padding: 2rem 1rem 1rem;
-            }
-
-            .footer-content {
-                gap: 1.5rem;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .logo-section {
-                flex-direction: column;
-                gap: 0.5rem;
-                text-align: center;
-            }
-
-            .brand-text h1 {
-                font-size: 1.2rem;
-            }
-
-            .brand-text p {
-                font-size: 0.7rem;
-            }
-
-            .page-title {
-                font-size: 1.6rem;
-            }
-
-            .page-subtitle {
-                font-size: 0.9rem;
-            }
-
-            .section-title {
-                font-size: 1.3rem;
-            }
-
-            .category-btn {
-                padding: 0.6rem 1.25rem;
-                font-size: 0.8rem;
-            }
-
-            .featured-image {
-                height: 160px;
-            }
-
-            .featured-content {
-                padding: 1rem;
-            }
-
-            .featured-title {
-                font-size: 1rem;
-            }
-
-            .featured-excerpt {
-                font-size: 0.8rem;
-            }
-
-            .news-image {
-                height: 120px;
-            }
-
-            .news-content {
-                padding: 0.875rem;
-            }
-
-            .news-title {
-                font-size: 0.9rem;
-            }
-
-            .news-excerpt {
+        @media (min-width: 768px) {
+            .footer-bottom {
+                margin-top: 2rem;
+                padding-top: 1.5rem;
                 font-size: 0.75rem;
             }
-
-            .sidebar-card {
-                padding: 1rem;
-            }
-
-            .sidebar-title {
-                font-size: 1rem;
-            }
-
-            .footer-heading {
-                font-size: 0.9rem;
-            }
-
-            .footer-links a {
-                font-size: 0.8rem;
-            }
         }
 
-        @media (max-width: 360px) {
-            .main-container {
-                padding: 1rem 0.75rem;
-            }
-
-            .page-title {
-                font-size: 1.4rem;
-            }
-
-            .page-subtitle {
-                font-size: 0.85rem;
-            }
-
-            .featured-image {
-                height: 140px;
-            }
-
-            .news-image {
-                height: 100px;
-            }
-
-            .category-btn {
-                padding: 0.5rem 1rem;
-            }
-        }
-
-        /* Loading Animation */
+        /* Animation */
         @keyframes fadeInUp {
             from {
                 opacity: 0;
@@ -1183,29 +1336,38 @@ $page_title = "Campus News - RPSU Musanze College";
         }
 
         /* Touch-friendly improvements */
-        @media (hover: none) {
+        @media (hover: none) and (pointer: coarse) {
             .featured-card:hover,
             .news-card:hover {
                 transform: none;
             }
-
+            
             .category-btn:hover {
                 transform: none;
             }
-
+            
             .login-btn:hover {
                 transform: none;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
             }
         }
     </style>
 </head>
 <body>
-    <!-- Header -->
+    <!-- Header - Matching index.php -->
     <header class="header" id="header">
         <div class="nav-container">
             <div class="logo-section">
                 <div class="logos">
-                    <img src="assets/images/logo.png" alt="RPSU" class="logo logo-rpsu">
+                    <img src="assets/images/logo.png" alt="RPSU Logo" class="logo" loading="lazy">
                 </div>
                 <div class="brand-text">
                     <h1>Isonga</h1>
@@ -1213,26 +1375,50 @@ $page_title = "Campus News - RPSU Musanze College";
                 </div>
             </div>
             
-            <button class="mobile-menu-toggle" id="mobileMenuToggle" aria-label="Toggle menu">
-                <span></span>
-                <span></span>
-                <span></span>
-            </button>
+            <!-- Desktop Navigation -->
+            <div class="desktop-nav">
+                <nav class="nav-links" aria-label="Main Navigation">
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php" class="active">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
+                </nav>
+                <div class="login-buttons">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
+                        <i class="fas fa-user-graduate"></i> Student
+                    </a>
+                    <a href="auth/login.php" class="login-btn btn-committee">
+                        <i class="fas fa-users"></i> Committee
+                    </a>
+                </div>
+            </div>
             
-            <nav class="nav-links" id="navLinks">
-                <a href="index.php">Home</a>
-                <a href="announcements.php">Announcements</a>
-                <a href="news.php" class="active">News</a>
-                <a href="events.php">Events</a>
-                <a href="committee.php">Committee</a>
-                <a href="gallery.php">Gallery</a>
-            </nav>
-            <div class="login-buttons" id="loginButtons">
+            <!-- Mobile Menu Button -->
+            <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle mobile menu" aria-expanded="false">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+        
+        <!-- Mobile Menu -->
+        <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
+            <div class="mobile-nav">
+                <nav class="nav-links" aria-label="Mobile Navigation">
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php" class="active">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
+                </nav>
+            </div>
+            <div class="mobile-login-buttons">
                 <a href="auth/student_login.php" class="login-btn btn-student">
-                    <i class="fas fa-user-graduate"></i> Student
+                    <i class="fas fa-user-graduate"></i> Student Portal
                 </a>
                 <a href="auth/login.php" class="login-btn btn-committee">
-                    <i class="fas fa-users"></i> Committee
+                    <i class="fas fa-users"></i> Committee Portal
                 </a>
             </div>
         </div>
@@ -1241,20 +1427,19 @@ $page_title = "Campus News - RPSU Musanze College";
     <!-- Main Content -->
     <div class="main-container">
         <!-- Page Header -->
-        <div class="page-header">
+        <div class="page-header" data-aos="fade-up">
             <h1 class="page-title">Campus News</h1>
             <p class="page-subtitle">Stay updated with the latest happenings, stories, and achievements from RP Musanze College community</p>
         </div>
 
         <!-- Category Filter -->
-        <div class="category-filter">
+        <div class="category-filter" data-aos="fade-up" data-aos-delay="100">
             <a href="news.php?category=all" class="category-btn <?php echo $current_category === 'all' ? 'active' : ''; ?>">
                 <i class="fas fa-layer-group"></i> All News
             </a>
             <?php foreach ($categories as $category): ?>
                 <a href="news.php?category=<?php echo $category['slug']; ?>" 
-                   class="category-btn <?php echo $current_category === $category['slug'] ? 'active' : ''; ?>"
-                   style="<?php echo $current_category === $category['slug'] ? 'background-color: ' . $category['color'] . '; border-color: ' . $category['color'] : ''; ?>">
+                   class="category-btn <?php echo $current_category === $category['slug'] ? 'active' : ''; ?>">
                     <i class="fas fa-<?php echo $category['icon']; ?>"></i>
                     <?php echo htmlspecialchars($category['name']); ?>
                 </a>
@@ -1263,7 +1448,7 @@ $page_title = "Campus News - RPSU Musanze College";
 
         <!-- Featured News -->
         <?php if (!empty($featured_news)): ?>
-        <section class="featured-section">
+        <section class="featured-section" data-aos="fade-up" data-aos-delay="200">
             <h2 class="section-title">
                 <i class="fas fa-star"></i>
                 Featured Stories
@@ -1275,11 +1460,12 @@ $page_title = "Campus News - RPSU Musanze College";
                             <?php if (!empty($featured['image_url'])): ?>
                                 <img src="<?php echo htmlspecialchars($featured['image_url']); ?>" 
                                      alt="<?php echo htmlspecialchars($featured['title']); ?>"
-                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                     loading="lazy">
+                            <?php else: ?>
+                                <div style="width: 100%; height: 100%; background: <?php echo $featured['category_color']; ?>; display: flex; align-items: center; justify-content: center; color: white; font-size: 2rem;">
+                                    <i class="fas fa-<?php echo $featured['category_icon']; ?>"></i>
+                                </div>
                             <?php endif; ?>
-                            <div class="featured-image-placeholder" style="<?php echo empty($featured['image_url']) ? 'display: block;' : 'display: none;'; ?> width: 100%; height: 100%; background: <?php echo $featured['category_color']; ?>; display: flex; align-items: center; justify-content: center; color: white; font-size: 2rem;">
-                                <i class="fas fa-<?php echo $featured['category_icon']; ?>"></i>
-                            </div>
                             <div class="featured-badge">
                                 <i class="fas fa-star"></i> Featured
                             </div>
@@ -1289,11 +1475,11 @@ $page_title = "Campus News - RPSU Musanze College";
                                 <i class="fas fa-<?php echo $featured['category_icon']; ?>"></i>
                                 <?php echo htmlspecialchars($featured['category_name']); ?>
                             </div>
-<h3 class="featured-title">
-    <a href="news_single.php?id=<?php echo $featured['id']; ?>" style="color: inherit; text-decoration: none;">
-        <?php echo htmlspecialchars($featured['title']); ?>
-    </a>
-</h3>
+                            <h3 class="featured-title">
+                                <a href="news_single.php?id=<?php echo $featured['id']; ?>">
+                                    <?php echo htmlspecialchars($featured['title']); ?>
+                                </a>
+                            </h3>
                             <p class="featured-excerpt"><?php echo htmlspecialchars($featured['excerpt'] ?? substr($featured['content'], 0, 120) . '...'); ?></p>
                             <div class="featured-meta">
                                 <span>
@@ -1330,22 +1516,23 @@ $page_title = "Campus News - RPSU Musanze College";
                                     <?php if (!empty($item['image_url'])): ?>
                                         <img src="<?php echo htmlspecialchars($item['image_url']); ?>" 
                                              alt="<?php echo htmlspecialchars($item['title']); ?>"
-                                             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                             loading="lazy">
+                                    <?php else: ?>
+                                        <div style="width: 100%; height: 100%; background: <?php echo $item['category_color']; ?>; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.5rem;">
+                                            <i class="fas fa-<?php echo $item['category_icon']; ?>"></i>
+                                        </div>
                                     <?php endif; ?>
-                                    <div class="featured-image-placeholder" style="<?php echo empty($item['image_url']) ? 'display: flex;' : 'display: none;'; ?> width: 100%; height: 100%; background: <?php echo $item['category_color']; ?>; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.5rem;">
-                                        <i class="fas fa-<?php echo $item['category_icon']; ?>"></i>
-                                    </div>
                                 </div>
                                 <div class="news-content">
                                     <div class="news-category" style="background: <?php echo $item['category_color']; ?>20; color: <?php echo $item['category_color']; ?>;">
                                         <i class="fas fa-<?php echo $item['category_icon']; ?>"></i>
                                         <?php echo htmlspecialchars($item['category_name']); ?>
                                     </div>
-<h3 class="news-title">
-    <a href="news_single.php?id=<?php echo $item['id']; ?>" style="color: inherit; text-decoration: none;">
-        <?php echo htmlspecialchars($item['title']); ?>
-    </a>
-</h3>
+                                    <h3 class="news-title">
+                                        <a href="news_single.php?id=<?php echo $item['id']; ?>">
+                                            <?php echo htmlspecialchars($item['title']); ?>
+                                        </a>
+                                    </h3>
                                     <p class="news-excerpt"><?php echo htmlspecialchars($item['excerpt'] ?? substr($item['content'], 0, 100) . '...'); ?></p>
                                     <div class="news-meta">
                                         <span>
@@ -1373,9 +1560,7 @@ $page_title = "Campus News - RPSU Musanze College";
                                 <span class="disabled"><i class="fas fa-chevron-left"></i> Previous</span>
                             <?php endif; ?>
 
-
                             <?php 
-                            // Display page numbers
                             $start_page = max(1, $page - 2);
                             $end_page = min($total_pages, $page + 2);
                             
@@ -1402,7 +1587,7 @@ $page_title = "Campus News - RPSU Musanze College";
             <!-- Sidebar -->
             <aside class="sidebar">
                 <!-- Popular News -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" data-aos="fade-up" data-aos-delay="300">
                     <h3 class="sidebar-title">
                         <i class="fas fa-fire"></i>
                         Popular News
@@ -1410,14 +1595,14 @@ $page_title = "Campus News - RPSU Musanze College";
                     <ul class="popular-list">
                         <?php if (empty($popular_news)): ?>
                             <li class="popular-item">
-                                <span style="color: var(--gray-600); font-size: 0.875rem;">No popular news yet</span>
+                                <span style="color: var(--gray-600);">No popular news yet</span>
                             </li>
                         <?php else: ?>
                             <?php foreach ($popular_news as $popular): ?>
                                 <li class="popular-item">
-<a href="news_single.php?id=<?php echo $popular['id']; ?>">
-    <?php echo htmlspecialchars($popular['title']); ?>
-</a>
+                                    <a href="news_single.php?id=<?php echo $popular['id']; ?>">
+                                        <?php echo htmlspecialchars($popular['title']); ?>
+                                    </a>
                                     <div class="popular-meta">
                                         <span><?php echo htmlspecialchars($popular['category_name']); ?></span>
                                         <span><i class="fas fa-eye"></i> <?php echo $popular['views_count']; ?></span>
@@ -1429,7 +1614,7 @@ $page_title = "Campus News - RPSU Musanze College";
                 </div>
 
                 <!-- Categories -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" data-aos="fade-up" data-aos-delay="400">
                     <h3 class="sidebar-title">
                         <i class="fas fa-folder"></i>
                         News Categories
@@ -1441,28 +1626,10 @@ $page_title = "Campus News - RPSU Musanze College";
                                 <span class="category-count"><?php echo $total_news; ?></span>
                             </a>
                         </li>
-                        <?php 
-                        // Get category counts
-                        try {
-                            $category_counts_stmt = $pdo->query("
-                                SELECT nc.id, nc.name, nc.slug, nc.color, COUNT(n.id) as news_count
-                                FROM news_categories nc
-                                LEFT JOIN news n ON nc.id = n.category_id AND n.status = 'published'
-                                WHERE nc.is_active = 1
-                                GROUP BY nc.id, nc.name, nc.slug, nc.color
-                                ORDER BY news_count DESC
-                            ");
-                            $category_counts = $category_counts_stmt->fetchAll(PDO::FETCH_ASSOC);
-                        } catch (PDOException $e) {
-                            $category_counts = [];
-                        }
-                        ?>
-                        
                         <?php foreach ($category_counts as $cat): ?>
                             <li class="category-item">
                                 <a href="news.php?category=<?php echo $cat['slug']; ?>">
                                     <i class="fas fa-<?php 
-                                        // Map category names to icons
                                         $icon_map = [
                                             'entertainment' => 'music',
                                             'sports' => 'running',
@@ -1482,12 +1649,12 @@ $page_title = "Campus News - RPSU Musanze College";
                 </div>
 
                 <!-- Quick Stats -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" data-aos="fade-up" data-aos-delay="500">
                     <h3 class="sidebar-title">
                         <i class="fas fa-chart-bar"></i>
                         News Stats
                     </h3>
-                    <div style="color: var(--gray-600); font-size: 0.875rem; line-height: 1.8;">
+                    <div style="color: var(--gray-600); font-size: 0.8rem; line-height: 1.8;">
                         <div style="display: flex; justify-content: space-between;">
                             <span>Total News:</span>
                             <strong><?php echo $total_news; ?></strong>
@@ -1502,37 +1669,22 @@ $page_title = "Campus News - RPSU Musanze College";
                         </div>
                         <div style="display: flex; justify-content: space-between;">
                             <span>This Month:</span>
-                            <strong>
-                                <?php 
-                                try {
-                                    $month_count = $pdo->query("
-                                        SELECT COUNT(*) as count 
-                                        FROM news 
-                                        WHERE status = 'published' 
-                                        AND MONTH(created_at) = MONTH(CURRENT_DATE())
-                                        AND YEAR(created_at) = YEAR(CURRENT_DATE())
-                                    ")->fetch()['count'];
-                                    echo $month_count;
-                                } catch (PDOException $e) {
-                                    echo '0';
-                                }
-                                ?>
-                            </strong>
+                            <strong><?php echo $month_count; ?></strong>
                         </div>
                     </div>
                 </div>
 
                 <!-- About Campus News -->
-                <div class="sidebar-card">
+                <div class="sidebar-card" data-aos="fade-up" data-aos-delay="600">
                     <h3 class="sidebar-title">
                         <i class="fas fa-info-circle"></i>
                         About Campus News
                     </h3>
-                    <p style="color: var(--gray-600); font-size: 0.875rem; line-height: 1.5;">
+                    <p style="color: var(--gray-600); font-size: 0.8rem; line-height: 1.5;">
                         Stay informed about everything happening at RP Musanze College. From sports achievements to cultural events, academic breakthroughs to campus innovations - we cover it all to keep our community connected and engaged.
                     </p>
                     <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--gray-200);">
-                        <small style="color: var(--gray-500); font-size: 0.75rem;">
+                        <small style="color: var(--gray-500);">
                             <i class="fas fa-clock"></i> Updated daily by Public Relations Committee
                         </small>
                     </div>
@@ -1541,228 +1693,174 @@ $page_title = "Campus News - RPSU Musanze College";
         </section>
     </div>
 
- <footer class="footer">
-    <div class="footer-content">
-        <div class="footer-info">
-            <div class="footer-logo">
-                <img src="assets/images/rp_logo.png" alt="RP Musanze" class="logo">
+    <!-- Footer - Matching index.php -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-info">
+                <div class="footer-logo">
+                    <img src="assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
+                </div>
+                <p class="footer-description">
+                    Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
+                </p>
+                <div class="social-links">
+                    <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
+                        <i class="fab fa-twitter"></i>
+                    </a>
+                    <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
+                        <i class="fab fa-facebook-f"></i>
+                    </a>
+                    <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
+                        <i class="fab fa-linkedin-in"></i>
+                    </a>
+                    <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
+                        <i class="fab fa-instagram"></i>
+                    </a>
+                </div>
             </div>
-            <p class="footer-description">
-                Isonga - RPSU Management Information System. Your direct line to student leadership at Rwanda Polytechnic Musanze College.
-            </p>
-            <div class="social-links">
-                <a href="https://twitter.com/MusanzecollegSU" target="_blank"><i class="fab fa-twitter"></i></a>
-                <a href="https://www.facebook.com/RP-Musanze-College" target="_blank"><i class="fab fa-facebook-f"></i></a>
-                <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank"><i class="fab fa-linkedin-in"></i></a>
-                <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank"><i class="fab fa-instagram"></i></a>
+            
+            <div class="footer-links-group">
+                <h4 class="footer-heading">Quick Links</h4>
+                <ul class="footer-links">
+                    <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                    <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                    <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
+                    <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-links-group">
+                <h4 class="footer-heading">Student Resources</h4>
+                <ul class="footer-links">
+                    <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
+                    <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
+                    <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
+                    <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-links-group">
+                <h4 class="footer-heading">Contact Info</h4>
+                <ul class="footer-links">
+                    <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
+                    <li><i class="fas fa-phone"></i> +250 788 123 456</li>
+                    <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
+                    <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
+                </ul>
             </div>
         </div>
-        <div class="footer-links-group">
-            <h4 class="footer-heading">Quick Links</h4>
-            <ul class="footer-links">
-                <li><a href="announcements.php">Announcements</a></li>
-                <li><a href="news.php">Campus News</a></li>
-                <li><a href="events.php">Events</a></li>
-                <li><a href="committee.php">Committee</a></li>
-            </ul>
+        
+        <div class="footer-bottom">
+            <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
         </div>
-        <div class="footer-links-group">
-            <h4 class="footer-heading">Student Resources</h4>
-            <ul class="footer-links">
-                <li><a href="https://www.rp.ac.rw/announcement" target="_blank">Academic Calendar</a></li>
-                <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank">Campus Map</a></li>
-                <li><a href="../assets/rp_handbook.pdf">Student Handbook</a></li>
-                <li><a href="gallery.php">Gallery</a></li>
-            </ul>
-        </div>
-        <div class="footer-links-group">
-            <h4 class="footer-heading">Contact Info</h4>
-            <ul class="footer-links">
-                <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
-                <li><i class="fas fa-phone"></i> +250 788 123 456</li>
-                <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
-                <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
-            </ul>
-        </div>
-    </div>
-    <div class="footer-bottom">
-        <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
-    </div>
-</footer>
+    </footer>
 
-
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/aos/2.3.4/aos.js"></script>
     <script>
+        // Initialize AOS
+        AOS.init({
+            duration: 800,
+            once: true,
+            offset: 100
+        });
+
         // Header scroll effect
-        window.addEventListener('scroll', function() {
-            const header = document.getElementById('header');
+        const header = document.getElementById('header');
+        
+        function updateHeader() {
             if (window.scrollY > 50) {
                 header.classList.add('scrolled');
             } else {
                 header.classList.remove('scrolled');
             }
-        });
+        }
+        
+        window.addEventListener('scroll', updateHeader);
+        updateHeader();
 
-        // Mobile menu toggle
-        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
-        const navLinks = document.getElementById('navLinks');
-        const loginButtons = document.getElementById('loginButtons');
-
-        mobileMenuToggle.addEventListener('click', function() {
-            this.classList.toggle('active');
-            navLinks.classList.toggle('active');
-            loginButtons.classList.toggle('active');
+        // Mobile menu functionality
+        const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+        const mobileMenu = document.getElementById('mobileMenu');
+        const menuIcon = mobileMenuBtn.querySelector('i');
+        
+        function toggleMobileMenu() {
+            const isExpanded = mobileMenuBtn.getAttribute('aria-expanded') === 'true';
+            mobileMenuBtn.setAttribute('aria-expanded', !isExpanded);
+            mobileMenu.setAttribute('aria-hidden', isExpanded);
+            mobileMenu.classList.toggle('active');
             
-            // Prevent body scrolling when menu is open
-            if (navLinks.classList.contains('active')) {
+            if (mobileMenu.classList.contains('active')) {
+                menuIcon.classList.remove('fa-bars');
+                menuIcon.classList.add('fa-times');
                 document.body.style.overflow = 'hidden';
             } else {
+                menuIcon.classList.remove('fa-times');
+                menuIcon.classList.add('fa-bars');
                 document.body.style.overflow = '';
             }
-        });
-
+        }
+        
+        mobileMenuBtn.addEventListener('click', toggleMobileMenu);
+        
         // Close mobile menu when clicking outside
         document.addEventListener('click', function(event) {
-            if (!event.target.closest('.nav-container') && 
-                navLinks.classList.contains('active')) {
-                mobileMenuToggle.classList.remove('active');
-                navLinks.classList.remove('active');
-                loginButtons.classList.remove('active');
-                document.body.style.overflow = '';
+            if (mobileMenu.classList.contains('active') && 
+                !mobileMenu.contains(event.target) && 
+                !mobileMenuBtn.contains(event.target)) {
+                toggleMobileMenu();
             }
         });
-
-        // Close mobile menu when window is resized above mobile breakpoint
+        
+        // Close on escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && mobileMenu.classList.contains('active')) {
+                toggleMobileMenu();
+            }
+        });
+        
+        // Close mobile menu on window resize
         window.addEventListener('resize', function() {
-            if (window.innerWidth > 768) {
-                mobileMenuToggle.classList.remove('active');
-                navLinks.classList.remove('active');
-                loginButtons.classList.remove('active');
-                document.body.style.overflow = '';
+            if (window.innerWidth > 768 && mobileMenu.classList.contains('active')) {
+                toggleMobileMenu();
             }
         });
-
+        
+        // Card click navigation
+        document.querySelectorAll('.news-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A' || e.target.closest('a')) {
+                    return;
+                }
+                const newsLink = this.querySelector('a[href*="news_single.php"]');
+                if (newsLink) {
+                    window.location.href = newsLink.href;
+                }
+            });
+        });
+        
+        document.querySelectorAll('.featured-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A' || e.target.closest('a')) {
+                    return;
+                }
+                const newsLink = this.querySelector('a[href*="news_single.php"]');
+                if (newsLink) {
+                    window.location.href = newsLink.href;
+                }
+            });
+        });
+        
         // Image error handling
-        document.addEventListener('DOMContentLoaded', function() {
-            const images = document.querySelectorAll('img');
-            images.forEach(img => {
-                img.addEventListener('error', function() {
-                    this.style.display = 'none';
-                    const placeholder = this.nextElementSibling;
-                    if (placeholder && placeholder.classList.contains('featured-image-placeholder')) {
-                        placeholder.style.display = 'flex';
-                    }
-                });
-            });
-        });
-
-        // Smooth scrolling for category filter
-        document.querySelectorAll('.category-btn').forEach(btn => {
-            btn.addEventListener('click', function(e) {
-                // Add loading state
-                this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
-                
-                // Remove active class from all buttons
-                document.querySelectorAll('.category-btn').forEach(b => {
-                    b.classList.remove('active');
-                    b.style.backgroundColor = '';
-                    b.style.borderColor = '';
-                });
-                
-                // Add active class to clicked button
-                this.classList.add('active');
-                const categoryColor = this.style.backgroundColor;
-                if (categoryColor) {
-                    this.style.backgroundColor = categoryColor;
-                    this.style.borderColor = categoryColor;
+        document.querySelectorAll('img').forEach(img => {
+            img.addEventListener('error', function() {
+                this.style.display = 'none';
+                const placeholder = this.parentElement.querySelector('.image-placeholder');
+                if (placeholder) {
+                    placeholder.style.display = 'flex';
                 }
             });
         });
-
-        // Animation on scroll
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.style.opacity = '1';
-                    entry.target.style.transform = 'translateY(0)';
-                }
-            });
-        }, observerOptions);
-
-        // Observe cards for animation
-        document.querySelectorAll('.featured-card, .news-card').forEach(card => {
-            card.style.opacity = '0';
-            card.style.transform = 'translateY(20px)';
-            card.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
-            observer.observe(card);
-        });
-
-        // View count simulation (in a real app, this would be done via AJAX)
-        document.querySelectorAll('.news-card, .featured-card').forEach(card => {
-            card.addEventListener('click', function() {
-                const viewsElement = this.querySelector('.news-views') || this.querySelector('.featured-meta span:last-child');
-                if (viewsElement) {
-                    const currentViews = parseInt(viewsElement.textContent.match(/\d+/)[0]);
-                    viewsElement.innerHTML = viewsElement.innerHTML.replace(/\d+/, currentViews + 1);
-                }
-            });
-        });
-
-        // Category filter active state persistence
-        document.addEventListener('DOMContentLoaded', function() {
-            const currentCategory = '<?php echo $current_category; ?>';
-            if (currentCategory !== 'all') {
-                const activeBtn = document.querySelector(`.category-btn[href*="${currentCategory}"]`);
-                if (activeBtn) {
-                    // Get category color from data attribute or compute it
-                    const category = <?php echo json_encode($categories); ?>.find(cat => cat.slug === currentCategory);
-                    if (category) {
-                        activeBtn.style.backgroundColor = category.color;
-                        activeBtn.style.borderColor = category.color;
-                        activeBtn.style.color = 'white';
-                    }
-                }
-            }
-        });
-
-        // Add hover effects to news cards
-        document.querySelectorAll('.news-card, .featured-card').forEach(card => {
-            card.addEventListener('mouseenter', function() {
-                this.style.cursor = 'pointer';
-            });
-            
-// Add proper navigation to news cards
-card.addEventListener('click', function(e) {
-    // Don't navigate if clicking on a link inside the card
-    if (e.target.tagName === 'A' || e.target.closest('a')) {
-        return;
-    }
-    
-    // Find the news link in this card
-    const newsLink = this.querySelector('a[href*="news_single.php"]');
-    if (newsLink) {
-        window.location.href = newsLink.href;
-    }
-});
-        });
-
-        // Touch-friendly improvements for mobile
-        if ('ontouchstart' in window) {
-            document.body.classList.add('touch-device');
-            
-            // Increase tap target sizes for mobile
-            document.querySelectorAll('.category-btn, .login-btn, .pagination a').forEach(btn => {
-                btn.style.minHeight = '44px';
-                btn.style.minWidth = '44px';
-                btn.style.display = 'flex';
-                btn.style.alignItems = 'center';
-                btn.style.justifyContent = 'center';
-            });
-        }
     </script>
 </body>
 </html>

@@ -1185,7 +1185,7 @@ if (isset($_GET['msg'])) {
                 <li class="menu-item"><a href="users.php" class="active"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
-                  <li class="menu-item"><a href="representative.php" class="active"><i class="fas fa-user-check"></i> Class Representatives</a></li>
+                  <li class="menu-item"><a href="representative.php" ><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
                 <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
                 <li class="menu-item"><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
