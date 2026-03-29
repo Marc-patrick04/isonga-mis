@@ -924,60 +924,206 @@ try {
             font-weight: 500;
         }
 
-        /* Responsive */
+        /* ── Mobile Nav Overlay ── */
+        .mobile-nav-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+            backdrop-filter: blur(2px);
+        }
+        .mobile-nav-overlay.active { display: block; }
+
+        /* ── Hamburger Button ── */
+        .hamburger-btn {
+            display: none;
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: var(--light-gray);
+            border-radius: 50%;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+        .hamburger-btn:hover {
+            background: var(--academic-primary);
+            color: white;
+        }
+
+        /* ── Sidebar Drawer ── */
+        .sidebar { transition: transform 0.3s ease; }
+
+        /* ── Tablet ── */
         @media (max-width: 1024px) {
             .dashboard-container {
                 grid-template-columns: 200px 1fr;
             }
-            
+
             .performance-overview {
                 grid-template-columns: 1fr;
             }
-            
+
             .charts-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-stats {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
-        @media (max-width: 768px) {
+        /* ── Drawer threshold ── */
+        @media (max-width: 900px) {
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 260px;
+                height: 100vh;
+                z-index: 200;
+                transform: translateX(-100%);
+                padding-top: 1rem;
+                box-shadow: var(--shadow-lg);
             }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
+
+            .sidebar.open {
+                transform: translateX(0);
             }
-            
-            .metric-cards {
-                grid-template-columns: repeat(2, 1fr);
+
+            .hamburger-btn {
+                display: flex;
             }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
+
+            .main-content {
+                height: auto;
+                min-height: calc(100vh - 80px);
             }
         }
 
-        @media (max-width: 480px) {
-            .main-content {
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+            }
+
+            .page-actions {
+                width: 100%;
+                flex-wrap: wrap;
+            }
+
+            .page-actions .btn {
+                flex: 1 1 auto;
+                justify-content: center;
+                min-width: 120px;
+            }
+
+            .metric-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filters-form {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-actions {
+                flex-wrap: wrap;
+            }
+
+            /* Tables scroll horizontally */
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            /* Alert items wrap on small screens */
+            .alert-item {
+                flex-wrap: wrap;
+                gap: 0.75rem;
+            }
+
+            .alert-action {
+                margin-left: auto;
+            }
+
+            /* Section body padding */
+            .section-body {
                 padding: 1rem;
             }
-            
-            .metric-cards {
-                grid-template-columns: 1fr;
+
+            .chart-card {
+                padding: 1rem;
             }
-            
+        }
+
+        /* ── Small phones ── */
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .header {
+                height: 68px;
+            }
+
+            .logos .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .metric-cards {
+                grid-template-columns: 1fr 1fr;
+            }
+
             .main-stats {
                 grid-template-columns: 1fr;
+            }
+
+            .metric-card {
+                padding: 1rem;
+            }
+
+            .metric-value {
+                font-size: 1.25rem;
+            }
+
+            .performance-value {
+                font-size: 1.5rem;
+            }
+
+            .chart-container {
+                height: 200px;
+            }
+
+            .page-actions .btn {
+                width: 100%;
             }
         }
     </style>
@@ -987,6 +1133,9 @@ try {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1022,6 +1171,9 @@ try {
             </div>
         </div>
     </header>
+
+    <!-- Mobile Nav Overlay -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
@@ -1567,6 +1719,37 @@ try {
     </div>
 
     <script>
+        // ── Mobile Nav (hamburger sidebar) ──
+        (function() {
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            const navSidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('mobileNavOverlay');
+
+            function openNav() {
+                navSidebar.classList.add('open');
+                overlay.classList.add('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeNav() {
+                navSidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+
+            hamburgerBtn.addEventListener('click', () => {
+                navSidebar.classList.contains('open') ? closeNav() : openNav();
+            });
+
+            overlay.addEventListener('click', closeNav);
+
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 900) closeNav();
+            });
+        })();
+
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;

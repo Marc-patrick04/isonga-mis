@@ -2,6 +2,7 @@
 session_start();
 require_once '../config/database.php';
 require_once '../config/email_config.php';
+require_once '../config/academic_year.php';
 
 // Check if user is logged in and is Vice Guild Finance
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'vice_guild_finance') {
@@ -16,68 +17,39 @@ if (!isset($_GET['id'])) {
 
 $request_id = (int)$_GET['id'];
 $user_id = $_SESSION['user_id'];
+$current_academic_year = getCurrentAcademicYear();
+
+// Helper function to get correct file URL
+function getFileUrl($path) {
+    if (empty($path)) return '';
+    $path = ltrim($path, './');
+    if (filter_var($path, FILTER_VALIDATE_URL)) {
+        return $path;
+    }
+    return '/isonga-mis/' . $path;
+}
 
 // Helper function to sanitize academic year
 function sanitizeAcademicYear($year) {
     if (empty($year)) return 'Year 1';
-    
-    // Trim and clean the value
     $year = trim($year);
-    
-    // Valid academic year patterns
-    $valid_patterns = [
-        '/^Year [1-3]$/',           // Year 1, Year 2, Year 3
-        '/^Year\s+[1-3]$/',         // Year 1 (with multiple spaces)
-        '/^B-Tech$/i',              // B-Tech (case insensitive)
-        '/^M-Tech$/i',              // M-Tech (case insensitive)
-        '/^\d{4}-\d{4}$/',          // 2025-2026 format
-        '/^\d{4}$/',                // Just year
-        '/^[A-Za-z\s]+$/'           // Any text (like "First Year")
-    ];
-    
-    foreach ($valid_patterns as $pattern) {
-        if (preg_match($pattern, $year)) {
-            // Standardize common formats
-            if (preg_match('/^Year\s*[1-3]$/i', $year)) {
-                return 'Year ' . preg_replace('/[^0-9]/', '', $year);
-            }
-            if (strtoupper($year) === 'B-TECH') return 'B-Tech';
-            if (strtoupper($year) === 'M-TECH') return 'M-Tech';
-            return $year;
-        }
+    if (preg_match('/^Year\s*[1-3]$/i', $year)) {
+        return 'Year ' . preg_replace('/[^0-9]/', '', $year);
     }
-    
-    // Default fallback
-    return 'Year 1';
+    if (strtoupper($year) === 'B-TECH') return 'B-Tech';
+    if (strtoupper($year) === 'M-TECH') return 'M-Tech';
+    if (preg_match('/^\d{4}-\d{4}$/', $year)) return $year;
+    if (is_numeric($year) && $year <= 3) return "Year $year";
+    return substr($year, 0, 20);
 }
 
-// Helper function to format academic year for display
 function formatAcademicYear($year) {
     if (empty($year)) return 'Not specified';
-    
     $year = trim($year);
-    
-    // If it's already in format like "2025-2026"
-    if (preg_match('/^\d{4}-\d{4}$/', $year)) {
-        return $year;
-    }
-    
-    // If it's like "Year 1", "Year 2", etc.
-    if (preg_match('/^Year \d+$/i', $year)) {
-        return $year;
-    }
-    
-    // If it's like "B-Tech", "M-Tech"
-    if (in_array(strtoupper($year), ['B-TECH', 'M-TECH'])) {
-        return ucfirst(strtolower($year));
-    }
-    
-    // If it's just a number (1,2,3)
-    if (is_numeric($year) && $year <= 3) {
-        return "Year $year";
-    }
-    
-    // Default: just return the original, truncated if too long
+    if (preg_match('/^\d{4}-\d{4}$/', $year)) return $year;
+    if (preg_match('/^Year \d+$/i', $year)) return $year;
+    if (in_array(strtoupper($year), ['B-TECH', 'M-TECH'])) return ucfirst(strtolower($year));
+    if (is_numeric($year) && $year <= 3) return "Year $year";
     return substr($year, 0, 20);
 }
 
@@ -106,11 +78,9 @@ try {
     $stmt->execute([$request_id]);
     $request = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    // Sanitize academic year
     if ($request && isset($request['academic_year'])) {
         $request['academic_year'] = sanitizeAcademicYear($request['academic_year']);
     }
-    
 } catch (PDOException $e) {
     error_log("Database error: " . $e->getMessage());
     $error_message = "Failed to fetch request details.";
@@ -129,8 +99,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
     
     try {
-        if ($action === 'update_status') {
-            $status = $_POST['status'];
+        if ($action === 'send_to_president') {
+            $status = 'pending_president';
             $amount_approved = floatval($_POST['amount_approved'] ?? 0);
             $review_notes = trim($_POST['review_notes']);
             
@@ -138,25 +108,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'status' => $status,
                 'reviewed_by' => $user_id,
                 'review_date' => date('Y-m-d H:i:s'),
-                'review_notes' => $review_notes
+                'review_notes' => $review_notes,
+                'amount_approved' => $amount_approved
             ];
-            
-            if ($status === 'approved' || $status === 'disbursed') {
-                $update_data['amount_approved'] = $amount_approved;
-            }
-            
-            if ($status === 'disbursed') {
-                $update_data['disbursement_date'] = date('Y-m-d');
-                
-                // Record transaction when marking as disbursed
-                try {
-                    $transaction_id = recordStudentAidTransaction($request_id, $amount_approved, $user_id);
-                    $update_data['transaction_id'] = $transaction_id;
-                } catch (Exception $e) {
-                    error_log("Transaction recording failed: " . $e->getMessage());
-                    // Continue even if transaction recording fails
-                }
-            }
             
             // Handle approval letter upload
             if (isset($_FILES['approval_letter']) && $_FILES['approval_letter']['error'] === UPLOAD_ERR_OK) {
@@ -170,20 +124,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 
                 if (in_array($file_extension, $allowed_extensions)) {
                     $file_name = 'approval_' . $request['registration_number'] . '_' . time() . '.' . $file_extension;
-                    $file_path = $upload_dir . $file_name;
+                    $file_path = 'assets/uploads/student_appr_letters/' . $file_name;
+                    $full_path = '../' . $file_path;
                     
-                    if (move_uploaded_file($_FILES['approval_letter']['tmp_name'], $file_path)) {
+                    if (move_uploaded_file($_FILES['approval_letter']['tmp_name'], $full_path)) {
                         $update_data['approval_letter_path'] = $file_path;
-                    } else {
-                        throw new Exception("Failed to upload approval letter.");
                     }
-                } else {
-                    throw new Exception("Invalid file type. Allowed: PDF, DOC, DOCX, JPG, PNG");
                 }
             }
             
-            // Build dynamic UPDATE query (only update fields that exist in student_financial_aid)
-            $allowed_fields = ['status', 'reviewed_by', 'review_date', 'review_notes', 'amount_approved', 'disbursement_date', 'transaction_id', 'approval_letter_path'];
+            $allowed_fields = ['status', 'reviewed_by', 'review_date', 'review_notes', 'amount_approved', 'approval_letter_path'];
             $sql = "UPDATE student_financial_aid SET ";
             $params = [];
             $updates = [];
@@ -195,53 +145,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
             }
             
-            if (empty($updates)) {
-                throw new Exception("No valid fields to update.");
+            if (!empty($updates)) {
+                $sql .= implode(', ', $updates) . " WHERE id = ?";
+                $params[] = $request_id;
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
             }
             
-            $sql .= implode(', ', $updates) . " WHERE id = ?";
-            $params[] = $request_id;
-            
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
-            
-            // Send email notification to student
-            $email_sent = false;
-            $email_message = "";
-            
-            if (!empty($request['student_email'])) {
-                $status_updated_by = $_SESSION['full_name'] . " (Vice Guild Finance)";
-                
-                // Check if email function exists
-                if (function_exists('sendFinancialAidStatusUpdate')) {
-                    $email_result = sendFinancialAidStatusUpdate(
-                        $request['student_email'],
-                        $request['student_name'],
-                        $request_id,
-                        $request['request_title'],
-                        floatval($request['amount_requested']),
-                        $amount_approved,
-                        $status,
-                        $review_notes,
-                        $status_updated_by
-                    );
-                    
-                    if ($email_result['success']) {
-                        $email_sent = true;
-                        $email_message = " A notification email has been sent to the student.";
-                    } else {
-                        error_log("Failed to send status update email: " . ($email_result['message'] ?? 'Unknown error'));
-                        $email_message = " Status updated but email notification failed to send.";
-                    }
-                } else {
-                    error_log("sendFinancialAidStatusUpdate function not found in email_config.php");
-                    $email_message = " Status updated but email function not available.";
-                }
-            } else {
-                $email_message = " Status updated but no email address found for the student.";
-            }
-            
-            $message = "Request updated successfully!" . $email_message;
+            $message = "Request sent to Guild President for final approval!";
             $message_type = "success";
             
             // Refresh request data
@@ -253,8 +164,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     u.phone as student_phone,
                     u.reg_number as registration_number,
                     u.academic_year,
-                    u.department_id,
-                    u.program_id,
                     ur.full_name as reviewer_name,
                     d.name as department_name,
                     p.name as program_name
@@ -267,8 +176,235 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             ");
             $stmt->execute([$request_id]);
             $request = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($request && isset($request['academic_year'])) {
+                $request['academic_year'] = sanitizeAcademicYear($request['academic_year']);
+            }
             
-            // Sanitize academic year again
+        } elseif ($action === 'process_disbursement') {
+            $status = 'disbursed';
+            $review_notes = trim($_POST['review_notes']);
+            
+            $update_data = [
+                'status' => $status,
+                'disbursement_date' => date('Y-m-d'),
+                'review_notes' => $review_notes,
+                'reviewed_by' => $user_id,
+                'review_date' => date('Y-m-d H:i:s')
+            ];
+            
+            // Record transaction
+            try {
+                $transaction_id = recordStudentAidTransaction($request_id, $request['amount_approved'], $user_id);
+                $update_data['transaction_id'] = $transaction_id;
+            } catch (Exception $e) {
+                error_log("Transaction recording failed: " . $e->getMessage());
+            }
+            
+            $allowed_fields = ['status', 'disbursement_date', 'review_notes', 'reviewed_by', 'review_date', 'transaction_id'];
+            $sql = "UPDATE student_financial_aid SET ";
+            $params = [];
+            $updates = [];
+            
+            foreach ($update_data as $key => $value) {
+                if (in_array($key, $allowed_fields)) {
+                    $updates[] = "$key = ?";
+                    $params[] = $value;
+                }
+            }
+            
+            if (!empty($updates)) {
+                $sql .= implode(', ', $updates) . " WHERE id = ?";
+                $params[] = $request_id;
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+            }
+            
+            // Send email notification to student
+            $email_sent = false;
+            $email_error = '';
+            
+            if (!empty($request['student_email'])) {
+                if (function_exists('sendEmail')) {
+                    $subject = "✅ Financial Aid Disbursement Confirmation - Request #$request_id";
+                    $body = '
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <style>
+                            body { font-family: Arial, sans-serif; line-height: 1.6; }
+                            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                            .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+                            .highlight { background: #d4edda; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
+                            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <div class="header">
+                                <h2>💰 Financial Aid Disbursement Confirmed</h2>
+                            </div>
+                            <div class="content">
+                                <p>Dear ' . htmlspecialchars($request['student_name']) . ',</p>
+                                <p>We are pleased to inform you that your financial aid request has been processed and the funds have been disbursed.</p>
+                                <div class="highlight">
+                                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                                    <p><strong>Request Title:</strong> ' . htmlspecialchars($request['request_title']) . '</p>
+                                    <p><strong>Amount Disbursed:</strong> <strong style="color: #28a745;">RWF ' . number_format($request['amount_approved'], 2) . '</strong></p>
+                                    <p><strong>Processed By:</strong> ' . htmlspecialchars($_SESSION['full_name']) . '</p>
+                                    <p><strong>Notes:</strong> ' . nl2br(htmlspecialchars($review_notes)) . '</p>
+                                </div>
+                                <p>Please check your bank account or contact the finance office for details on the disbursement method.</p>
+                                <p>If you have any questions, please contact the Vice Guild Finance office.</p>
+                            </div>
+                            <div class="footer">
+                                <p>Isonga - RPSU Management System</p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>';
+                    
+                    $email_result = sendEmail($request['student_email'], $subject, $body);
+                    if ($email_result['success']) {
+                        $email_sent = true;
+                    } else {
+                        $email_error = $email_result['message'];
+                        error_log("Email failed: " . $email_error);
+                    }
+                } else {
+                    error_log("sendEmail function not available");
+                    $email_error = "Email function not available";
+                }
+            } else {
+                $email_error = "No student email address found";
+                error_log($email_error);
+            }
+            
+            $message = "Funds disbursed successfully!" . ($email_sent ? " Student has been notified." : " Student notification failed to send: " . $email_error);
+            $message_type = "success";
+            
+            // Refresh request data
+            $stmt = $pdo->prepare("
+                SELECT 
+                    sfa.*,
+                    u.full_name as student_name,
+                    u.email as student_email,
+                    u.phone as student_phone,
+                    u.reg_number as registration_number,
+                    u.academic_year,
+                    ur.full_name as reviewer_name,
+                    d.name as department_name,
+                    p.name as program_name
+                FROM student_financial_aid sfa
+                LEFT JOIN users u ON sfa.student_id = u.id
+                LEFT JOIN departments d ON u.department_id = d.id
+                LEFT JOIN programs p ON u.program_id = p.id
+                LEFT JOIN users ur ON sfa.reviewed_by = ur.id
+                WHERE sfa.id = ?
+            ");
+            $stmt->execute([$request_id]);
+            $request = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($request && isset($request['academic_year'])) {
+                $request['academic_year'] = sanitizeAcademicYear($request['academic_year']);
+            }
+            
+        } elseif ($action === 'reject_request') {
+            $status = 'rejected';
+            $rejection_reason = trim($_POST['rejection_reason']);
+            
+            $update_data = [
+                'status' => $status,
+                'review_notes' => $rejection_reason,
+                'reviewed_by' => $user_id,
+                'review_date' => date('Y-m-d H:i:s')
+            ];
+            
+            $allowed_fields = ['status', 'review_notes', 'reviewed_by', 'review_date'];
+            $sql = "UPDATE student_financial_aid SET ";
+            $params = [];
+            $updates = [];
+            
+            foreach ($update_data as $key => $value) {
+                if (in_array($key, $allowed_fields)) {
+                    $updates[] = "$key = ?";
+                    $params[] = $value;
+                }
+            }
+            
+            if (!empty($updates)) {
+                $sql .= implode(', ', $updates) . " WHERE id = ?";
+                $params[] = $request_id;
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+            }
+            
+            // Send rejection email
+            if (!empty($request['student_email']) && function_exists('sendEmail')) {
+                $subject = "📋 Update on Your Financial Aid Request #$request_id";
+                $body = '
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; line-height: 1.6; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                        .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+                        .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+                        .highlight { background: #f8d7da; padding: 15px; margin: 15px 0; border-left: 4px solid #dc3545; }
+                        .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h2>📋 Financial Aid Request Update</h2>
+                        </div>
+                        <div class="content">
+                            <p>Dear ' . htmlspecialchars($request['student_name']) . ',</p>
+                            <p>Thank you for your financial aid request submission. After careful review, your request could not be approved at this time.</p>
+                            <div class="highlight">
+                                <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                                <p><strong>Request Title:</strong> ' . htmlspecialchars($request['request_title']) . '</p>
+                                <p><strong>Reason for Rejection:</strong></p>
+                                <p>' . nl2br(htmlspecialchars($rejection_reason)) . '</p>
+                                <p><strong>Reviewed By:</strong> ' . htmlspecialchars($_SESSION['full_name']) . '</p>
+                            </div>
+                            <p>If you have questions about this decision, please contact the Vice Guild Finance office.</p>
+                        </div>
+                        <div class="footer">
+                            <p>Isonga - RPSU Management System</p>
+                        </div>
+                    </div>
+                </body>
+                </html>';
+                
+                sendEmail($request['student_email'], $subject, $body);
+            }
+            
+            $message = "Request rejected successfully! Student has been notified.";
+            $message_type = "success";
+            
+            // Refresh request data
+            $stmt = $pdo->prepare("
+                SELECT 
+                    sfa.*,
+                    u.full_name as student_name,
+                    u.email as student_email,
+                    u.phone as student_phone,
+                    u.reg_number as registration_number,
+                    u.academic_year,
+                    ur.full_name as reviewer_name,
+                    d.name as department_name,
+                    p.name as program_name
+                FROM student_financial_aid sfa
+                LEFT JOIN users u ON sfa.student_id = u.id
+                LEFT JOIN departments d ON u.department_id = d.id
+                LEFT JOIN programs p ON u.program_id = p.id
+                LEFT JOIN users ur ON sfa.reviewed_by = ur.id
+                WHERE sfa.id = ?
+            ");
+            $stmt->execute([$request_id]);
+            $request = $stmt->fetch(PDO::FETCH_ASSOC);
             if ($request && isset($request['academic_year'])) {
                 $request['academic_year'] = sanitizeAcademicYear($request['academic_year']);
             }
@@ -293,6 +429,7 @@ function getStatusBadge($status) {
     $badges = [
         'submitted' => 'status-submitted',
         'under_review' => 'status-under_review',
+        'pending_president' => 'status-pending-president',
         'approved' => 'status-approved',
         'rejected' => 'status-rejected',
         'disbursed' => 'status-disbursed'
@@ -314,6 +451,7 @@ function getStatusText($status) {
     $texts = [
         'submitted' => 'Submitted',
         'under_review' => 'Under Review',
+        'pending_president' => 'Pending President',
         'approved' => 'Approved',
         'rejected' => 'Rejected',
         'disbursed' => 'Disbursed'
@@ -331,12 +469,10 @@ function getUrgencyText($urgency) {
     return $texts[$urgency] ?? ucfirst($urgency);
 }
 
-// Record student aid transaction function
 function recordStudentAidTransaction($aid_request_id, $approved_amount, $user_id) {
     global $pdo;
     
     try {
-        // Get student aid request details
         $stmt = $pdo->prepare("
             SELECT sfa.*, u.full_name as student_name, u.reg_number as registration_number
             FROM student_financial_aid sfa
@@ -350,13 +486,11 @@ function recordStudentAidTransaction($aid_request_id, $approved_amount, $user_id
             throw new Exception("Student aid request not found");
         }
         
-        // Get the student aid category ID
         $stmt = $pdo->prepare("SELECT id FROM budget_categories WHERE category_name = 'Student Financial Aid' AND is_active = true LIMIT 1");
         $stmt->execute();
         $category = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if (!$category) {
-            // Create the category if it doesn't exist
             $stmt = $pdo->prepare("
                 INSERT INTO budget_categories (category_name, category_type, description, is_active) 
                 VALUES ('Student Financial Aid', 'expense', 'Student financial aid disbursements', true)
@@ -366,7 +500,6 @@ function recordStudentAidTransaction($aid_request_id, $approved_amount, $user_id
             $category = $stmt->fetch(PDO::FETCH_ASSOC);
         }
         
-        // Record the transaction
         $stmt = $pdo->prepare("
             INSERT INTO financial_transactions (
                 transaction_type, category_id, amount, description, transaction_date,
@@ -396,118 +529,90 @@ function recordStudentAidTransaction($aid_request_id, $approved_amount, $user_id
     }
 }
 
-// Fix any problematic academic year data
-function fixAcademicYearData() {
-    global $pdo;
-    try {
-        // Update any users with invalid academic year
-        $stmt = $pdo->prepare("
-            UPDATE users 
-            SET academic_year = 'Year 1' 
-            WHERE academic_year IS NULL 
-            OR academic_year = '' 
-            OR LENGTH(academic_year) > 20
-        ");
-        $stmt->execute();
-        
-        // Normalize academic year formats
-        $stmt = $pdo->prepare("
-            UPDATE users 
-            SET academic_year = 'Year 1' 
-            WHERE academic_year LIKE '%1%' AND academic_year NOT LIKE '%Year%'
-        ");
-        $stmt->execute();
-        
-        $stmt = $pdo->prepare("
-            UPDATE users 
-            SET academic_year = 'Year 2' 
-            WHERE academic_year LIKE '%2%' AND academic_year NOT LIKE '%Year%'
-        ");
-        $stmt->execute();
-        
-        $stmt = $pdo->prepare("
-            UPDATE users 
-            SET academic_year = 'Year 3' 
-            WHERE academic_year LIKE '%3%' AND academic_year NOT LIKE '%Year%'
-        ");
-        $stmt->execute();
-        
-    } catch (PDOException $e) {
-        error_log("Failed to fix academic year data: " . $e->getMessage());
-    }
+// Get counts for sidebar
+$pending_requests = 0;
+try {
+    $stmt = $pdo->query("SELECT COUNT(*) as total FROM student_financial_aid WHERE status IN ('submitted', 'under_review')");
+    $pending_requests = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
+} catch (PDOException $e) {
+    error_log("Failed to get pending count: " . $e->getMessage());
 }
 
-// Run the fix function
-fixAcademicYearData();
-?>
+// Get user profile for header
+try {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $user = [];
+}
 
+// Get unread messages count
+$unread_messages = 0;
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_count 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'];
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>View Student Aid Request - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
+        :root {
+            --primary: #0056b3;
+            --primary-dark: #003d82;
+            --primary-light: #4d8be6;
+            --secondary: #1e88e5;
+            --accent: #0d47a1;
+            --white: #ffffff;
+            --gray-100: #f8f9fa;
+            --gray-200: #e9ecef;
+            --gray-300: #dee2e6;
+            --gray-600: #6c757d;
+            --gray-800: #343a40;
+            --gray-900: #212529;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #17a2b8;
+            --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            --gradient-secondary: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%);
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.1);
+            --border-radius: 8px;
+            --border-radius-lg: 12px;
+            --transition: 0.3s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        :root {
-            --primary-blue: #0056b3;
-            --secondary-blue: #1e88e5;
-            --accent-blue: #0d47a1;
-            --light-blue: #e3f2fd;
-            --white: #ffffff;
-            --light-gray: #f8f9fa;
-            --medium-gray: #e9ecef;
-            --dark-gray: #6c757d;
-            --text-dark: #2c3e50;
-            --success: #28a745;
-            --warning: #ffc107;
-            --danger: #dc3545;
-            --finance-primary: #1976D2;
-            --finance-secondary: #2196F3;
-            --finance-accent: #0D47A1;
-            --finance-light: #E3F2FD;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
-            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
-            --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
-            --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
-            --border-radius: 8px;
-            --border-radius-lg: 12px;
-            --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --finance-primary: #2196F3;
-            --finance-secondary: #64B5F6;
-            --finance-accent: #1976D2;
-            --finance-light: #0D1B2A;
-        }
-
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--light-gray);
-            color: var(--text-dark);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: var(--gray-100);
+            color: var(--gray-900);
             line-height: 1.5;
-            transition: var(--transition);
+            font-size: 0.875rem;
         }
 
         /* Header */
@@ -518,7 +623,7 @@ fixAcademicYearData();
             position: sticky;
             top: 0;
             z-index: 100;
-            border-bottom: 1px solid var(--medium-gray);
+            border-bottom: 1px solid var(--gray-200);
         }
 
         .nav-container {
@@ -544,7 +649,21 @@ fixAcademicYearData();
         .brand-text h1 {
             font-size: 1.25rem;
             font-weight: 700;
-            color: var(--finance-primary);
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--gray-800);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
         }
 
         .user-menu {
@@ -579,28 +698,29 @@ fixAcademicYearData();
         .user-name {
             font-weight: 600;
             font-size: 0.9rem;
+            color: var(--gray-900);
         }
 
         .user-role {
             font-size: 0.75rem;
-            color: var(--dark-gray);
+            color: var(--gray-600);
         }
 
         .icon-btn {
             width: 40px;
             height: 40px;
-            border: 1px solid var(--medium-gray);
+            border: 1px solid var(--gray-200);
             background: var(--white);
             border-radius: 50%;
             cursor: pointer;
-            color: var(--text-dark);
+            color: var(--gray-800);
             transition: var(--transition);
         }
 
         .icon-btn:hover {
-            background: var(--finance-primary);
+            background: var(--gradient-primary);
             color: white;
-            border-color: var(--finance-primary);
+            border-color: transparent;
         }
 
         .logout-btn {
@@ -616,7 +736,7 @@ fixAcademicYearData();
 
         .logout-btn:hover {
             transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+            box-shadow: var(--shadow-md);
         }
 
         /* Dashboard Container */
@@ -627,14 +747,60 @@ fixAcademicYearData();
 
         /* Sidebar */
         .sidebar {
-            width: 250px;
+            width: var(--sidebar-width);
             background: var(--white);
-            border-right: 1px solid var(--medium-gray);
+            border-right: 1px solid var(--gray-200);
             padding: 1.5rem 0;
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
+            overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
             list-style: none;
+        }
+
+        .menu-item {
+            margin-bottom: 0.25rem;
         }
 
         .menu-item a {
@@ -642,21 +808,32 @@ fixAcademicYearData();
             align-items: center;
             gap: 0.75rem;
             padding: 0.75rem 1.5rem;
-            color: var(--text-dark);
+            color: var(--gray-800);
             text-decoration: none;
             transition: var(--transition);
             border-left: 3px solid transparent;
+            font-size: 0.85rem;
         }
 
         .menu-item a:hover,
         .menu-item a.active {
-            background: var(--finance-light);
-            border-left-color: var(--finance-primary);
-            color: var(--finance-primary);
+            background: var(--gray-100);
+            border-left-color: var(--primary);
+            color: var(--primary);
         }
 
         .menu-item i {
             width: 20px;
+        }
+
+        .menu-badge {
+            background: var(--danger);
+            color: white;
+            border-radius: 10px;
+            padding: 0.1rem 0.4rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: auto;
         }
 
         /* Main Content */
@@ -664,17 +841,87 @@ fixAcademicYearData();
             flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        /* Dashboard Header */
-        .dashboard-header {
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Workflow Steps */
+        .workflow-steps {
+            display: flex;
+            justify-content: space-between;
             margin-bottom: 1.5rem;
+            background: var(--white);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+            border: 1px solid var(--gray-200);
+            flex-wrap: wrap;
         }
 
-        .welcome-section h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
+        .workflow-step {
+            flex: 1;
+            text-align: center;
+            padding: 0.5rem;
+            position: relative;
+        }
+
+        .workflow-step:not(:last-child):after {
+            content: '→';
+            position: absolute;
+            right: -10px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--gray-600);
+        }
+
+        .step-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--gray-100);
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             margin-bottom: 0.5rem;
+        }
+
+        .workflow-step.completed .step-icon {
+            background: var(--success);
+            color: white;
+        }
+
+        .workflow-step.active .step-icon {
+            background: var(--gradient-primary);
+            color: white;
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.2);
+        }
+
+        .step-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .step-role {
+            font-size: 0.7rem;
+            color: var(--gray-600);
+        }
+
+        @media (max-width: 768px) {
+            .workflow-steps {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+            .workflow-step:not(:last-child):after {
+                content: '↓';
+                right: auto;
+                left: 50%;
+                top: auto;
+                bottom: -15px;
+                transform: translateX(-50%);
+            }
         }
 
         /* Alerts */
@@ -686,23 +933,35 @@ fixAcademicYearData();
             align-items: center;
             gap: 0.75rem;
             border-left: 4px solid;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(-100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
 
         .alert-success {
-            background: #d4edda;
-            color: #155724;
+            background: #d1fae5;
+            color: #065f46;
             border-left-color: var(--success);
         }
 
         .alert-error {
-            background: #f8d7da;
-            color: #721c24;
+            background: #fee2e2;
+            color: #991b1b;
             border-left-color: var(--danger);
         }
 
         .alert-info {
-            background: #d1ecf1;
-            color: #0c5460;
+            background: #dbeafe;
+            color: #1e40af;
             border-left-color: var(--info);
         }
 
@@ -719,7 +978,7 @@ fixAcademicYearData();
             border-radius: var(--border-radius);
             padding: 1.5rem;
             box-shadow: var(--shadow-sm);
-            border: 1px solid var(--medium-gray);
+            border: 1px solid var(--gray-200);
         }
 
         .detail-header {
@@ -728,13 +987,13 @@ fixAcademicYearData();
             align-items: center;
             margin-bottom: 1rem;
             padding-bottom: 0.75rem;
-            border-bottom: 2px solid var(--finance-light);
+            border-bottom: 2px solid var(--gray-200);
         }
 
         .detail-title {
             font-size: 1rem;
             font-weight: 600;
-            color: var(--finance-primary);
+            color: var(--primary);
         }
 
         .detail-content {
@@ -748,12 +1007,12 @@ fixAcademicYearData();
             justify-content: space-between;
             align-items: flex-start;
             padding: 0.5rem 0;
-            border-bottom: 1px solid var(--medium-gray);
+            border-bottom: 1px solid var(--gray-200);
         }
 
         .detail-label {
             font-weight: 600;
-            color: var(--dark-gray);
+            color: var(--gray-600);
             font-size: 0.85rem;
         }
 
@@ -772,30 +1031,31 @@ fixAcademicYearData();
             font-weight: 600;
         }
 
-        .status-submitted { background: #fff3cd; color: #856404; }
-        .status-under_review { background: #cce5ff; color: #004085; }
-        .status-approved { background: #d4edda; color: #155724; }
-        .status-rejected { background: #f8d7da; color: #721c24; }
-        .status-disbursed { background: #d1ecf1; color: #0c5460; }
+        .status-submitted { background: #fef3c7; color: #92400e; }
+        .status-under_review { background: #dbeafe; color: #1e40af; }
+        .status-pending-president { background: #fed7aa; color: #9a3412; }
+        .status-approved { background: #d1fae5; color: #065f46; }
+        .status-rejected { background: #fee2e2; color: #991b1b; }
+        .status-disbursed { background: #cffafe; color: #0e7490; }
 
-        .urgency-low { background: #d4edda; color: #155724; }
-        .urgency-medium { background: #fff3cd; color: #856404; }
-        .urgency-high { background: #ffe5b4; color: #e65100; }
-        .urgency-emergency { background: #f8d7da; color: #721c24; }
+        .urgency-low { background: #d1fae5; color: #065f46; }
+        .urgency-medium { background: #fef3c7; color: #92400e; }
+        .urgency-high { background: #fed7aa; color: #9a3412; }
+        .urgency-emergency { background: #fee2e2; color: #991b1b; }
 
         /* Card */
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             margin-bottom: 1.5rem;
-            border: 1px solid var(--medium-gray);
+            border: 1px solid var(--gray-200);
             overflow: hidden;
         }
 
         .card-header {
             padding: 1rem 1.5rem;
-            background: var(--finance-light);
-            border-bottom: 1px solid var(--medium-gray);
+            background: var(--gray-100);
+            border-bottom: 1px solid var(--gray-200);
         }
 
         .card-header h3 {
@@ -816,11 +1076,17 @@ fixAcademicYearData();
         }
 
         .document-card {
-            background: var(--light-gray);
+            background: var(--gray-100);
             padding: 1rem;
             border-radius: var(--border-radius);
             text-align: center;
-            border: 1px solid var(--medium-gray);
+            border: 1px solid var(--gray-200);
+            transition: var(--transition);
+        }
+
+        .document-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .document-type {
@@ -830,7 +1096,7 @@ fixAcademicYearData();
         }
 
         .no-document {
-            color: var(--dark-gray);
+            color: var(--gray-600);
             font-style: italic;
             font-size: 0.8rem;
         }
@@ -840,7 +1106,7 @@ fixAcademicYearData();
             background: var(--white);
             border-radius: var(--border-radius);
             padding: 1.5rem;
-            border: 1px solid var(--medium-gray);
+            border: 1px solid var(--gray-200);
         }
 
         .action-section h3 {
@@ -857,16 +1123,17 @@ fixAcademicYearData();
             margin-bottom: 0.5rem;
             font-weight: 600;
             font-size: 0.85rem;
+            color: var(--gray-800);
         }
 
         .form-control,
         .form-select {
             width: 100%;
             padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
+            border: 1px solid var(--gray-300);
             border-radius: var(--border-radius);
             background: var(--white);
-            color: var(--text-dark);
+            color: var(--gray-900);
             font-size: 0.85rem;
             transition: var(--transition);
         }
@@ -874,8 +1141,8 @@ fixAcademicYearData();
         .form-control:focus,
         .form-select:focus {
             outline: none;
-            border-color: var(--finance-primary);
-            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
         }
 
         textarea.form-control {
@@ -885,7 +1152,7 @@ fixAcademicYearData();
 
         /* File Upload */
         .file-upload {
-            border: 2px dashed var(--medium-gray);
+            border: 2px dashed var(--gray-300);
             border-radius: var(--border-radius);
             padding: 1.5rem;
             text-align: center;
@@ -894,8 +1161,8 @@ fixAcademicYearData();
         }
 
         .file-upload:hover {
-            border-color: var(--finance-primary);
-            background: var(--finance-light);
+            border-color: var(--primary);
+            background: var(--gray-100);
         }
 
         .file-upload input {
@@ -910,13 +1177,7 @@ fixAcademicYearData();
         .file-upload i {
             font-size: 2rem;
             margin-bottom: 0.5rem;
-            color: var(--dark-gray);
-        }
-
-        .file-list {
-            margin-top: 0.5rem;
-            font-size: 0.8rem;
-            color: var(--success);
+            color: var(--gray-600);
         }
 
         /* Buttons */
@@ -935,23 +1196,43 @@ fixAcademicYearData();
         }
 
         .btn-primary {
-            background: var(--finance-primary);
+            background: var(--gradient-primary);
             color: white;
         }
 
         .btn-primary:hover {
-            background: var(--finance-accent);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #059669;
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
             transform: translateY(-1px);
         }
 
         .btn-secondary {
-            background: var(--light-gray);
-            color: var(--text-dark);
-            border: 1px solid var(--medium-gray);
+            background: var(--gray-200);
+            color: var(--gray-800);
+            border: 1px solid var(--gray-300);
         }
 
         .btn-secondary:hover {
-            background: var(--medium-gray);
+            background: var(--gray-300);
         }
 
         .btn-sm {
@@ -959,12 +1240,98 @@ fixAcademicYearData();
             font-size: 0.75rem;
         }
 
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1001;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            max-width: 500px;
+            width: 90%;
+            padding: 1.5rem;
+        }
+
+        .modal-header {
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .modal-header h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+        }
+
         /* Responsive */
-        @media (max-width: 768px) {
+        @media (max-width: 992px) {
             .sidebar {
-                display: none;
+                transform: translateX(-100%);
+                position: fixed;
+                z-index: 1000;
             }
             
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .main-content.sidebar-collapsed {
+                margin-left: 0;
+            }
+            
+            .mobile-menu-toggle {
+                display: block;
+            }
+            
+            .overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+            
+            .overlay.active {
+                display: block;
+            }
+        }
+
+        @media (max-width: 768px) {
             .detail-grid {
                 grid-template-columns: 1fr;
             }
@@ -989,22 +1356,40 @@ fixAcademicYearData();
             .main-content {
                 padding: 1rem;
             }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            .button-group .btn {
+                width: 100%;
+                justify-content: center;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Student Aid Request Details</h1>
+                    <h1>Isonga - Finance</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <button class="icon-btn" id="themeToggle">
                     <i class="fas fa-moon"></i>
+                </button>
+                <button class="icon-btn" id="sidebarToggleBtn">
+                    <i class="fas fa-chevron-left"></i>
                 </button>
                 <div class="user-info">
                     <div class="user-avatar">
@@ -1016,7 +1401,7 @@ fixAcademicYearData();
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i> Logout
+                    <i class="fas fa-sign-out-alt"></i>
                 </a>
             </div>
         </div>
@@ -1025,7 +1410,10 @@ fixAcademicYearData();
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1040,36 +1428,111 @@ fixAcademicYearData();
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a href="transactions.php">
+                        <i class="fas fa-exchange-alt"></i>
+                        <span>Transactions</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="committee_requests.php">
+                        <i class="fas fa-clipboard-list"></i>
+                        <span>Committee Requests</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a href="student_aid.php" class="active">
                         <i class="fas fa-hand-holding-heart"></i>
                         <span>Student Financial Aid</span>
+                        <?php if ($pending_requests > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_requests; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="rental_management.php">
+                        <i class="fas fa-home"></i>
+                        <span>Rental Properties</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="allowances.php">
+                        <i class="fas fa-money-check"></i>
+                        <span>Allowances</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="bank_reconciliation.php">
+                        <i class="fas fa-university"></i>
+                        <span>Bank Reconciliation</span>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="financial_reports.php">
-                        <i class="fas fa-chart-line"></i>
+                        <i class="fas fa-chart-bar"></i>
                         <span>Financial Reports</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="transactions.php">
-                        <i class="fas fa-exchange-alt"></i>
-                        <span>Transactions</span>
+                    <a href="documents.php">
+                        <i class="fas fa-file-contract"></i>
+                        <span>Official Documents</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
                     </a>
                 </li>
             </ul>
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Student Aid Request #<?php echo $request_id; ?></h1>
+                    <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Student Aid Request #<?php echo $request_id; ?></h1>
                     <p>
                         <a href="student_aid.php" class="btn btn-secondary btn-sm">
                             <i class="fas fa-arrow-left"></i> Back to Requests
                         </a>
                     </p>
+                </div>
+            </div>
+
+            <!-- Workflow Steps -->
+            <div class="workflow-steps">
+                <div class="workflow-step <?php echo in_array($request['status'], ['submitted', 'under_review', 'pending_president', 'approved', 'disbursed']) ? 'completed' : ''; ?> <?php echo $request['status'] == 'submitted' || $request['status'] == 'under_review' ? 'active' : ''; ?>">
+                    <div class="step-icon"><i class="fas fa-file-alt"></i></div>
+                    <div class="step-label">Student Submission</div>
+                    <div class="step-role">Student</div>
+                </div>
+                <div class="workflow-step <?php echo in_array($request['status'], ['pending_president', 'approved', 'disbursed']) ? 'completed' : ''; ?> <?php echo $request['status'] == 'under_review' ? 'active' : ''; ?>">
+                    <div class="step-icon"><i class="fas fa-check-double"></i></div>
+                    <div class="step-label">Finance Review</div>
+                    <div class="step-role">Vice Guild Finance</div>
+                </div>
+                <div class="workflow-step <?php echo in_array($request['status'], ['approved', 'disbursed']) ? 'completed' : ''; ?> <?php echo $request['status'] == 'pending_president' ? 'active' : ''; ?>">
+                    <div class="step-icon"><i class="fas fa-user-check"></i></div>
+                    <div class="step-label">President Approval</div>
+                    <div class="step-role">Guild President</div>
+                </div>
+                <div class="workflow-step <?php echo $request['status'] == 'disbursed' ? 'completed active' : ''; ?> <?php echo $request['status'] == 'approved' ? 'active' : ''; ?>">
+                    <div class="step-icon"><i class="fas fa-money-bill-wave"></i></div>
+                    <div class="step-label">Disbursement</div>
+                    <div class="step-role">Vice Guild Finance</div>
                 </div>
             </div>
 
@@ -1081,19 +1544,27 @@ fixAcademicYearData();
                 </div>
             <?php endif; ?>
 
-            <!-- Email Info Alert -->
+            <!-- Status Info Alert -->
             <div class="alert alert-info">
-                <i class="fas fa-envelope"></i>
+                <i class="fas fa-info-circle"></i>
                 <div>
-                    <strong>Email Notifications</strong><br>
-                    The student will receive an email notification when you update this request status.
-                    Student email: <?php echo !empty($request['student_email']) ? safe_display($request['student_email']) : '<span style="color: var(--danger);">Not available</span>'; ?>
+                    <strong>Current Status: <?php echo getStatusText($request['status']); ?></strong><br>
+                    <?php
+                    $status_messages = [
+                        'submitted' => 'This request has been submitted by the student and is awaiting your review.',
+                        'under_review' => 'You are currently reviewing this request.',
+                        'pending_president' => 'This request has been approved by Finance and is awaiting final approval from the Guild President.',
+                        'approved' => 'This request has been approved by the President. You can now process the disbursement.',
+                        'rejected' => 'This request has been rejected. The student has been notified.',
+                        'disbursed' => 'Funds have been disbursed to the student.'
+                    ];
+                    echo $status_messages[$request['status']] ?? 'Status update pending.';
+                    ?>
                 </div>
             </div>
 
             <!-- Request Details -->
             <div class="detail-grid">
-                <!-- Student Information -->
                 <div class="detail-card">
                     <div class="detail-header">
                         <h3 class="detail-title">Student Information</h3>
@@ -1130,7 +1601,6 @@ fixAcademicYearData();
                     </div>
                 </div>
 
-                <!-- Request Information -->
                 <div class="detail-card">
                     <div class="detail-header">
                         <h3 class="detail-title">Request Information</h3>
@@ -1193,7 +1663,7 @@ fixAcademicYearData();
                 <div class="card-body">
                     <div class="form-group">
                         <label class="form-label">Purpose and Justification</label>
-                        <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">
+                        <div style="background: var(--gray-100); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">
                             <?php echo safe_display($request['purpose']); ?>
                         </div>
                     </div>
@@ -1201,7 +1671,7 @@ fixAcademicYearData();
                     <?php if ($request['review_notes']): ?>
                     <div class="form-group">
                         <label class="form-label">Review Notes</label>
-                        <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">
+                        <div style="background: var(--gray-100); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">
                             <?php echo safe_display($request['review_notes']); ?>
                         </div>
                     </div>
@@ -1213,7 +1683,7 @@ fixAcademicYearData();
                             <div class="document-card">
                                 <div class="document-type">Student's Request Letter</div>
                                 <?php if ($request['request_letter_path']): ?>
-                                    <a href="../<?php echo $request['request_letter_path']; ?>" target="_blank" class="btn btn-primary btn-sm">
+                                    <a href="<?php echo getFileUrl($request['request_letter_path']); ?>" target="_blank" class="btn btn-primary btn-sm">
                                         <i class="fas fa-download"></i> Download
                                     </a>
                                 <?php else: ?>
@@ -1224,7 +1694,7 @@ fixAcademicYearData();
                             <div class="document-card">
                                 <div class="document-type">Supporting Documents</div>
                                 <?php if ($request['supporting_docs_path']): ?>
-                                    <a href="../<?php echo $request['supporting_docs_path']; ?>" target="_blank" class="btn btn-primary btn-sm">
+                                    <a href="<?php echo getFileUrl($request['supporting_docs_path']); ?>" target="_blank" class="btn btn-primary btn-sm">
                                         <i class="fas fa-download"></i> Download
                                     </a>
                                 <?php else: ?>
@@ -1235,7 +1705,7 @@ fixAcademicYearData();
                             <div class="document-card">
                                 <div class="document-type">Approval Letter</div>
                                 <?php if ($request['approval_letter_path']): ?>
-                                    <a href="../<?php echo $request['approval_letter_path']; ?>" target="_blank" class="btn btn-success btn-sm">
+                                    <a href="<?php echo getFileUrl($request['approval_letter_path']); ?>" target="_blank" class="btn btn-success btn-sm">
                                         <i class="fas fa-download"></i> Download
                                     </a>
                                 <?php else: ?>
@@ -1249,63 +1719,142 @@ fixAcademicYearData();
 
             <!-- Action Section -->
             <div class="action-section">
-                <h3>Update Request Status</h3>
+                <h3>
+                    <?php
+                    if ($request['status'] == 'submitted' || $request['status'] == 'under_review') {
+                        echo 'Review and Approve Request';
+                    } elseif ($request['status'] == 'approved') {
+                        echo 'Process Disbursement';
+                    } elseif ($request['status'] == 'rejected') {
+                        echo 'Request Rejected';
+                    } elseif ($request['status'] == 'disbursed') {
+                        echo 'Disbursement Completed';
+                    } elseif ($request['status'] == 'pending_president') {
+                        echo 'Waiting for President Approval';
+                    }
+                    ?>
+                </h3>
                 
-                <form method="POST" enctype="multipart/form-data">
-                    <input type="hidden" name="action" value="update_status">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <select name="status" class="form-select" required id="statusSelect">
-                            <option value="under_review" <?php echo $request['status'] === 'under_review' ? 'selected' : ''; ?>>Under Review</option>
-                            <option value="approved" <?php echo $request['status'] === 'approved' ? 'selected' : ''; ?>>Approved</option>
-                            <option value="rejected" <?php echo $request['status'] === 'rejected' ? 'selected' : ''; ?>>Rejected</option>
-                            <option value="disbursed" <?php echo $request['status'] === 'disbursed' ? 'selected' : ''; ?>>Disbursed</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group" id="amountApprovedGroup">
-                        <label class="form-label">Amount to Approve (RWF)</label>
-                        <input type="number" class="form-control" name="amount_approved" 
-                               value="<?php echo $request['amount_approved'] ? $request['amount_approved'] : $request['amount_requested']; ?>" 
-                               step="0.01" min="0">
-                        <small style="color: var(--dark-gray);">
-                            Original requested amount: RWF <?php echo number_format($request['amount_requested'], 2); ?>
-                        </small>
-                    </div>
-
-                    <div class="form-group" id="approvalLetterGroup">
-                        <label class="form-label">Upload Approval Letter</label>
-                        <div class="file-upload">
-                            <input type="file" name="approval_letter" id="approval_letter" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
-                            <label for="approval_letter">
-                                <i class="fas fa-upload"></i>
-                                <p>Click to upload approval letter</p>
-                                <p style="font-size: 0.75rem; color: var(--dark-gray);">PDF, DOC, DOCX, JPG, PNG (Max: 5MB)</p>
-                            </label>
-                            <div id="approval_letter_name" class="file-list"></div>
-                        </div>
-                        <?php if ($request['approval_letter_path']): ?>
-                            <small style="color: var(--success); margin-top: 0.5rem; display: block;">
-                                <i class="fas fa-check-circle"></i> Approval letter already uploaded
+                <?php if ($request['status'] == 'submitted' || $request['status'] == 'under_review'): ?>
+                    <form method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="action" value="send_to_president">
+                        
+                        <div class="form-group">
+                            <label class="form-label">Amount to Approve (RWF)</label>
+                            <input type="number" class="form-control" name="amount_approved" 
+                                   value="<?php echo $request['amount_approved'] ? $request['amount_approved'] : $request['amount_requested']; ?>" 
+                                   step="0.01" min="0" required>
+                            <small style="color: var(--gray-600);">
+                                Original requested amount: RWF <?php echo number_format($request['amount_requested'], 2); ?>
                             </small>
-                        <?php endif; ?>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Upload Approval Letter (Recommended)</label>
+                            <div class="file-upload">
+                                <input type="file" name="approval_letter" id="approval_letter" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                                <label for="approval_letter">
+                                    <i class="fas fa-upload"></i>
+                                    <p>Click to upload approval letter</p>
+                                    <p style="font-size: 0.75rem; color: var(--gray-600);">PDF, DOC, DOCX, JPG, PNG (Max: 5MB)</p>
+                                </label>
+                                <div id="approval_letter_name" class="file-list"></div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Review Notes / Comments</label>
+                            <textarea class="form-control" name="review_notes" rows="4" placeholder="Enter your review comments and approval rationale..." required><?php echo safe_display($request['review_notes']); ?></textarea>
+                        </div>
+
+                        <div class="button-group">
+                            <a href="student_aid.php" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-primary" onclick="return confirm('Send this request to Guild President for final approval?')">
+                                <i class="fas fa-paper-plane"></i> Send to President
+                            </button>
+                            <button type="button" class="btn btn-danger" onclick="showRejectModal()">
+                                <i class="fas fa-times-circle"></i> Reject Request
+                            </button>
+                        </div>
+                    </form>
+
+                <?php elseif ($request['status'] == 'approved'): ?>
+                    <form method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="action" value="process_disbursement">
+                        
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            This request has been approved by the Guild President. You can now process the disbursement.
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Amount to Disburse</label>
+                            <input type="text" class="form-control" value="RWF <?php echo number_format($request['amount_approved'], 2); ?>" readonly disabled>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Disbursement Notes</label>
+                            <textarea class="form-control" name="review_notes" rows="4" placeholder="Enter disbursement details (payment method, reference number, etc.)" required></textarea>
+                        </div>
+
+                        <div class="button-group">
+                            <a href="student_aid.php" class="btn btn-secondary">Cancel</a>
+                            <button type="submit" class="btn btn-success" onclick="return confirm('Confirm disbursement: Have you processed the payment? This will notify the student.')">
+                                <i class="fas fa-money-bill-wave"></i> Confirm Disbursement
+                            </button>
+                        </div>
+                    </form>
+
+                <?php elseif ($request['status'] == 'pending_president'): ?>
+                    <div class="alert alert-info">
+                        <i class="fas fa-clock"></i>
+                        This request has been sent to the Guild President for final approval. Please wait for their decision.
+                    </div>
+                    <div class="button-group">
+                        <a href="student_aid.php" class="btn btn-secondary">Back to Requests</a>
                     </div>
 
-                    <div class="form-group">
-                        <label class="form-label">Review Notes</label>
-                        <textarea class="form-control" name="review_notes" rows="4" placeholder="Enter your review comments and decision rationale..." required><?php echo safe_display($request['review_notes']); ?></textarea>
+                <?php elseif ($request['status'] == 'rejected'): ?>
+                    <div class="alert alert-danger">
+                        <i class="fas fa-times-circle"></i>
+                        This request has been rejected. The student has been notified.
+                    </div>
+                    <div class="button-group">
+                        <a href="student_aid.php" class="btn btn-secondary">Back to Requests</a>
                     </div>
 
-                    <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-                        <a href="student_aid.php" class="btn btn-secondary">Cancel</a>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-save"></i> Update Request
-                        </button>
+                <?php elseif ($request['status'] == 'disbursed'): ?>
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle"></i>
+                        Funds have been successfully disbursed to the student. Transaction recorded.
                     </div>
-                </form>
+                    <div class="button-group">
+                        <a href="student_aid.php" class="btn btn-secondary">Back to Requests</a>
+                    </div>
+                <?php endif; ?>
             </div>
         </main>
+    </div>
+
+    <!-- Reject Modal -->
+    <div id="rejectModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Reject Request</h3>
+                <button type="button" class="icon-btn" onclick="closeRejectModal()" style="position: absolute; right: 1rem; top: 1rem;">&times;</button>
+            </div>
+            <form method="POST">
+                <input type="hidden" name="action" value="reject_request">
+                <div class="form-group">
+                    <label class="form-label">Rejection Reason</label>
+                    <textarea class="form-control" name="rejection_reason" rows="4" placeholder="Please provide a clear reason for rejection..." required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeRejectModal()">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Confirm Rejection</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <script>
@@ -1326,6 +1875,51 @@ fixAcademicYearData();
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active');
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+            });
+        }
+
         // File input display
         const fileInput = document.getElementById('approval_letter');
         const fileNameDisplay = document.getElementById('approval_letter_name');
@@ -1342,64 +1936,36 @@ fixAcademicYearData();
             });
         }
 
-        // Show/hide amount and approval letter fields based on status
-        const statusSelect = document.getElementById('statusSelect');
-        const amountGroup = document.getElementById('amountApprovedGroup');
-        const approvalLetterGroup = document.getElementById('approvalLetterGroup');
-
-        function toggleFields() {
-            if (!statusSelect) return;
-            
-            const status = statusSelect.value;
-            
-            if (status === 'approved' || status === 'disbursed') {
-                if (amountGroup) amountGroup.style.display = 'block';
-                if (approvalLetterGroup) approvalLetterGroup.style.display = 'block';
-                if (amountGroup) {
-                    const amountInput = amountGroup.querySelector('input');
-                    if (amountInput && !amountInput.value) {
-                        amountInput.value = <?php echo $request['amount_requested']; ?>;
-                    }
-                }
-            } else {
-                if (amountGroup) amountGroup.style.display = 'none';
-                if (approvalLetterGroup) approvalLetterGroup.style.display = 'none';
-            }
+        // Reject Modal Functions
+        function showRejectModal() {
+            const modal = document.getElementById('rejectModal');
+            if (modal) modal.classList.add('active');
         }
-
-        if (statusSelect) {
-            statusSelect.addEventListener('change', toggleFields);
-            // Initialize on page load
-            toggleFields();
-        }
-
-        // Confirm before updating status if it's a critical change
-        const updateForm = document.querySelector('form');
-        if (updateForm) {
-            updateForm.addEventListener('submit', function(e) {
-                const status = statusSelect ? statusSelect.value : '';
-                if (status === 'rejected') {
-                    if (!confirm('Are you sure you want to reject this request? This action cannot be undone.')) {
-                        e.preventDefault();
-                    }
-                } else if (status === 'disbursed') {
-                    if (!confirm('Confirm disbursement: Have you processed the payment and uploaded the approval letter?')) {
-                        e.preventDefault();
-                    }
-                }
-            });
+        
+        function closeRejectModal() {
+            const modal = document.getElementById('rejectModal');
+            if (modal) modal.classList.remove('active');
         }
 
         // Auto-hide alerts after 5 seconds
-        const alerts = document.querySelectorAll('.alert');
+        const alerts = document.querySelectorAll('.alert:not(.alert-info)');
         alerts.forEach(alert => {
             setTimeout(() => {
                 alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.3s ease';
                 setTimeout(() => {
                     if (alert.parentNode) alert.remove();
                 }, 300);
             }, 5000);
         });
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modal = document.getElementById('rejectModal');
+            if (event.target === modal) {
+                closeRejectModal();
+            }
+        }
     </script>
 </body>
 </html>

@@ -126,61 +126,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
             // Commit transaction
             $pdo->commit();
             
-            // 1. Send confirmation email to student
-            $email_sent = false;
-            $email_message = "";
-            
-            if (!empty($student_email)) {
-                $subject = "Financial Aid Request Received - #$request_id";
-                $body = '
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        body { font-family: Arial, sans-serif; line-height: 1.6; }
-                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                        .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-                        .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
-                        .details { background: #f8f9fa; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
-                        .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="header">
-                            <h2>✅ Financial Aid Request Received</h2>
-                        </div>
-                        <div class="content">
-                            <p>Dear ' . htmlspecialchars($student_name) . ',</p>
-                            <p>Thank you for submitting your financial aid request.</p>
-                            <div class="details">
-                                <p><strong>Request ID:</strong> #' . $request_id . '</p>
-                                <p><strong>Amount:</strong> RWF ' . number_format($amount_requested, 2) . '</p>
-                                <p><strong>Urgency:</strong> ' . ucfirst($urgency_level) . '</p>
-                                <p><strong>Submission Date:</strong> ' . date('F j, Y') . '</p>
-                            </div>
-                            <p>Our team will review your request and get back to you within 3-5 business days.</p>
-                            <p><a href="http://localhost/isonga-mis/student/financial_aid.php">View your request</a></p>
-                        </div>
-                        <div class="footer">
-                            <p>Isonga - RPSU Management System</p>
-                        </div>
-                    </div>
-                </body>
-                </html>';
-                
-                $email_result = sendEmailCore($student_email, $subject, $body);
-                
-                if ($email_result['success']) {
-                    $email_sent = true;
-                    $email_message = " A confirmation email has been sent to $student_email";
-                } else {
-                    error_log("Failed to send email to student: " . ($email_result['message'] ?? 'Unknown error'));
-                    $email_message = " However, we couldn't send the confirmation email.";
-                }
-            } else {
-                $email_message = " Please update your email address in your profile to receive notifications.";
-            }
+            // In financial_aid.php, replace the email sending section with:
+
+// 1. Send confirmation email to student
+$email_sent = false;
+$email_message = "";
+
+if (!empty($student_email)) {
+    $subject = "Financial Aid Request Received - #$request_id";
+    $body = '
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+            .details { background: #f8f9fa; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
+            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>✅ Financial Aid Request Received</h2>
+            </div>
+            <div class="content">
+                <p>Dear ' . htmlspecialchars($student_name) . ',</p>
+                <p>Thank you for submitting your financial aid request.</p>
+                <div class="details">
+                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                    <p><strong>Amount:</strong> RWF ' . number_format($amount_requested, 2) . '</p>
+                    <p><strong>Urgency:</strong> ' . ucfirst($urgency_level) . '</p>
+                    <p><strong>Submission Date:</strong> ' . date('F j, Y') . '</p>
+                </div>
+                <p>Our team will review your request and get back to you within 3-5 business days.</p>
+                <p><a href="http://localhost/isonga-mis/student/financial_aid.php">View your request</a></p>
+            </div>
+            <div class="footer">
+                <p>Isonga - RPSU Management System</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+    
+    // Use sendEmail function instead of sendEmailCore
+    if (function_exists('sendEmail')) {
+        $email_result = sendEmail($student_email, $subject, $body);
+        if ($email_result['success']) {
+            $email_sent = true;
+            $email_message = " A confirmation email has been sent to $student_email";
+        } else {
+            error_log("Failed to send email to student: " . ($email_result['message'] ?? 'Unknown error'));
+            $email_message = " However, we couldn't send the confirmation email.";
+        }
+    } else {
+        error_log("sendEmail function not available");
+        $email_message = " Email notification not available.";
+    }
+} else {
+    $email_message = " Please update your email address in your profile to receive notifications.";
+}
             
             // 2. Send notification to finance officers about new request
             $finance_notification_sent = false;
@@ -252,7 +259,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
                     $sent_count = 0;
                     foreach ($finance_officers as $officer) {
                         if (!empty($officer['email'])) {
-                            $result = sendEmailCore($officer['email'], $subject, $body);
+                            $result = sendEmail($officer['email'], $subject, $body);
                             if ($result['success']) {
                                 $sent_count++;
                                 error_log("Finance notification sent to: " . $officer['email']);

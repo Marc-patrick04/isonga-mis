@@ -1788,59 +1788,136 @@ try {
         gap: 0.5rem;
     }
 
-    /* Responsive */
-    @media (max-width: 768px) {
+    /* ── Mobile Nav Overlay ── */
+    .mobile-nav-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.45);
+        z-index: 199;
+        backdrop-filter: blur(2px);
+    }
+
+    .mobile-nav-overlay.active { display: block; }
+
+    /* ── Hamburger Button ── */
+    .hamburger-btn {
+        display: none;
+        width: 44px;
+        height: 44px;
+        border: none;
+        background: var(--light-gray);
+        border-radius: 50%;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-dark);
+        cursor: pointer;
+        transition: var(--transition);
+        font-size: 1.1rem;
+        flex-shrink: 0;
+    }
+
+    .hamburger-btn:hover {
+        background: var(--academic-primary);
+        color: white;
+    }
+
+    /* ── Sidebar Drawer (mobile) ── */
+    .sidebar {
+        transition: transform 0.3s ease;
+    }
+
+    /* ── Responsive ── */
+
+    /* Tablet & below */
+    @media (max-width: 900px) {
         .dashboard-container {
             grid-template-columns: 1fr;
         }
 
         .sidebar {
-            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 260px;
+            height: 100vh;
+            z-index: 200;
+            transform: translateX(-100%);
+            padding-top: 1rem;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .sidebar.open {
+            transform: translateX(0);
+        }
+
+        .hamburger-btn {
+            display: flex;
+        }
+
+        .main-content {
+            height: auto;
+            min-height: calc(100vh - 80px);
         }
 
         .stats-grid {
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(2, 1fr);
         }
 
-        .club-grid, .clubs-grid {
-            grid-template-columns: 1fr;
+        .clubs-grid {
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
         }
+    }
 
-        .club-details {
-            grid-template-columns: 1fr;
-        }
-
+    /* Mobile */
+    @media (max-width: 768px) {
         .nav-container {
             padding: 0 1rem;
+            gap: 0.5rem;
+        }
+
+        .brand-text h1 {
+            font-size: 1rem;
         }
 
         .user-details {
             display: none;
         }
 
-        .tabs {
-            flex-direction: column;
-        }
-
-        .tab {
-            border-bottom: 1px solid var(--medium-gray);
-            border-left: 2px solid transparent;
-        }
-
-        .tab.active {
-            border-left-color: var(--academic-primary);
-            border-bottom-color: var(--medium-gray);
+        .logout-btn span {
+            display: none;
         }
 
         .page-header {
             flex-direction: column;
             align-items: flex-start;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .page-actions {
             width: 100%;
-            justify-content: flex-start;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .page-actions .btn {
+            flex: 1 1 auto;
+            justify-content: center;
+            min-width: 120px;
+        }
+
+        .tabs {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            padding-bottom: 0;
+        }
+
+        .tabs::-webkit-scrollbar { display: none; }
+
+        .tab {
+            white-space: nowrap;
+            flex-shrink: 0;
         }
 
         .form-grid {
@@ -1850,11 +1927,13 @@ try {
         .club-details-header {
             flex-direction: column;
             text-align: center;
+            align-items: center;
         }
 
         .club-details-info .club-meta {
             flex-direction: column;
             gap: 0.5rem;
+            align-items: center;
         }
 
         .attendance-item {
@@ -1865,10 +1944,37 @@ try {
 
         .attendance-actions {
             width: 100%;
-            justify-content: space-between;
+            justify-content: flex-start;
+            flex-wrap: wrap;
+        }
+
+        .filter-form {
+            grid-template-columns: 1fr;
+        }
+
+        .filter-actions {
+            flex-direction: row;
+            flex-wrap: wrap;
+        }
+
+        .club-actions {
+            flex-wrap: wrap;
+        }
+
+        .form-actions {
+            flex-wrap: wrap;
+        }
+
+        /* Table overflow on mobile */
+        .card-body table {
+            display: block;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            white-space: nowrap;
         }
     }
 
+    /* Small phones */
     @media (max-width: 480px) {
         .stats-grid {
             grid-template-columns: 1fr;
@@ -1876,6 +1982,14 @@ try {
 
         .main-content {
             padding: 1rem;
+        }
+
+        .clubs-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .club-grid {
+            grid-template-columns: 1fr;
         }
 
         .club-actions {
@@ -1889,6 +2003,26 @@ try {
         .filter-actions {
             flex-direction: column;
         }
+
+        .page-actions .btn {
+            width: 100%;
+        }
+
+        .header {
+            height: 68px;
+        }
+
+        .main-content {
+            min-height: calc(100vh - 68px);
+        }
+
+        .logos .logo {
+            height: 32px;
+        }
+
+        .brand-text h1 {
+            font-size: 0.9rem;
+        }
     }
 </style>
 
@@ -1899,6 +2033,9 @@ try {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1934,6 +2071,9 @@ try {
             </div>
         </div>
     </header>
+
+    <!-- Mobile Nav Overlay -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
@@ -2760,7 +2900,7 @@ try {
 
                 <!-- Filters -->
                 <div class="filters-card">
-                    <form method="GET" class="filters-form">
+                    <form method="GET" class="filters-form filter-form">
                         <div class="form-group">
                             <label class="form-label">Category</label>
                             <select name="category" class="form-select">
@@ -2892,6 +3032,37 @@ try {
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
+
+        // Mobile Sidebar Toggle
+        const hamburgerBtn = document.getElementById('hamburgerBtn');
+        const sidebar = document.querySelector('.sidebar');
+        const overlay = document.getElementById('mobileNavOverlay');
+
+        function openSidebar() {
+            sidebar.classList.add('open');
+            overlay.classList.add('active');
+            hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('active');
+            hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+            document.body.style.overflow = '';
+        }
+
+        hamburgerBtn.addEventListener('click', () => {
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+        });
+
+        overlay.addEventListener('click', closeSidebar);
+
+        // Close sidebar on resize back to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 900) closeSidebar();
+        });
+
 
         // Attendance functionality
         function setAttendance(memberId, status) {

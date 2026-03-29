@@ -17,9 +17,10 @@ try {
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $user = [];
+    error_log("User profile error: " . $e->getMessage());
 }
 
-// Get dashboard statistics for sidebar
+// Get dashboard statistics for sidebar (PostgreSQL compatible)
 try {
     // Total tickets
     $stmt = $pdo->query("SELECT COUNT(*) as total_tickets FROM tickets");
@@ -47,7 +48,7 @@ try {
         $pending_docs = 0;
     }
     
-    // Unread messages - FIXED: Using conversation_messages table
+    // Unread messages
     $unread_messages = 0;
     try {
         $stmt = $pdo->prepare("
@@ -62,10 +63,26 @@ try {
         $unread_messages = 0;
     }
     
+    // New students in last 7 days (PostgreSQL compatible)
+    $new_students = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as new_students 
+            FROM users 
+            WHERE role = 'student' 
+            AND status = 'active' 
+            AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+        ");
+        $stmt->execute();
+        $new_students = $stmt->fetch(PDO::FETCH_ASSOC)['new_students'];
+    } catch (PDOException $e) {
+        $new_students = 0;
+    }
+    
 } catch (PDOException $e) {
-    $total_tickets = $open_tickets = $pending_reports = $pending_docs = $unread_messages = 0;
+    $total_tickets = $open_tickets = $pending_reports = $pending_docs = $unread_messages = $new_students = 0;
+    error_log("Statistics error: " . $e->getMessage());
 }
-
 
 // Handle filters and search
 $status_filter = $_GET['status'] ?? 'all';
@@ -73,10 +90,7 @@ $priority_filter = $_GET['priority'] ?? 'all';
 $category_filter = $_GET['category'] ?? 'all';
 $search_query = $_GET['search'] ?? '';
 
-// DEBUG: Log what we're receiving
-error_log("Filters - Status: $status_filter, Priority: $priority_filter, Category: $category_filter, Search: $search_query");
-
-// Build the base query - SIMPLIFIED VERSION
+// Build the base query (PostgreSQL compatible with ILIKE for case-insensitive search)
 $query = "
     SELECT t.*, 
            ic.name as category_name, 
@@ -92,35 +106,30 @@ $query = "
 ";
 
 $params = [];
-$types = ''; // For binding types
 
-// Apply filters - SIMPLIFIED
+// Apply filters
 if ($status_filter !== 'all') {
     $query .= " AND t.status = ?";
     $params[] = $status_filter;
-    $types .= 's';
 }
 
 if ($priority_filter !== 'all') {
     $query .= " AND t.priority = ?";
     $params[] = $priority_filter;
-    $types .= 's';
 }
 
 if ($category_filter !== 'all' && is_numeric($category_filter)) {
     $query .= " AND t.category_id = ?";
-    $params[] = $category_filter;
-    $types .= 'i';
+    $params[] = (int)$category_filter;
 }
 
 if (!empty($search_query)) {
-    $query .= " AND (t.subject LIKE ? OR t.description LIKE ? OR t.name LIKE ? OR t.reg_number LIKE ?)";
+    $query .= " AND (t.subject ILIKE ? OR t.description ILIKE ? OR t.name ILIKE ? OR t.reg_number ILIKE ?)";
     $search_param = "%$search_query%";
     $params[] = $search_param;
     $params[] = $search_param;
     $params[] = $search_param;
     $params[] = $search_param;
-    $types .= 'ssss';
 }
 
 // Add ordering
@@ -133,11 +142,7 @@ $query .= " ORDER BY
     END,
     t.created_at DESC";
 
-// DEBUG: Log the query and parameters
-error_log("Main Query: " . $query);
-error_log("Parameters: " . implode(', ', $params));
-
-// Get total count for pagination - SIMPLIFIED
+// Get total count for pagination
 try {
     $count_query = "SELECT COUNT(*) as total FROM tickets t WHERE 1=1";
     $count_params = [];
@@ -154,11 +159,11 @@ try {
     
     if ($category_filter !== 'all' && is_numeric($category_filter)) {
         $count_query .= " AND t.category_id = ?";
-        $count_params[] = $category_filter;
+        $count_params[] = (int)$category_filter;
     }
     
     if (!empty($search_query)) {
-        $count_query .= " AND (t.subject LIKE ? OR t.description LIKE ? OR t.name LIKE ? OR t.reg_number LIKE ?)";
+        $count_query .= " AND (t.subject ILIKE ? OR t.description ILIKE ? OR t.name ILIKE ? OR t.reg_number ILIKE ?)";
         $search_param = "%$search_query%";
         $count_params[] = $search_param;
         $count_params[] = $search_param;
@@ -168,17 +173,16 @@ try {
     
     $stmt = $pdo->prepare($count_query);
     $stmt->execute($count_params);
-    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
-    error_log("Total tickets found: " . $total_tickets);
+    $total_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
 } catch (PDOException $e) {
     error_log("Count query error: " . $e->getMessage());
-    $total_tickets = 0;
+    $total_tickets_count = 0;
 }
 
 // Pagination
 $per_page = 15;
-$total_pages = ceil($total_tickets / $per_page);
+$total_pages = ceil($total_tickets_count / $per_page);
 $current_page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
 $offset = ($current_page - 1) * $per_page;
 
@@ -186,40 +190,15 @@ $offset = ($current_page - 1) * $per_page;
 $query .= " LIMIT ? OFFSET ?";
 $params[] = $per_page;
 $params[] = $offset;
-$types .= 'ii';
 
-// Fetch tickets - WITH PROPER PARAMETER BINDING
+// Fetch tickets
 try {
     $stmt = $pdo->prepare($query);
-    
-    // Bind parameters manually to avoid LIMIT/OFFSET issues
-    foreach ($params as $key => $value) {
-        $param_type = PDO::PARAM_STR;
-        
-        // Determine parameter type
-        if (is_int($value)) {
-            $param_type = PDO::PARAM_INT;
-        } elseif ($key === count($params) - 2 || $key === count($params) - 1) {
-            // Last two parameters are LIMIT and OFFSET (integers)
-            $param_type = PDO::PARAM_INT;
-        }
-        
-        $stmt->bindValue($key + 1, $value, $param_type);
-    }
-    
-    $stmt->execute();
+    $stmt->execute($params);
     $tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    error_log("Tickets fetched: " . count($tickets));
-    
-    // DEBUG: Log first ticket if available
-    if (!empty($tickets)) {
-        error_log("First ticket: " . json_encode($tickets[0]));
-    }
     
 } catch (PDOException $e) {
     error_log("Tickets query error: " . $e->getMessage());
-    error_log("Full error: " . $e->getMessage());
     $tickets = [];
 }
 
@@ -249,10 +228,13 @@ try {
 // Handle ticket actions (reassign, escalate, etc.)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['reassign_ticket'])) {
-        $ticket_id = $_POST['ticket_id'];
-        $new_assignee = $_POST['new_assignee'];
+        $ticket_id = (int)$_POST['ticket_id'];
+        $new_assignee = (int)$_POST['new_assignee'];
         
         try {
+            // Start transaction
+            $pdo->beginTransaction();
+            
             // Update ticket assignment
             $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?");
             $stmt->execute([$new_assignee, $ticket_id]);
@@ -275,22 +257,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $stmt = $pdo->prepare("
                 INSERT INTO ticket_comments (ticket_id, user_id, comment, is_internal, created_at) 
-                VALUES (?, ?, ?, 1, NOW())
+                VALUES (?, ?, ?, true, NOW())
             ");
             $stmt->execute([$ticket_id, $user_id, "Ticket reassigned to $assignee_name by Guild President"]);
             
+            $pdo->commit();
             $_SESSION['success_message'] = "Ticket successfully reassigned";
             header("Location: tickets.php");
             exit();
             
         } catch (PDOException $e) {
+            $pdo->rollBack();
             error_log("Reassignment error: " . $e->getMessage());
-            $_SESSION['error_message'] = "Failed to reassign ticket";
+            $_SESSION['error_message'] = "Failed to reassign ticket: " . $e->getMessage();
         }
     }
     
     if (isset($_POST['update_status'])) {
-        $ticket_id = $_POST['ticket_id'];
+        $ticket_id = (int)$_POST['ticket_id'];
         $new_status = $_POST['new_status'];
         
         try {
@@ -309,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Add comment
             $stmt = $pdo->prepare("
                 INSERT INTO ticket_comments (ticket_id, user_id, comment, is_internal, created_at) 
-                VALUES (?, ?, ?, 1, NOW())
+                VALUES (?, ?, ?, true, NOW())
             ");
             $stmt->execute([$ticket_id, $user_id, "Status changed to " . ucfirst($new_status) . " by Guild President"]);
             
@@ -319,34 +303,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
         } catch (PDOException $e) {
             error_log("Status update error: " . $e->getMessage());
-            $_SESSION['error_message'] = "Failed to update ticket status";
+            $_SESSION['error_message'] = "Failed to update ticket status: " . $e->getMessage();
         }
     }
 }
 
-// Get statistics for dashboard cards - SIMPLIFIED
+// Get statistics for dashboard cards (PostgreSQL compatible)
 try {
-    // Total tickets with current filters
-    $stats_query = "SELECT COUNT(*) as total FROM tickets t WHERE 1=1";
+    // Base stats query with filters
+    $stats_base = "FROM tickets t WHERE 1=1";
     $stats_params = [];
     
     if ($status_filter !== 'all') {
-        $stats_query .= " AND t.status = ?";
+        $stats_base .= " AND t.status = ?";
         $stats_params[] = $status_filter;
     }
     
     if ($priority_filter !== 'all') {
-        $stats_query .= " AND t.priority = ?";
+        $stats_base .= " AND t.priority = ?";
         $stats_params[] = $priority_filter;
     }
     
     if ($category_filter !== 'all' && is_numeric($category_filter)) {
-        $stats_query .= " AND t.category_id = ?";
-        $stats_params[] = $category_filter;
+        $stats_base .= " AND t.category_id = ?";
+        $stats_params[] = (int)$category_filter;
     }
     
     if (!empty($search_query)) {
-        $stats_query .= " AND (t.subject LIKE ? OR t.description LIKE ? OR t.name LIKE ? OR t.reg_number LIKE ?)";
+        $stats_base .= " AND (t.subject ILIKE ? OR t.description ILIKE ? OR t.name ILIKE ? OR t.reg_number ILIKE ?)";
         $search_param = "%$search_query%";
         $stats_params[] = $search_param;
         $stats_params[] = $search_param;
@@ -355,37 +339,32 @@ try {
     }
     
     // Total tickets
-    $stmt = $pdo->prepare($stats_query);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base);
     $stmt->execute($stats_params);
     $total_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
     // Open tickets
-    $open_query = $stats_query . " AND t.status = 'open'";
-    $stmt = $pdo->prepare($open_query);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.status = 'open'");
     $stmt->execute($stats_params);
     $open_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
     // In progress tickets
-    $in_progress_query = $stats_query . " AND t.status = 'in_progress'";
-    $stmt = $pdo->prepare($in_progress_query);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.status = 'in_progress'");
     $stmt->execute($stats_params);
     $in_progress_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
     // Resolved tickets
-    $resolved_query = $stats_query . " AND t.status = 'resolved'";
-    $stmt = $pdo->prepare($resolved_query);
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.status = 'resolved'");
     $stmt->execute($stats_params);
     $resolved_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
-    // High priority tickets
-    $high_priority_query = $stats_query . " AND t.priority = 'high' AND t.status NOT IN ('resolved', 'closed')";
-    $stmt = $pdo->prepare($high_priority_query);
+    // High priority tickets (PostgreSQL compatible)
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.priority = 'high' AND t.status NOT IN ('resolved', 'closed')");
     $stmt->execute($stats_params);
     $high_priority_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
-    // Overdue tickets
-    $overdue_query = $stats_query . " AND t.due_date < CURDATE() AND t.status NOT IN ('resolved', 'closed')";
-    $stmt = $pdo->prepare($overdue_query);
+    // Overdue tickets (PostgreSQL compatible - using CURRENT_DATE)
+    $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.due_date < CURRENT_DATE AND t.status NOT IN ('resolved', 'closed')");
     $stmt->execute($stats_params);
     $overdue_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
     
@@ -393,32 +372,16 @@ try {
     error_log("Statistics error: " . $e->getMessage());
     $total_tickets_count = $open_tickets_count = $in_progress_count = $resolved_count = $high_priority_count = $overdue_count = 0;
 }
-
-// DEBUG: Check if we have any tickets at all in the database
-try {
-    $debug_stmt = $pdo->query("SELECT COUNT(*) as debug_total FROM tickets");
-    $debug_total = $debug_stmt->fetch(PDO::FETCH_ASSOC)['debug_total'];
-    error_log("DEBUG: Total tickets in database: " . $debug_total);
-    
-    // Check if we can fetch some sample tickets
-    $sample_stmt = $pdo->query("SELECT id, subject, status FROM tickets LIMIT 5");
-    $sample_tickets = $sample_stmt->fetchAll(PDO::FETCH_ASSOC);
-    error_log("DEBUG: Sample tickets: " . json_encode($sample_tickets));
-    
-} catch (PDOException $e) {
-    error_log("DEBUG query failed: " . $e->getMessage());
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>All Tickets Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
-
     <style>
         :root {
             --primary-blue: #0056b3;
@@ -433,6 +396,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -440,6 +404,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -455,7 +421,7 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --info: #4dd0e1;
         }
 
         * {
@@ -478,14 +444,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -495,7 +458,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -504,38 +466,43 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -543,22 +510,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -567,101 +519,96 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-dark);
             cursor: pointer;
+            color: var(--text-dark);
             transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -2px;
-            right: -2px;
-            background: var(--danger);
-            color: white;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            border: 2px solid var(--white);
+            border-color: var(--primary-blue);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -691,9 +638,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -704,6 +649,19 @@ try {
             font-size: 0.7rem;
             font-weight: 600;
             margin-left: auto;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -725,7 +683,7 @@ try {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
@@ -794,7 +752,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -802,11 +760,52 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             font-weight: 500;
         }
 
-        /* Filters */
+        /* Quick Status Bar */
+        .quick-status-bar {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .status-chip {
+            padding: 0.4rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: var(--transition);
+            background: var(--white);
+            color: var(--text-dark);
+            border: 1px solid var(--medium-gray);
+        }
+
+        .status-chip:hover {
+            border-color: var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .status-chip.active {
+            background: var(--primary-blue);
+            color: white;
+            border-color: var(--primary-blue);
+        }
+
+        .status-chip.high-priority {
+            border-color: var(--danger);
+            color: var(--danger);
+        }
+
+        .status-chip.high-priority.active {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Filters Container */
         .filters-container {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -817,7 +816,7 @@ try {
 
         .filters-form {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
             align-items: end;
         }
@@ -831,7 +830,7 @@ try {
             font-weight: 600;
             margin-bottom: 0.5rem;
             color: var(--text-dark);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
         }
 
         .form-select, .form-input {
@@ -885,15 +884,9 @@ try {
             color: var(--primary-blue);
         }
 
-        .btn-outline.active {
-            background: var(--primary-blue);
-            color: white;
-            border-color: var(--primary-blue);
-        }
-
         .btn-sm {
             padding: 0.4rem 0.75rem;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
         }
 
         /* Table */
@@ -901,7 +894,7 @@ try {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            overflow: hidden;
+            overflow-x: auto;
         }
 
         .table-header {
@@ -910,6 +903,8 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .table-header h3 {
@@ -922,6 +917,7 @@ try {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.8rem;
+            min-width: 800px;
         }
 
         .table th, .table td {
@@ -941,6 +937,7 @@ try {
             background: var(--light-blue);
         }
 
+        /* Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -951,22 +948,22 @@ try {
 
         .status-open {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-in_progress {
-            background: #cce7ff;
-            color: var(--primary-blue);
+            background: #cce5ff;
+            color: #004085;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-closed {
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #6c757d;
         }
 
         .priority-badge {
@@ -978,22 +975,23 @@ try {
 
         .priority-high {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .action-buttons {
             display: flex;
             gap: 0.25rem;
+            flex-wrap: wrap;
         }
 
         /* Pagination */
@@ -1003,6 +1001,7 @@ try {
             align-items: center;
             gap: 0.5rem;
             margin-top: 1.5rem;
+            flex-wrap: wrap;
         }
 
         .pagination-btn {
@@ -1039,6 +1038,10 @@ try {
             z-index: 1000;
             align-items: center;
             justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
         }
 
         .modal-content {
@@ -1106,28 +1109,62 @@ try {
             border-left-color: var(--danger);
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                z-index: 1000;
             }
             
-            .filters-form {
-                grid-template-columns: 1fr 1fr;
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .main-content.sidebar-collapsed {
+                margin-left: 0;
+            }
+            
+            .mobile-menu-toggle {
+                display: block;
+            }
+            
+            .overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+            
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
             .stats-grid {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
             
             .filters-form {
@@ -1142,9 +1179,13 @@ try {
                 display: none;
             }
             
-            .table {
-                display: block;
-                overflow-x: auto;
+            .main-content {
+                padding: 1rem;
+            }
+            
+            .table-header {
+                flex-direction: column;
+                align-items: flex-start;
             }
         }
 
@@ -1153,24 +1194,29 @@ try {
                 grid-template-columns: 1fr;
             }
             
-            .main-content {
-                padding: 1rem;
-            }
-            
             .action-buttons {
                 flex-direction: column;
+            }
+            
+            .action-buttons .btn-sm {
+                width: 100%;
+                justify-content: center;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - President</h1>
                 </div>
@@ -1180,10 +1226,13 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
-                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                            <span class="notification-badge" style="position: absolute; top: -2px; right: -2px; background: var(--danger); color: white; border-radius: 50%; width: 18px; height: 18px; font-size: 0.6rem; display: flex; align-items: center; justify-content: center;"><?php echo $unread_messages; ?></span>
                         <?php endif; ?>
                     </a>
                 </div>
@@ -1209,8 +1258,11 @@ try {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-        <!-- Sidebar - MATCHING DASHBOARD.PHP -->
-        <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1251,33 +1303,17 @@ try {
                         <span>Committee Management</span>
                     </a>
                 </li>
-        <li class="menu-item">
-            <a href="students.php">
-                <i class="fas fa-user-graduate"></i>
-                <span>Student Management</span>
-                <?php 
-                // Get new student registrations count (last 7 days)
-                try {
-                    $new_students_stmt = $pdo->prepare("
-                        SELECT COUNT(*) as new_students 
-                        FROM users 
-                        WHERE role = 'student' 
-                        AND status = 'active' 
-                        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                    ");
-                    $new_students_stmt->execute();
-                    $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'];
-                } catch (PDOException $e) {
-                    $new_students = 0;
-                }
-                ?>
-                <?php if ($new_students > 0): ?>
-                    <span class="menu-badge"><?php echo $new_students; ?> new</span>
-                <?php endif; ?>
-            </a>
-        </li>
                 <li class="menu-item">
-                    <a href="messages.php" >
+                    <a href="students.php">
+                        <i class="fas fa-user-graduate"></i>
+                        <span>Student Management</span>
+                        <?php if ($new_students > 0): ?>
+                            <span class="menu-badge"><?php echo $new_students; ?> new</span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1307,7 +1343,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>All Student Tickets</h1>
@@ -1317,14 +1353,14 @@ try {
 
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1332,54 +1368,42 @@ try {
             <!-- Statistics Grid -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-ticket-alt"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-ticket-alt"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $total_tickets_count; ?></div>
                         <div class="stat-label">Total Tickets</div>
                     </div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-clock"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $open_tickets_count; ?></div>
                         <div class="stat-label">Open Tickets</div>
                     </div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-spinner"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-spinner"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $in_progress_count; ?></div>
                         <div class="stat-label">In Progress</div>
                     </div>
                 </div>
                 <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $resolved_count; ?></div>
                         <div class="stat-label">Resolved</div>
                     </div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $high_priority_count; ?></div>
                         <div class="stat-label">High Priority</div>
                     </div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-times"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-calendar-times"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $overdue_count; ?></div>
                         <div class="stat-label">Overdue</div>
@@ -1387,26 +1411,22 @@ try {
                 </div>
             </div>
 
-            <!-- Quick Status Summary -->
-            <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
+            <!-- Quick Status Bar -->
+            <div class="quick-status-bar">
                 <a href="?status=open<?php echo $priority_filter !== 'all' ? '&priority=' . $priority_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
-                   class="btn btn-outline btn-sm <?php echo $status_filter === 'open' ? 'active' : ''; ?>" 
-                   style="text-decoration: none;">
+                   class="status-chip <?php echo $status_filter === 'open' ? 'active' : ''; ?>">
                     <i class="fas fa-clock"></i> Open (<?php echo $open_tickets_count; ?>)
                 </a>
                 <a href="?status=in_progress<?php echo $priority_filter !== 'all' ? '&priority=' . $priority_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
-                   class="btn btn-outline btn-sm <?php echo $status_filter === 'in_progress' ? 'active' : ''; ?>" 
-                   style="text-decoration: none;">
+                   class="status-chip <?php echo $status_filter === 'in_progress' ? 'active' : ''; ?>">
                     <i class="fas fa-spinner"></i> In Progress (<?php echo $in_progress_count; ?>)
                 </a>
                 <a href="?status=resolved<?php echo $priority_filter !== 'all' ? '&priority=' . $priority_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
-                   class="btn btn-outline btn-sm <?php echo $status_filter === 'resolved' ? 'active' : ''; ?>" 
-                   style="text-decoration: none;">
+                   class="status-chip <?php echo $status_filter === 'resolved' ? 'active' : ''; ?>">
                     <i class="fas fa-check-circle"></i> Resolved (<?php echo $resolved_count; ?>)
                 </a>
                 <a href="?priority=high<?php echo $status_filter !== 'all' ? '&status=' . $status_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
-                   class="btn btn-outline btn-sm <?php echo $priority_filter === 'high' ? 'active' : ''; ?>" 
-                   style="text-decoration: none; border-color: var(--danger); color: var(--danger);">
+                   class="status-chip high-priority <?php echo $priority_filter === 'high' ? 'active' : ''; ?>">
                     <i class="fas fa-exclamation-triangle"></i> High Priority (<?php echo $high_priority_count; ?>)
                 </a>
             </div>
@@ -1462,25 +1482,12 @@ try {
                     <h3>
                         Student Tickets 
                         <?php if ($status_filter !== 'all' || $priority_filter !== 'all' || $category_filter !== 'all' || !empty($search_query)): ?>
-                            <small style="font-size: 0.8rem; color: var(--dark-gray); font-weight: normal;">
-                                (Filtered: <?php echo $total_tickets; ?> found)
-                                <?php if ($status_filter !== 'all'): ?> • Status: <?php echo ucfirst($status_filter); ?><?php endif; ?>
-                                <?php if ($priority_filter !== 'all'): ?> • Priority: <?php echo ucfirst($priority_filter); ?><?php endif; ?>
-                                <?php if ($category_filter !== 'all'): ?> • Category: <?php 
-                                    $category_name = 'Unknown';
-                                    foreach ($categories as $cat) {
-                                        if ($cat['id'] == $category_filter) {
-                                            $category_name = $cat['name'];
-                                            break;
-                                        }
-                                    }
-                                    echo $category_name;
-                                ?><?php endif; ?>
-                                <?php if (!empty($search_query)): ?> • Search: "<?php echo htmlspecialchars($search_query); ?>"<?php endif; ?>
+                            <small style="font-size: 0.7rem; color: var(--dark-gray); font-weight: normal;">
+                                (Filtered: <?php echo $total_tickets_count; ?> found)
                             </small>
                         <?php else: ?>
-                            <small style="font-size: 0.8rem; color: var(--dark-gray); font-weight: normal;">
-                                (<?php echo $total_tickets; ?> total)
+                            <small style="font-size: 0.7rem; color: var(--dark-gray); font-weight: normal;">
+                                (<?php echo $total_tickets_count; ?> total)
                             </small>
                         <?php endif; ?>
                     </h3>
@@ -1490,49 +1497,51 @@ try {
                         </a>
                     </div>
                 </div>
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Student</th>
-                            <th>Subject</th>
-                            <th>Category</th>
-                            <th>Priority</th>
-                            <th>Status</th>
-                            <th>Assigned To</th>
-                            <th>Due Date</th>
-                            <th>Created</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (empty($tickets)): ?>
+                
+                <?php if (empty($tickets)): ?>
+                    <div class="empty-state">
+                        <i class="fas fa-inbox"></i>
+                        <p>No tickets found matching your criteria</p>
+                        <?php if ($status_filter !== 'all' || $priority_filter !== 'all' || $category_filter !== 'all' || !empty($search_query)): ?>
+                            <a href="tickets.php" class="btn btn-primary btn-sm" style="margin-top: 0.5rem;">Clear Filters</a>
+                        <?php endif; ?>
+                    </div>
+                <?php else: ?>
+                    <table class="table">
+                        <thead>
                             <tr>
-                                <td colspan="10" style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No tickets found matching your criteria</p>
-                                </td>
+                                <th>ID</th>
+                                <th>Student</th>
+                                <th>Subject</th>
+                                <th>Category</th>
+                                <th>Priority</th>
+                                <th>Status</th>
+                                <th>Assigned To</th>
+                                <th>Due Date</th>
+                                <th>Created</th>
+                                <th>Actions</th>
                             </tr>
-                        <?php else: ?>
+                        </thead>
+                        <tbody>
                             <?php foreach ($tickets as $ticket): ?>
                                 <tr>
                                     <td>#<?php echo $ticket['id']; ?></td>
                                     <td>
                                         <div><strong><?php echo htmlspecialchars($ticket['name']); ?></strong></div>
-                                        <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></div>
+                                        <div style="font-size: 0.65rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></div>
                                         <?php if ($ticket['department_name']): ?>
-                                            <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['department_name']); ?></div>
+                                            <div style="font-size: 0.65rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['department_name']); ?></div>
                                         <?php endif; ?>
                                     </td>
                                     <td style="max-width: 200px;">
                                         <div style="font-weight: 500;"><?php echo htmlspecialchars($ticket['subject']); ?></div>
                                         <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                            <?php echo strlen($ticket['description']) > 100 ? 
-                                                htmlspecialchars(substr($ticket['description'], 0, 100)) . '...' : 
+                                            <?php echo strlen($ticket['description']) > 80 ? 
+                                                htmlspecialchars(substr($ticket['description'], 0, 80)) . '...' : 
                                                 htmlspecialchars($ticket['description']); ?>
                                         </div>
                                     </td>
-                                    <td><?php echo htmlspecialchars($ticket['category_name']); ?></td>
+                                    <td><?php echo htmlspecialchars($ticket['category_name'] ?? 'Uncategorized'); ?></td>
                                     <td>
                                         <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
                                             <?php echo ucfirst($ticket['priority']); ?>
@@ -1549,16 +1558,20 @@ try {
                                         <?php else: ?>
                                             <span style="color: var(--dark-gray); font-style: italic;">Unassigned</span>
                                         <?php endif; ?>
-                                    </td>
+                                    </                                    </td>
                                     <td>
                                         <?php if ($ticket['due_date']): ?>
                                             <?php 
-                                            $due_date = new DateTime($ticket['due_date']);
-                                            $today = new DateTime();
-                                            $is_overdue = $due_date < $today && !in_array($ticket['status'], ['resolved', 'closed']);
+                                            try {
+                                                $due_date = new DateTime($ticket['due_date']);
+                                                $today = new DateTime();
+                                                $is_overdue = $due_date < $today && !in_array($ticket['status'], ['resolved', 'closed']);
+                                            } catch (Exception $e) {
+                                                $is_overdue = false;
+                                            }
                                             ?>
                                             <span style="color: <?php echo $is_overdue ? 'var(--danger)' : 'var(--text-dark)'; ?>;">
-                                                <?php echo $due_date->format('M j, Y'); ?>
+                                                <?php echo date('M j, Y', strtotime($ticket['due_date'])); ?>
                                                 <?php if ($is_overdue): ?>
                                                     <br><small style="color: var(--danger);">Overdue</small>
                                                 <?php endif; ?>
@@ -1573,7 +1586,7 @@ try {
                                             <button class="btn btn-outline btn-sm" onclick="viewTicket(<?php echo $ticket['id']; ?>)">
                                                 <i class="fas fa-eye"></i>
                                             </button>
-                                            <button class="btn btn-outline btn-sm" onclick="reassignTicket(<?php echo $ticket['id']; ?>, '<?php echo $ticket['assigned_name'] ?? 'Unassigned'; ?>')">
+                                            <button class="btn btn-outline btn-sm" onclick="reassignTicket(<?php echo $ticket['id']; ?>, '<?php echo addslashes($ticket['assigned_name'] ?? 'Unassigned'); ?>')">
                                                 <i class="fas fa-user-edit"></i>
                                             </button>
                                             <button class="btn btn-outline btn-sm" onclick="updateStatus(<?php echo $ticket['id']; ?>, '<?php echo $ticket['status']; ?>')">
@@ -1583,9 +1596,9 @@ try {
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
             </div>
 
             <!-- Pagination -->
@@ -1597,13 +1610,31 @@ try {
                         </a>
                     <?php endif; ?>
 
-                    <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                    <?php 
+                    $start_page = max(1, $current_page - 2);
+                    $end_page = min($total_pages, $current_page + 2);
+                    
+                    if ($start_page > 1): ?>
+                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => 1])); ?>" class="pagination-btn">1</a>
+                        <?php if ($start_page > 2): ?>
+                            <span class="pagination-btn">...</span>
+                        <?php endif; ?>
+                    <?php endif; ?>
+
+                    <?php for ($i = $start_page; $i <= $end_page; $i++): ?>
                         <?php if ($i == $current_page): ?>
                             <span class="pagination-btn active"><?php echo $i; ?></span>
                         <?php else: ?>
                             <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" class="pagination-btn"><?php echo $i; ?></a>
                         <?php endif; ?>
                     <?php endfor; ?>
+
+                    <?php if ($end_page < $total_pages): ?>
+                        <?php if ($end_page < $total_pages - 1): ?>
+                            <span class="pagination-btn">...</span>
+                        <?php endif; ?>
+                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $total_pages])); ?>" class="pagination-btn"><?php echo $total_pages; ?></a>
+                    <?php endif; ?>
 
                     <?php if ($current_page < $total_pages): ?>
                         <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $current_page + 1])); ?>" class="pagination-btn">
@@ -1699,13 +1730,58 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active');
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+            });
+        }
+
         // Modal Functions
         function openModal(modalId) {
-            document.getElementById(modalId).style.display = 'flex';
+            document.getElementById(modalId).classList.add('active');
         }
 
         function closeModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
+            document.getElementById(modalId).classList.remove('active');
         }
 
         function reassignTicket(ticketId, currentAssignee) {
@@ -1716,8 +1792,9 @@ try {
 
         function updateStatus(ticketId, currentStatus) {
             document.getElementById('statusTicketId').value = ticketId;
-            document.getElementById('currentStatus').value = currentStatus.replace('_', ' ');
-            document.querySelector('select[name="new_status"]').value = currentStatus;
+            document.getElementById('currentStatus').value = currentStatus.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const select = document.querySelector('#statusModal select[name="new_status"]');
+            if (select) select.value = currentStatus;
             openModal('statusModal');
         }
 
@@ -1728,9 +1805,21 @@ try {
         // Close modal when clicking outside
         window.onclick = function(event) {
             if (event.target.classList.contains('modal')) {
-                event.target.style.display = 'none';
+                event.target.classList.remove('active');
             }
         }
+
+        // Auto-hide alerts after 5 seconds
+        const alerts = document.querySelectorAll('.alert');
+        alerts.forEach(alert => {
+            setTimeout(() => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.3s ease';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 300);
+            }, 5000);
+        });
     </script>
 </body>
 </html>

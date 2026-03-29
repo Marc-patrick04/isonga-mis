@@ -10,19 +10,50 @@ define('SMTP_FROM_NAME', 'Isonga RPSU Management System');
 define('SMTP_USER', 'marcpatrick004@gmail.com');
 define('SMTP_PASSWORD', 'mcgjkmjmccphpsvz'); // App password without spaces
 
-// PHPMailer includes - FIXED PATH (files are in src folder)
-require_once __DIR__ . '/../includes/PHPMailer/src/Exception.php';
-require_once __DIR__ . '/../includes/PHPMailer/src/PHPMailer.php';
-require_once __DIR__ . '/../includes/PHPMailer/src/SMTP.php';
+// PHPMailer includes - Check multiple possible paths
+$phpmailer_paths = [
+    __DIR__ . '/../includes/PHPMailer/src/Exception.php',
+    __DIR__ . '/../vendor/phpmailer/phpmailer/src/Exception.php',
+    __DIR__ . '/../lib/PHPMailer/src/Exception.php'
+];
+
+$phpmailer_found = false;
+foreach ($phpmailer_paths as $path) {
+    if (file_exists($path)) {
+        require_once str_replace('Exception.php', 'Exception.php', $path);
+        require_once str_replace('Exception.php', 'PHPMailer.php', $path);
+        require_once str_replace('Exception.php', 'SMTP.php', $path);
+        $phpmailer_found = true;
+        break;
+    }
+}
+
+if (!$phpmailer_found) {
+    // Fallback: try to include if using composer autoload
+    if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+        require_once __DIR__ . '/../vendor/autoload.php';
+        $phpmailer_found = true;
+    }
+}
+
+if (!$phpmailer_found) {
+    error_log("PHPMailer not found! Please install via composer or download manually.");
+}
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\SMTP;
 use PHPMailer\PHPMailer\Exception;
 
 /**
- * Core email sending function
+ * Core email sending function (renamed from sendEmailCore for compatibility)
  */
-function sendEmailCore($to, $subject, $body, $altBody = '') {
+function sendEmail($to, $subject, $body, $altBody = '') {
+    // Check if PHPMailer is available
+    if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+        error_log("PHPMailer not available, falling back to mail() function");
+        return sendEmailWithMail($to, $subject, $body, $altBody);
+    }
+    
     $mail = new PHPMailer(true);
     
     try {
@@ -35,6 +66,13 @@ function sendEmailCore($to, $subject, $body, $altBody = '') {
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = SMTP_PORT;
         
+        // Add timeout and keepalive settings
+        $mail->Timeout = 30;
+        $mail->SMTPKeepAlive = true;
+        
+        // Debug mode (set to 0 for production, 2 for debugging)
+        $mail->SMTPDebug = 0;
+        
         // Recipients
         $mail->setFrom(SMTP_FROM_EMAIL, SMTP_FROM_NAME);
         $mail->addAddress($to);
@@ -46,11 +84,32 @@ function sendEmailCore($to, $subject, $body, $altBody = '') {
         $mail->AltBody = $altBody ?: strip_tags($body);
         
         $mail->send();
+        error_log("Email sent successfully to: $to - Subject: $subject");
         return ['success' => true, 'message' => 'Email sent successfully', 'to' => $to];
         
     } catch (Exception $e) {
         error_log("Email sending failed to $to: " . $mail->ErrorInfo);
-        return ['success' => false, 'message' => $mail->ErrorInfo, 'to' => $to];
+        // Fallback to mail() function
+        return sendEmailWithMail($to, $subject, $body, $altBody);
+    }
+}
+
+/**
+ * Fallback email function using PHP mail()
+ */
+function sendEmailWithMail($to, $subject, $body, $altBody = '') {
+    $headers = "MIME-Version: 1.0" . "\r\n";
+    $headers .= "Content-type:text/html;charset=UTF-8" . "\r\n";
+    $headers .= "From: " . SMTP_FROM_NAME . " <" . SMTP_FROM_EMAIL . ">" . "\r\n";
+    
+    $result = mail($to, $subject, $body, $headers);
+    
+    if ($result) {
+        error_log("Mail sent successfully to: $to using mail() function");
+        return ['success' => true, 'message' => 'Email sent via mail()', 'to' => $to];
+    } else {
+        error_log("Mail failed to send to: $to using mail() function");
+        return ['success' => false, 'message' => 'mail() function returned false', 'to' => $to];
     }
 }
 
@@ -65,7 +124,7 @@ function getRoleEmailFromDB($role) {
         $stmt = $pdo->prepare("
             SELECT email, full_name 
             FROM users 
-            WHERE role = ? AND status = 'active' 
+            WHERE role = ? AND status = 'active' AND email IS NOT NULL AND email != ''
             LIMIT 1
         ");
         $stmt->execute([$role]);
@@ -82,7 +141,7 @@ function getRoleEmailFromDB($role) {
         $stmt = $pdo->prepare("
             SELECT email, name 
             FROM committee_members 
-            WHERE role = ? AND status = 'active' 
+            WHERE role = ? AND status = 'active' AND email IS NOT NULL AND email != ''
             LIMIT 1
         ");
         $stmt->execute([$role]);
@@ -96,6 +155,7 @@ function getRoleEmailFromDB($role) {
         }
         
         // Fallback to default
+        error_log("No email found for role: $role, using default");
         return [
             'email' => SMTP_FROM_EMAIL,
             'name' => ucwords(str_replace('_', ' ', $role))
@@ -120,7 +180,7 @@ function getUsersByRole($role) {
         $stmt = $pdo->prepare("
             SELECT id, email, full_name 
             FROM users 
-            WHERE role = ? AND status = 'active'
+            WHERE role = ? AND status = 'active' AND email IS NOT NULL AND email != ''
         ");
         $stmt->execute([$role]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -135,7 +195,7 @@ function getUsersByRole($role) {
  */
 function sendEmailToRole($role, $subject, $body, $altBody = '') {
     $role_email = getRoleEmailFromDB($role);
-    return sendEmailCore($role_email['email'], $subject, $body, $altBody);
+    return sendEmail($role_email['email'], $subject, $body, $altBody);
 }
 
 /**
@@ -145,17 +205,17 @@ function sendEmailToAllRole($role, $subject, $body, $altBody = '') {
     $users = getUsersByRole($role);
     $results = [];
     
-    foreach ($users as $user) {
-        if (!empty($user['email'])) {
-            $result = sendEmailCore($user['email'], $subject, $body, $altBody);
-            $results[$user['id']] = $result;
-        }
-    }
-    
-    // If no users found, send to default email
-    if (empty($results)) {
+    if (empty($users)) {
+        // If no users found, send to default email
         $default_email = getRoleEmailFromDB($role);
-        $results['default'] = sendEmailCore($default_email['email'], $subject, $body, $altBody);
+        $results['default'] = sendEmail($default_email['email'], $subject, $body, $altBody);
+    } else {
+        foreach ($users as $user) {
+            if (!empty($user['email'])) {
+                $result = sendEmail($user['email'], $subject, $body, $altBody);
+                $results[$user['id']] = $result;
+            }
+        }
     }
     
     return $results;
@@ -185,7 +245,7 @@ function sendEmailToUser($user_id, $subject, $body, $altBody = '') {
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($user && !empty($user['email'])) {
-            return sendEmailCore($user['email'], $subject, $body, $altBody);
+            return sendEmail($user['email'], $subject, $body, $altBody);
         }
         
         return ['success' => false, 'message' => 'User not found or no email'];
@@ -288,7 +348,7 @@ function sendEmailToStudent($student_id, $subject, $message_body, $link = null) 
         </body>
         </html>';
         
-        return sendEmailCore($student['email'], $subject, $body);
+        return sendEmail($student['email'], $subject, $body);
         
     } catch (PDOException $e) {
         error_log("Failed to send email to student: " . $e->getMessage());

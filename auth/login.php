@@ -43,7 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$email]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
             
-            if ($user && $password === $user['password']) {
+            // Use password_verify for hashed passwords
+            if ($user && password_verify($password, $user['password'])) {
                 // Login successful
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['email'] = $user['email'];
@@ -69,6 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[] = "Invalid email or password";
             }
         } catch (PDOException $e) {
+            error_log("Login error: " . $e->getMessage());
             $errors[] = "Login failed. Please try again.";
         }
     }
@@ -96,13 +98,17 @@ function getDashboardUrl($role) {
         'secretary_arbitration' => '../secretary_arbitration/dashboard.php'
     ];
     
-    return $rolePaths[$role] ?? '../dashboard.php';
+    return $rolePaths[$role] ?? '../index.php';
 }
 
 function recordLoginActivity($pdo, $userId = null, $success = true, $email = null) {
-    $stmt = $pdo->prepare("INSERT INTO login_activities (user_id, ip_address, user_agent, login_time, success, failure_reason) VALUES (?, ?, ?, NOW(), ?, ?)");
-    $failure_reason = $success ? null : 'Invalid credentials for email: ' . $email;
-    $stmt->execute([$userId, $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $success ? 1 : 0, $failure_reason]);
+    try {
+        $stmt = $pdo->prepare("INSERT INTO login_activities (user_id, ip_address, user_agent, login_time, success, failure_reason) VALUES (?, ?, ?, NOW(), ?, ?)");
+        $failure_reason = $success ? null : 'Invalid credentials for email: ' . $email;
+        $stmt->execute([$userId, $_SERVER['REMOTE_ADDR'] ?? 'unknown', $_SERVER['HTTP_USER_AGENT'] ?? 'unknown', $success ? 1 : 0, $failure_reason]);
+    } catch (PDOException $e) {
+        error_log("Failed to record login activity: " . $e->getMessage());
+    }
 }
 ?>
 
@@ -579,7 +585,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
                 </div>
             <?php endif; ?>
 
-            <form method="POST" action="login.php">
+            <form method="POST" action="login.php" id="loginForm">
                 <div class="input-group">
                     <i class="fas fa-envelope"></i>
                     <input type="email" id="email" name="email" 
@@ -598,7 +604,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
                     </button>
                 </div>
 
-                <button type="submit" class="btn btn-primary">
+                <button type="submit" class="btn btn-primary" id="loginBtn">
                     <i class="fas fa-sign-in-alt"></i> Sign In
                 </button>
             </form>
@@ -646,6 +652,17 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
             }
         });
 
+        // Add loading state on form submit
+        const loginForm = document.getElementById('loginForm');
+        const loginBtn = document.getElementById('loginBtn');
+        
+        if (loginForm) {
+            loginForm.addEventListener('submit', function() {
+                loginBtn.disabled = true;
+                loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
+            });
+        }
+
         // Add focus effects to inputs
         document.querySelectorAll('input').forEach(input => {
             input.addEventListener('focus', function() {
@@ -656,6 +673,24 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
                 this.parentElement.classList.remove('focused');
             });
         });
+
+        // Clear error messages when typing
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        
+        function clearErrors() {
+            const errorAlert = document.querySelector('.alert-danger');
+            if (errorAlert) {
+                errorAlert.remove();
+            }
+        }
+        
+        if (emailInput) {
+            emailInput.addEventListener('input', clearErrors);
+        }
+        if (passwordInput) {
+            passwordInput.addEventListener('input', clearErrors);
+        }
     </script>
 </body>
 </html>

@@ -82,15 +82,16 @@ try {
     
     // Academic reports for activities
     try {
-        $stmt = $pdo->query("
+        $stmt = $pdo->prepare("
             SELECT r.*, u.full_name, rt.name as template_name
             FROM reports r 
             JOIN users u ON r.user_id = u.id 
             LEFT JOIN report_templates rt ON r.template_id = rt.id
-            WHERE r.report_type = 'academic' OR r.user_id = $user_id
+            WHERE r.report_type = 'academic' OR r.user_id = ?
             ORDER BY r.created_at DESC 
             LIMIT 5
         ");
+        $stmt->execute([$user_id]);
         $academic_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
         error_log("Academic activities query error: " . $e->getMessage());
@@ -163,7 +164,7 @@ try {
         $high_priority_academic = $stmt->fetch(PDO::FETCH_ASSOC)['high_priority'];
         
         // Overdue academic tickets
-        $stmt = $pdo->query("SELECT COUNT(*) as overdue_academic FROM tickets WHERE category_id = 1 AND due_date < CURDATE() AND status NOT IN ('resolved', 'closed')");
+        $stmt = $pdo->query("SELECT COUNT(*) as overdue_academic FROM tickets WHERE category_id = 1 AND due_date < CURRENT_DATE AND status NOT IN ('resolved', 'closed')");
         $overdue_academic = $stmt->fetch(PDO::FETCH_ASSOC)['overdue_academic'];
         
     } catch (PDOException $e) {
@@ -210,7 +211,7 @@ try {
         SELECT ae.*, u.full_name as created_by_name
         FROM academic_events ae
         LEFT JOIN users u ON ae.created_by = u.id
-        WHERE ae.event_date = CURDATE() AND ae.event_type IN ('exam', 'workshop', 'deadline')
+        WHERE ae.event_date = CURRENT_DATE AND ae.event_type IN ('exam', 'workshop', 'deadline')
         ORDER BY ae.start_time
         LIMIT 3
     ");
@@ -1020,59 +1021,184 @@ try {
             text-transform: capitalize;
         }
 
-        /* Responsive */
+        /* =============================================
+           RESPONSIVE — mobile-first breakpoints
+        ============================================= */
+
+        /* Hamburger button (hidden on desktop) */
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+            width: 44px;
+            height: 44px;
+            background: var(--light-gray);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            padding: 10px;
+            transition: var(--transition);
+        }
+        .hamburger span {
+            display: block;
+            height: 2px;
+            background: var(--text-dark);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+        .hamburger:hover { background: var(--academic-primary); }
+        .hamburger:hover span { background: #fff; }
+
+        /* Sidebar overlay for mobile */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        /* Table wrapper — prevent horizontal page overflow */
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* ── 1280 px ── narrow desktop */
+        @media (max-width: 1280px) {
+            .stats-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        /* ── 1024 px ── small laptop / large tablet landscape */
         @media (max-width: 1024px) {
             .content-grid {
                 grid-template-columns: 1fr;
             }
-            
             .dashboard-container {
                 grid-template-columns: 200px 1fr;
             }
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .brand-text h1 {
+                font-size: 1.05rem;
+            }
         }
 
+        /* ── 768 px ── tablet portrait */
         @media (max-width: 768px) {
+            /* Show hamburger, hide sidebar inline */
+            .hamburger { display: flex; }
+
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            
+
+            /* Sidebar becomes a slide-in drawer */
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 80px;
+                left: 0;
+                width: 260px;
+                height: calc(100vh - 80px);
+                z-index: 200;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: var(--shadow-lg);
             }
-            
+            .sidebar.open { transform: translateX(0); }
+
+            .main-content {
+                height: auto;
+                overflow-y: visible;
+            }
+
             .stats-grid {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
-            
+
             .quick-actions {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .nav-container { padding: 0 1rem; }
+            .user-details { display: none; }
+
+            .welcome-section h1 {
+                font-size: 1.15rem;
             }
-            
-            .user-details {
-                display: none;
+
+            /* Table cells — truncate long text on tablet */
+            .table td, .table th {
+                padding: 0.6rem 0.5rem;
+                font-size: 0.75rem;
             }
+
+            /* Header height adjustment */
+            .header { height: 70px; }
+            .dashboard-container { min-height: calc(100vh - 70px); }
         }
 
+        /* ── 480 px ── large phone */
         @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
+            .header { height: 64px; padding: 0; }
+            .dashboard-container { min-height: calc(100vh - 64px); }
+            .sidebar { top: 64px; height: calc(100vh - 64px); }
+
+            .stats-grid { grid-template-columns: 1fr; }
+
+            .quick-actions { grid-template-columns: 1fr 1fr; }
+
+            .main-content { padding: 0.875rem; }
+
+            .brand-text h1 { font-size: 0.95rem; }
+
+            /* Logo: hide one image on very small screens */
+            .logos img:not(:first-child) { display: none; }
+
+            .welcome-section h1 {
+                font-size: 1rem;
+                line-height: 1.4;
             }
-            
-            .main-content {
-                padding: 1rem;
-            }
+            .welcome-section p { font-size: 0.8rem; }
+
+            /* Cards take full width */
+            .card { border-radius: 6px; }
+            .card-body { padding: 0.875rem; }
+
+            /* Stat card compact */
+            .stat-card { padding: 0.75rem; gap: 0.75rem; }
+            .stat-number { font-size: 1.25rem; }
+
+            /* Action buttons compact */
+            .action-btn { padding: 0.75rem 0.5rem; }
+            .action-btn i { font-size: 1rem; }
+        }
+
+        /* ── 360 px ── small phone */
+        @media (max-width: 360px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .quick-actions { grid-template-columns: 1fr; }
+            .logout-btn span { display: none; }
         }
     </style>
 </head>
 <body>
+    <!-- Sidebar overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
+                    <span></span><span></span><span></span>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1136,7 +1262,7 @@ try {
                 FROM meeting_attendees ma 
                 JOIN meetings m ON ma.meeting_id = m.id 
                 WHERE ma.user_id = ? 
-                AND m.meeting_date >= CURDATE() 
+                AND m.meeting_date >= CURRENT_DATE 
                 AND m.status = 'scheduled'
                 AND ma.attendance_status = 'invited'
             ");
@@ -1335,6 +1461,7 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
+                            <div class="table-responsive">
                             <table class="table">
                                 <thead>
                                     <tr>
@@ -1373,6 +1500,7 @@ try {
                                     <?php endif; ?>
                                 </tbody>
                             </table>
+                            </div><!-- /.table-responsive -->
                         </div>
                     </div>
 
@@ -1393,6 +1521,7 @@ try {
                                     <p>No academic clubs found</p>
                                 </div>
                             <?php else: ?>
+                                <div class="table-responsive">
                                 <table class="table">
                                     <thead>
                                         <tr>
@@ -1419,6 +1548,7 @@ try {
                                         <?php endforeach; ?>
                                     </tbody>
                                 </table>
+                                </div><!-- /.table-responsive -->
                             <?php endif; ?>
                         </div>
                     </div>
@@ -1502,7 +1632,7 @@ try {
                 JOIN meetings m ON ma.meeting_id = m.id 
                 JOIN users u ON m.chairperson_id = u.id
                 WHERE ma.user_id = ? 
-                AND m.meeting_date >= CURDATE() 
+                AND m.meeting_date >= CURRENT_DATE 
                 AND m.status = 'scheduled'
                 ORDER BY m.meeting_date, m.start_time 
                 LIMIT 3
@@ -1628,12 +1758,12 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
+        // ── Dark Mode Toggle ──────────────────────────────────────
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        const savedTheme = localStorage.getItem('theme') ||
+            (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
             themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -1646,13 +1776,54 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh dashboard every 3 minutes
-        setInterval(() => {
-            window.location.reload();
-        }, 180000);
+        // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
+        const hamburgerBtn  = document.getElementById('hamburgerBtn');
+        const sidebar       = document.querySelector('.sidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
 
-        // Add loading animations
-        document.addEventListener('DOMContentLoaded', function() {
+        function openSidebar() {
+            sidebar.classList.add('open');
+            sidebarOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden'; // prevent background scroll
+        }
+
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        if (hamburgerBtn) {
+            hamburgerBtn.addEventListener('click', () => {
+                sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+            });
+        }
+
+        if (sidebarOverlay) {
+            sidebarOverlay.addEventListener('click', closeSidebar);
+        }
+
+        // Close sidebar when a menu link is tapped on mobile
+        document.querySelectorAll('.sidebar .menu-item a').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 768) closeSidebar();
+            });
+        });
+
+        // Re-show sidebar on desktop resize (reset any mobile state)
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        });
+
+        // ── Auto-refresh every 3 minutes ──────────────────────────
+        setInterval(() => { window.location.reload(); }, 180000);
+
+        // ── Card entrance animations ───────────────────────────────
+        document.addEventListener('DOMContentLoaded', function () {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
                 card.style.animationDelay = `${index * 0.1}s`;

@@ -974,37 +974,208 @@ if (isset($_SESSION['error'])) {
             margin-top: 2rem;
         }
 
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .messages-container {
-                grid-template-columns: 300px 1fr;
-            }
+        /* ── Mobile Nav Overlay ── */
+        .mobile-nav-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+            backdrop-filter: blur(2px);
+        }
+        .mobile-nav-overlay.active { display: block; }
+
+        /* ── Hamburger Button ── */
+        .hamburger-btn {
+            display: none;
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: var(--light-gray);
+            border-radius: 50%;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+        .hamburger-btn:hover {
+            background: var(--primary-blue);
+            color: white;
         }
 
-        @media (max-width: 768px) {
+        /* ── Back-to-list button (mobile chat view) ── */
+        .back-to-list-btn {
+            display: none;
+            align-items: center;
+            gap: 0.5rem;
+            background: none;
+            border: none;
+            color: var(--primary-blue);
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 0.5rem 0;
+            margin-bottom: 0.25rem;
+        }
+
+        /* ── Sidebar Drawer ── */
+        .sidebar { transition: transform 0.3s ease; }
+
+        /* ── Tablet & below ── */
+        @media (max-width: 900px) {
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 260px;
+                height: 100vh;
+                z-index: 200;
+                transform: translateX(-100%);
+                padding-top: 1rem;
+                box-shadow: var(--shadow-lg);
             }
-            
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .hamburger-btn {
+                display: flex;
+            }
+
+            .main-content {
+                height: auto;
+                min-height: calc(100vh - 80px);
+                padding: 1rem;
+            }
+
             .messages-container {
-                grid-template-columns: 1fr;
-                height: calc(100vh - 140px);
+                grid-template-columns: 300px 1fr;
+                height: calc(100vh - 112px);
             }
-            
-            .conversations-sidebar {
-                display: none;
-            }
-            
+        }
+
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .messages-container {
+                grid-template-columns: 1fr;
+                height: calc(100vh - 100px);
+                position: relative;
+            }
+
+            /* Default: show conversations list, hide chat */
+            .conversations-sidebar {
+                position: absolute;
+                inset: 0;
+                z-index: 1;
+                background: var(--white);
+                transition: transform 0.3s ease;
+            }
+
+            .chat-area {
+                position: absolute;
+                inset: 0;
+                z-index: 2;
+                background: var(--white);
+                transform: translateX(100%);
+                transition: transform 0.3s ease;
+            }
+
+            /* When a conversation is open: slide chat in, slide list out */
+            .messages-container.chat-open .conversations-sidebar {
+                transform: translateX(-100%);
+            }
+
+            .messages-container.chat-open .chat-area {
+                transform: translateX(0);
+            }
+
+            .back-to-list-btn {
+                display: flex;
+            }
+
+            .chat-header {
+                padding: 0.75rem 1rem;
+            }
+
+            .message {
+                max-width: 85%;
+            }
+
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
+            }
+
+            .modal-actions {
+                flex-direction: column-reverse;
+            }
+
+            .modal-actions .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .toast {
+                right: 1rem;
+                left: 1rem;
+                max-width: none;
+                transform: translateY(-80px);
+            }
+
+            .toast.show {
+                transform: translateY(0);
+            }
+        }
+
+        /* ── Small phones ── */
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .header {
+                height: 68px;
+            }
+
+            .messages-container {
+                height: calc(100vh - 88px);
+            }
+
+            .logos .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .sidebar-header h2 {
+                font-size: 1rem;
+            }
+
+            .message {
+                max-width: 90%;
             }
         }
     </style>
@@ -1014,6 +1185,9 @@ if (isset($_SESSION['error'])) {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1049,6 +1223,9 @@ if (isset($_SESSION['error'])) {
             </div>
         </div>
     </header>
+
+    <!-- Mobile Nav Overlay -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
@@ -1240,6 +1417,9 @@ if (isset($_SESSION['error'])) {
                     <?php if ($current_conversation): ?>
                         <div class="chat-header">
                             <div>
+                                <button class="back-to-list-btn" id="backToListBtn">
+                                    <i class="fas fa-arrow-left"></i> All Messages
+                                </button>
                                 <div class="chat-title">
                                     <?php echo htmlspecialchars($current_conversation['title'] ?? 'Untitled Conversation'); ?>
                                     <?php if (($current_conversation['conversation_type'] ?? '') === 'announcement'): ?>
@@ -1376,16 +1556,72 @@ if (isset($_SESSION['error'])) {
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // Modal elements
+            // ── Modal elements ──
             const conversationModal = document.getElementById('newConversationModal');
             const messagesArea = document.getElementById('messagesArea');
             const messageInput = document.querySelector('.message-input');
+            const messagesContainer = document.querySelector('.messages-container');
 
-            // Open modal buttons
+            // ── Mobile Nav (hamburger sidebar) ──
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            const navSidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('mobileNavOverlay');
+
+            function openNavSidebar() {
+                navSidebar.classList.add('open');
+                overlay.classList.add('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeNavSidebar() {
+                navSidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+
+            hamburgerBtn?.addEventListener('click', () => {
+                navSidebar.classList.contains('open') ? closeNavSidebar() : openNavSidebar();
+            });
+
+            overlay?.addEventListener('click', closeNavSidebar);
+
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 900) closeNavSidebar();
+            });
+
+            // ── Mobile Conversation Panel Switching ──
+            // If a conversation is active on load, show the chat panel
+            <?php if ($conversation_id && $current_conversation): ?>
+            if (window.innerWidth <= 768) {
+                messagesContainer?.classList.add('chat-open');
+            }
+            <?php endif; ?>
+
+            // Conversation item clicks
+            document.querySelectorAll('.conversation-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    const conversationId = this.getAttribute('data-conversation-id');
+                    if (window.innerWidth <= 768) {
+                        // On mobile, navigate and the PHP will re-render with chat-open
+                        window.location.href = `messages.php?conversation=${conversationId}`;
+                    } else {
+                        window.location.href = `messages.php?conversation=${conversationId}`;
+                    }
+                });
+            });
+
+            // Back to list button
+            document.getElementById('backToListBtn')?.addEventListener('click', () => {
+                window.location.href = 'messages.php';
+            });
+
+            // ── Open modal buttons ──
             document.getElementById('newConversationBtn')?.addEventListener('click', () => conversationModal.style.display = 'block');
             document.getElementById('newConversationBtn2')?.addEventListener('click', () => conversationModal.style.display = 'block');
 
-            // Close modals
+            // ── Close modals ──
             document.querySelectorAll('.close, .close-modal').forEach(btn => {
                 btn.addEventListener('click', closeModals);
             });
@@ -1396,15 +1632,7 @@ if (isset($_SESSION['error'])) {
                 }
             });
 
-            // Conversation item clicks
-            document.querySelectorAll('.conversation-item').forEach(item => {
-                item.addEventListener('click', function() {
-                    const conversationId = this.getAttribute('data-conversation-id');
-                    window.location.href = `messages.php?conversation=${conversationId}`;
-                });
-            });
-
-            // Auto-resize textarea
+            // ── Auto-resize textarea ──
             if (messageInput) {
                 messageInput.addEventListener('input', function() {
                     this.style.height = 'auto';
@@ -1412,12 +1640,12 @@ if (isset($_SESSION['error'])) {
                 });
             }
 
-            // Auto-scroll to bottom of messages
+            // ── Auto-scroll to bottom of messages ──
             if (messagesArea) {
                 messagesArea.scrollTop = messagesArea.scrollHeight;
             }
 
-            // Dark mode toggle
+            // ── Dark mode toggle ──
             const themeToggle = document.getElementById('themeToggle');
             const body = document.body;
 
@@ -1436,7 +1664,6 @@ if (isset($_SESSION['error'])) {
                 });
             }
 
-            // Functions
             function closeModals() {
                 conversationModal.style.display = 'none';
             }

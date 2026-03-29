@@ -241,7 +241,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                 $staff_result = sendEmailCore($assignee['email'], $staff_subject, $staff_body);
                 if ($staff_result['success']) {
                     $staff_notification_sent = true;
-                    $staff_message = " Notification sent to assigned staff member.";
+                    $staff_message = " Sent.";
                     error_log("Staff notification sent to: " . $assignee['email']);
                 } else {
                     error_log("Failed to send staff notification: " . ($staff_result['message'] ?? 'Unknown'));

@@ -184,76 +184,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
     }
     
-    // Handle Bulk Actions
-    elseif ($_POST['action'] === 'bulk') {
-        $bulk_action = $_POST['bulk_action'];
-        $selected_ids = $_POST['selected_ids'] ?? [];
-        
-        if (!empty($selected_ids)) {
-            $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
-            
-            try {
-                if ($bulk_action === 'activate') {
-                    $stmt = $pdo->prepare("UPDATE clubs SET status = 'active' WHERE id IN ($placeholders)");
-                    $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " clubs activated.";
-                } elseif ($bulk_action === 'deactivate') {
-                    $stmt = $pdo->prepare("UPDATE clubs SET status = 'inactive' WHERE id IN ($placeholders)");
-                    $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " clubs deactivated.";
-                } elseif ($bulk_action === 'delete') {
-                    // Get logos to delete
-                    $stmt = $pdo->prepare("SELECT logo_url FROM clubs WHERE id IN ($placeholders)");
-                    $stmt->execute($selected_ids);
-                    $clubs_to_delete = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                    foreach ($clubs_to_delete as $club) {
-                        if (!empty($club['logo_url'])) {
-                            $logo_path = '../' . $club['logo_url'];
-                            if (file_exists($logo_path)) {
-                                unlink($logo_path);
-                            }
-                        }
-                    }
-                    
-                    $stmt = $pdo->prepare("DELETE FROM clubs WHERE id IN ($placeholders)");
-                    $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " clubs deleted.";
-                }
-                header("Location: clubs.php?msg=" . urlencode($message));
-                exit();
-            } catch (PDOException $e) {
-                $error = "Error performing bulk action: " . $e->getMessage();
-            }
-        } else {
-            $error = "No clubs selected.";
-        }
-    }
-    
-    // Handle Add Member
+    // Handle Add Member - Only allow existing students
     elseif ($_POST['action'] === 'add_member') {
         try {
             $club_id = $_POST['club_id'];
-            $reg_number = $_POST['reg_number'];
-            $name = $_POST['name'];
-            $email = $_POST['email'] ?? null;
-            $phone = $_POST['phone'] ?? null;
-            $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
-            $program_id = !empty($_POST['program_id']) ? $_POST['program_id'] : null;
-            $academic_year = $_POST['academic_year'] ?? null;
-            $role = $_POST['role'] ?? 'member';
+            $student_id = $_POST['student_id'];
             
-            // Check if member already exists
-            $stmt = $pdo->prepare("SELECT id FROM club_members WHERE club_id = ? AND reg_number = ?");
-            $stmt->execute([$club_id, $reg_number]);
-            if ($stmt->fetch()) {
-                throw new Exception("Member with registration number '$reg_number' is already in this club.");
+            // Get student details from users table
+            $stmt = $pdo->prepare("
+                SELECT id, reg_number, full_name, email, phone, department_id, program_id, academic_year 
+                FROM users 
+                WHERE id = ? AND role = 'student' AND status = 'active' AND deleted_at IS NULL
+            ");
+            $stmt->execute([$student_id]);
+            $student = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$student) {
+                throw new Exception("Student not found. Only existing students can be added to clubs.");
             }
             
-            // Get user_id if exists
-            $stmt = $pdo->prepare("SELECT id FROM users WHERE reg_number = ?");
-            $stmt->execute([$reg_number]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
-            $user_id_member = $user ? $user['id'] : null;
+            $reg_number = $student['reg_number'];
+            $name = $student['full_name'];
+            $email = $student['email'];
+            $phone = $student['phone'];
+            $department_id = $student['department_id'];
+            $program_id = $student['program_id'];
+            $academic_year = $student['academic_year'];
+            $role = $_POST['role'] ?? 'member';
+            
+            // Check if member already exists in this club
+            $stmt = $pdo->prepare("SELECT id FROM club_members WHERE club_id = ? AND (reg_number = ? OR user_id = ?)");
+            $stmt->execute([$club_id, $reg_number, $student_id]);
+            if ($stmt->fetch()) {
+                throw new Exception("This student is already a member of this club.");
+            }
             
             $stmt = $pdo->prepare("
                 INSERT INTO club_members (
@@ -264,7 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             
             $stmt->execute([
                 $club_id,
-                $user_id_member,
+                $student_id,
                 $reg_number,
                 $name,
                 $email,
@@ -295,19 +259,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         try {
             $member_id = $_POST['member_id'];
             $club_id = $_POST['club_id'];
-            $name = $_POST['name'];
-            $email = $_POST['email'] ?? null;
-            $phone = $_POST['phone'] ?? null;
-            $academic_year = $_POST['academic_year'] ?? null;
             $role = $_POST['role'];
             $status = $_POST['status'];
             
             $stmt = $pdo->prepare("
                 UPDATE club_members 
-                SET name = ?, email = ?, phone = ?, academic_year = ?, role = ?, status = ?, updated_at = NOW()
+                SET role = ?, status = ?, updated_at = NOW()
                 WHERE id = ?
             ");
-            $stmt->execute([$name, $email, $phone, $academic_year, $role, $status, $member_id]);
+            $stmt->execute([$role, $status, $member_id]);
             
             $message = "Member updated successfully!";
             header("Location: clubs.php?tab=members&club_id=" . $club_id . "&msg=" . urlencode($message));
@@ -337,6 +297,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         } catch (PDOException $e) {
             $error = "Error removing member: " . $e->getMessage();
             error_log("Member removal error: " . $e->getMessage());
+        }
+    }
+    
+    // Handle Bulk Actions for Clubs
+    elseif ($_POST['action'] === 'bulk') {
+        $bulk_action = $_POST['bulk_action'];
+        $selected_ids = $_POST['selected_ids'] ?? [];
+        
+        if (!empty($selected_ids)) {
+            $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
+            
+            try {
+                if ($bulk_action === 'activate') {
+                    $stmt = $pdo->prepare("UPDATE clubs SET status = 'active' WHERE id IN ($placeholders)");
+                    $stmt->execute($selected_ids);
+                    $message = count($selected_ids) . " clubs activated.";
+                } elseif ($bulk_action === 'deactivate') {
+                    $stmt = $pdo->prepare("UPDATE clubs SET status = 'inactive' WHERE id IN ($placeholders)");
+                    $stmt->execute($selected_ids);
+                    $message = count($selected_ids) . " clubs deactivated.";
+                } elseif ($bulk_action === 'delete') {
+                    // Get logos to delete
+                    $stmt = $pdo->prepare("SELECT logo_url FROM clubs WHERE id IN ($placeholders)");
+                    $stmt->execute($selected_ids);
+                    $clubs_to_delete = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($clubs_to_delete as $club) {
+                        if (!empty($club['logo_url'])) {
+                            $logo_path = '../' . $club['logo_url'];
+                            if (file_exists($logo_path)) {
+                                unlink($logo_path);
+                            }
+                        }
+                    }
+                    
+                    // Delete members first
+                    $stmt = $pdo->prepare("DELETE FROM club_members WHERE club_id IN ($placeholders)");
+                    $stmt->execute($selected_ids);
+                    
+                    $stmt = $pdo->prepare("DELETE FROM clubs WHERE id IN ($placeholders)");
+                    $stmt->execute($selected_ids);
+                    $message = count($selected_ids) . " clubs deleted.";
+                }
+                header("Location: clubs.php?msg=" . urlencode($message));
+                exit();
+            } catch (PDOException $e) {
+                $error = "Error performing bulk action: " . $e->getMessage();
+            }
+        } else {
+            $error = "No clubs selected.";
         }
     }
     
@@ -448,6 +457,51 @@ if (isset($_GET['get_member']) && isset($_GET['id'])) {
         $stmt->execute([$_GET['id']]);
         $member = $stmt->fetch(PDO::FETCH_ASSOC);
         echo json_encode($member);
+    } catch (PDOException $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit();
+}
+
+// Search student via AJAX - Only returns existing students
+if (isset($_GET['search_student']) && isset($_GET['query'])) {
+    header('Content-Type: application/json');
+    $query = trim($_GET['query']);
+    $club_id = isset($_GET['club_id']) ? (int)$_GET['club_id'] : 0;
+    
+    try {
+        $stmt = $pdo->prepare("
+            SELECT u.id, u.reg_number, u.full_name, u.email, u.phone, 
+                   u.department_id, u.program_id, u.academic_year,
+                   d.name as department_name, p.name as program_name
+            FROM users u
+            LEFT JOIN departments d ON u.department_id = d.id
+            LEFT JOIN programs p ON u.program_id = p.id
+            WHERE u.role = 'student' 
+            AND u.status = 'active' 
+            AND u.deleted_at IS NULL
+            AND (u.reg_number ILIKE ? OR u.full_name ILIKE ? OR u.email ILIKE ?)
+            LIMIT 10
+        ");
+        $search_term = "%$query%";
+        $stmt->execute([$search_term, $search_term, $search_term]);
+        $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Filter out students already in this club
+        if ($club_id > 0 && !empty($students)) {
+            $student_ids = array_column($students, 'id');
+            $placeholders = implode(',', array_fill(0, count($student_ids), '?'));
+            $stmt2 = $pdo->prepare("SELECT user_id FROM club_members WHERE club_id = ? AND user_id IN ($placeholders)");
+            $stmt2->execute(array_merge([$club_id], $student_ids));
+            $existing = $stmt2->fetchAll(PDO::FETCH_COLUMN);
+            
+            $students = array_filter($students, function($student) use ($existing) {
+                return !in_array($student['id'], $existing);
+            });
+            $students = array_values($students);
+        }
+        
+        echo json_encode($students);
     } catch (PDOException $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
@@ -611,13 +665,13 @@ if (isset($_GET['msg'])) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        /* All existing CSS styles remain the same */
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        /* Light Mode (Default) */
         :root {
             --primary: #0056b3;
             --primary-dark: #004080;
@@ -630,7 +684,6 @@ if (isset($_GET['msg'])) {
             --pink: #ec489a;
             --indigo: #6366f1;
             
-            /* Light Mode Colors */
             --bg-primary: #f4f6f9;
             --bg-secondary: #ffffff;
             --text-primary: #1f2937;
@@ -645,7 +698,6 @@ if (isset($_GET['msg'])) {
             --transition: all 0.3s ease;
         }
 
-        /* Dark Mode */
         body.dark-mode {
             --bg-primary: #111827;
             --bg-secondary: #1f2937;
@@ -914,6 +966,12 @@ if (isset($_GET['msg'])) {
         .btn-sm {
             padding: 0.3rem 0.6rem;
             font-size: 0.75rem;
+        }
+
+        .btn-secondary {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
         }
 
         /* Tabs */
@@ -1289,6 +1347,45 @@ if (isset($_GET['msg'])) {
         .role-badge.treasurer { background: rgba(16, 185, 129, 0.1); color: var(--success); }
         .role-badge.member { background: rgba(107, 114, 128, 0.1); color: var(--secondary); }
 
+        /* Status Badge */
+        .status-badge {
+            padding: 0.25rem 0.6rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: inline-block;
+        }
+
+        .status-badge.active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-badge.inactive {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-badge.graduated {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        body.dark-mode .status-badge.active {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--success);
+        }
+
+        body.dark-mode .status-badge.inactive {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+        }
+
+        body.dark-mode .status-badge.graduated {
+            background: rgba(245, 158, 11, 0.2);
+            color: var(--warning);
+        }
+
         /* Club Header for Members Tab */
         .club-header-info {
             background: var(--card-bg);
@@ -1341,6 +1438,56 @@ if (isset($_GET['msg'])) {
         .club-header-text p {
             font-size: 0.75rem;
             color: var(--text-secondary);
+        }
+
+        /* Student Search Styles */
+        .student-search-container {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+
+        .student-search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: var(--shadow-md);
+        }
+
+        .student-search-result {
+            padding: 0.75rem;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border-color);
+            transition: var(--transition);
+        }
+
+        .student-search-result:hover {
+            background: var(--bg-primary);
+        }
+
+        .student-result-name {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .student-result-details {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .selected-student-info {
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border-left: 3px solid var(--primary);
         }
 
         /* Modal */
@@ -1666,7 +1813,7 @@ if (isset($_GET['msg'])) {
                 <li class="menu-item"><a href="users.php"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>
-                  <li class="menu-item"><a href="representative.php"><i class="fas fa-user-check"></i> Class Representatives</a></li>
+                <li class="menu-item"><a href="representative.php"><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
                 <li class="menu-item"><a href="clubs.php" class="active"><i class="fas fa-chess-queen"></i> Clubs</a></li>
                 <li class="menu-item"><a href="associations.php"><i class="fas fa-handshake"></i> Associations</a></li>
@@ -2058,7 +2205,7 @@ if (isset($_GET['msg'])) {
         </div>
     </div>
 
-    <!-- Add/Edit Member Modal -->
+    <!-- Add/Edit Member Modal with Student Search -->
     <div id="memberModal" class="modal">
         <div class="modal-content" onclick="event.stopPropagation()">
             <div class="modal-header">
@@ -2069,70 +2216,55 @@ if (isset($_GET['msg'])) {
                 <input type="hidden" name="action" id="memberAction" value="add_member">
                 <input type="hidden" name="member_id" id="memberId" value="">
                 <input type="hidden" name="club_id" id="memberClubId" value="">
+                <input type="hidden" name="student_id" id="studentId" value="">
                 
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>Registration Number *</label>
-                        <input type="text" name="reg_number" id="member_reg_number" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Full Name *</label>
-                        <input type="text" name="name" id="member_name" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" name="email" id="member_email">
-                    </div>
-                    <div class="form-group">
-                        <label>Phone</label>
-                        <input type="text" name="phone" id="member_phone">
-                    </div>
-                    <div class="form-group">
-                        <label>Role</label>
-                        <select name="role" id="member_role">
-                            <?php foreach ($member_roles as $key => $role_name): ?>
-                                <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($role_name); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Academic Year</label>
-                        <input type="text" name="academic_year" id="member_academic_year" placeholder="e.g., Year 2">
-                    </div>
-                    <div class="form-group">
-                        <label>Department</label>
-                        <select name="department_id" id="member_department_id">
-                            <option value="">Select Department</option>
-                            <?php foreach ($departments as $dept): ?>
-                                <option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['name']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Program</label>
-                        <select name="program_id" id="member_program_id">
-                            <option value="">Select Program</option>
-                        </select>
-                    </div>
-                    <div class="form-group full-width">
-                        <label>Status</label>
-                        <select name="status" id="member_status">
-                            <option value="active">Active</option>
-                            <option value="inactive">Inactive</option>
-                            <option value="graduated">Graduated</option>
-                        </select>
-                    </div>
+                <div class="alert alert-info" style="margin-bottom: 1rem;">
+                    <i class="fas fa-info-circle"></i> <strong>Note:</strong> Only existing students can be added to clubs. 
+                    Search by registration number or name to find the student.
+                </div>
+                
+                <!-- Student Search Section -->
+                <div class="form-group student-search-container">
+                    <label>Search Student *</label>
+                    <input type="text" id="studentSearchInput" placeholder="Enter registration number or name..." autocomplete="off" required>
+                    <div id="studentSearchResults" class="student-search-results"></div>
+                </div>
+                
+                <div id="selectedStudentInfo" style="display: none;" class="selected-student-info">
+                    <strong><i class="fas fa-user-check"></i> Selected Student:</strong>
+                    <div id="studentDetails"></div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Role in Club</label>
+                    <select name="role" id="member_role" required>
+                        <?php foreach ($member_roles as $key => $role_name): ?>
+                            <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($role_name); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Status</label>
+                    <select name="status" id="member_status">
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="graduated">Graduated</option>
+                    </select>
                 </div>
                 
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeMemberModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Member</button>
+                    <button type="submit" class="btn btn-primary" id="submitMemberBtn" disabled>Add Member</button>
                 </div>
             </form>
         </div>
     </div>
 
     <script>
+        let searchTimeout;
+        let selectedStudent = null;
+        
         // Dark/Light Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
@@ -2232,13 +2364,34 @@ if (isset($_GET['msg'])) {
             }
         }
         
-        // Member Modal functions
+        // Member Modal functions with student search
         function openAddMemberModal(clubId) {
+            // Reset form
             document.getElementById('memberModalTitle').textContent = 'Add Member';
             document.getElementById('memberAction').value = 'add_member';
             document.getElementById('memberId').value = '';
             document.getElementById('memberClubId').value = clubId;
-            document.getElementById('memberForm').reset();
+            document.getElementById('studentId').value = '';
+            document.getElementById('member_role').value = 'member';
+            document.getElementById('member_status').value = 'active';
+            
+            // Reset student search
+            const studentSearch = document.getElementById('studentSearchInput');
+            if (studentSearch) studentSearch.value = '';
+            
+            const selectedInfo = document.getElementById('selectedStudentInfo');
+            if (selectedInfo) selectedInfo.style.display = 'none';
+            
+            const studentDetailsDiv = document.getElementById('studentDetails');
+            if (studentDetailsDiv) studentDetailsDiv.innerHTML = '';
+            
+            // Reset selected student
+            selectedStudent = null;
+            
+            // Disable submit button until student is selected
+            const submitBtn = document.getElementById('submitMemberBtn');
+            if (submitBtn) submitBtn.disabled = true;
+            
             document.getElementById('memberModal').classList.add('active');
             document.body.classList.add('modal-open');
         }
@@ -2255,18 +2408,27 @@ if (isset($_GET['msg'])) {
                     document.getElementById('memberAction').value = 'edit_member';
                     document.getElementById('memberId').value = member.id;
                     document.getElementById('memberClubId').value = clubId;
-                    document.getElementById('member_reg_number').value = member.reg_number || '';
-                    document.getElementById('member_name').value = member.name || '';
-                    document.getElementById('member_email').value = member.email || '';
-                    document.getElementById('member_phone').value = member.phone || '';
                     document.getElementById('member_role').value = member.role || 'member';
-                    document.getElementById('member_academic_year').value = member.academic_year || '';
                     document.getElementById('member_status').value = member.status || 'active';
                     
-                    if (member.department_id) {
-                        document.getElementById('member_department_id').value = member.department_id;
-                        loadProgramsForMember(member.department_id, member.program_id);
+                    // Hide student search section for edit
+                    const searchContainer = document.querySelector('.student-search-container');
+                    if (searchContainer) searchContainer.style.display = 'none';
+                    
+                    const selectedInfo = document.getElementById('selectedStudentInfo');
+                    const studentDetailsDiv = document.getElementById('studentDetails');
+                    if (selectedInfo) selectedInfo.style.display = 'block';
+                    if (studentDetailsDiv) {
+                        studentDetailsDiv.innerHTML = `
+                            <strong>${escapeHtml(member.name)}</strong><br>
+                            Reg: ${escapeHtml(member.reg_number)}<br>
+                            Email: ${escapeHtml(member.email || '-')}<br>
+                            Phone: ${escapeHtml(member.phone || '-')}
+                        `;
                     }
+                    
+                    const submitBtn = document.getElementById('submitMemberBtn');
+                    if (submitBtn) submitBtn.disabled = false;
                     
                     document.getElementById('memberModal').classList.add('active');
                     document.body.classList.add('modal-open');
@@ -2280,35 +2442,99 @@ if (isset($_GET['msg'])) {
         function closeMemberModal() {
             document.getElementById('memberModal').classList.remove('active');
             document.body.classList.remove('modal-open');
-        }
-        
-        // Load programs for member
-        function loadProgramsForMember(departmentId, selectedProgramId = null) {
-            if (!departmentId) {
-                document.getElementById('member_program_id').innerHTML = '<option value="">Select Program</option>';
-                return;
-            }
             
-            fetch(`clubs.php?get_programs=1&department_id=${departmentId}`)
-                .then(response => response.json())
-                .then(programs => {
-                    let options = '<option value="">Select Program</option>';
-                    if (!programs.error && programs.length > 0) {
-                        programs.forEach(program => {
-                            const selected = selectedProgramId == program.id ? 'selected' : '';
-                            options += `<option value="${program.id}" ${selected}>${escapeHtml(program.name)}</option>`;
-                        });
-                    }
-                    document.getElementById('member_program_id').innerHTML = options;
-                })
-                .catch(error => {
-                    console.error('Error loading programs:', error);
-                });
+            // Reset and show search container for next add
+            const searchContainer = document.querySelector('.student-search-container');
+            if (searchContainer) searchContainer.style.display = 'block';
         }
         
-        document.getElementById('member_department_id').addEventListener('change', function() {
-            loadProgramsForMember(this.value);
+        // Student Search Functionality
+        const studentSearchInput = document.getElementById('studentSearchInput');
+        const searchResults = document.getElementById('studentSearchResults');
+        const selectedStudentInfo = document.getElementById('selectedStudentInfo');
+        const studentDetails = document.getElementById('studentDetails');
+        const submitMemberBtn = document.getElementById('submitMemberBtn');
+        
+        if (studentSearchInput) {
+            studentSearchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                const query = this.value.trim();
+                const clubId = document.getElementById('memberClubId').value;
+                
+                if (query.length < 2) {
+                    if (searchResults) searchResults.style.display = 'none';
+                    return;
+                }
+                
+                searchTimeout = setTimeout(() => {
+                    fetch(`clubs.php?search_student=1&query=${encodeURIComponent(query)}&club_id=${clubId}`)
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.error) {
+                                console.error(data.error);
+                                return;
+                            }
+                            
+                            if (data.length === 0) {
+                                if (searchResults) {
+                                    searchResults.innerHTML = '<div class="student-search-result">No students found. <a href="students.php" style="color: var(--primary);">Add a student first</a></div>';
+                                    searchResults.style.display = 'block';
+                                }
+                                return;
+                            }
+                            
+                            if (searchResults) {
+                                searchResults.innerHTML = data.map(student => `
+                                    <div class="student-search-result" onclick="selectStudent(${student.id}, '${escapeHtml(student.full_name)}', '${escapeHtml(student.reg_number)}', '${escapeHtml(student.email)}', '${escapeHtml(student.phone)}', '${escapeHtml(student.department_name || '-')}', '${escapeHtml(student.program_name || '-')}', '${escapeHtml(student.academic_year || '-')}')">
+                                        <div class="student-result-name">${escapeHtml(student.full_name)}</div>
+                                        <div class="student-result-details">Reg: ${escapeHtml(student.reg_number)} | Email: ${escapeHtml(student.email)}</div>
+                                    </div>
+                                `).join('');
+                                searchResults.style.display = 'block';
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                        });
+                }, 300);
+            });
+        }
+        
+        // Close search results when clicking outside
+        document.addEventListener('click', function(e) {
+            if (studentSearchInput && searchResults && !studentSearchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                if (searchResults) searchResults.style.display = 'none';
+            }
         });
+        
+        function selectStudent(id, name, regNumber, email, phone, dept, program, year) {
+            selectedStudent = { id, name, regNumber, email, phone, dept, program, year };
+            
+            // Display selected student info
+            if (studentDetails) {
+                studentDetails.innerHTML = `
+                    <strong>${escapeHtml(name)}</strong><br>
+                    Reg: ${escapeHtml(regNumber)}<br>
+                    Email: ${escapeHtml(email)}<br>
+                    Phone: ${escapeHtml(phone || 'N/A')}<br>
+                    Department: ${escapeHtml(dept)}<br>
+                    Program: ${escapeHtml(program)}<br>
+                    Academic Year: ${escapeHtml(year)}
+                `;
+            }
+            if (selectedStudentInfo) selectedStudentInfo.style.display = 'block';
+            
+            // Set student_id field
+            const studentIdField = document.getElementById('studentId');
+            if (studentIdField) studentIdField.value = id;
+            
+            // Clear search and hide results
+            if (studentSearchInput) studentSearchInput.value = name;
+            if (searchResults) searchResults.style.display = 'none';
+            
+            // Enable submit button
+            if (submitMemberBtn) submitMemberBtn.disabled = false;
+        }
         
         function escapeHtml(text) {
             if (!text) return '';

@@ -46,8 +46,8 @@ function sendPresidentPendingApproval($transaction_id, $description, $amount, $r
                 </div>
                 <p>Please review this transaction:</p>
                 <p>
-                    <a href="http://localhost/isonga-mis/transactions.php?approve=' . $transaction_id . '" class="button">✅ Approve Transaction</a>
-                    <a href="http://localhost/isonga-mis/transactions.php?reject=' . $transaction_id . '" class="button button-danger">❌ Reject Transaction</a>
+                    <a href="http://localhost/isonga-mis/guild_president/finance.php?action=approve&id=' . $transaction_id . '" class="button">✅ Approve Transaction</a>
+                    <a href="#" class="button button-danger" onclick="showRejectionForm(' . $transaction_id . ')">❌ Reject Transaction</a>
                 </p>
             </div>
             <div class="footer">
@@ -96,7 +96,7 @@ function sendPresidentNewBudgetRequest($request_id, $committee, $amount, $purpos
                 <p><strong>Amount Requested:</strong> RWF ' . number_format($amount, 2) . '</p>
                 ' . $finance_html . '
                 <p><strong>Purpose:</strong> ' . htmlspecialchars($purpose) . '</p>
-                <p><a href="http://localhost/isonga-mis/committee_requests.php?view=' . $request_id . '">Review Request</a></p>
+                <p><a href="http://localhost/isonga-mis/guild_president/finance.php?view=budget&id=' . $request_id . '">Review Request</a></p>
             </div>
             <div class="footer">
                 <p>Isonga - RPSU Management System</p>
@@ -106,6 +106,188 @@ function sendPresidentNewBudgetRequest($request_id, $committee, $amount, $purpos
     </html>';
     
     return sendEmailToRole('guild_president', $subject, $body);
+}
+
+/**
+ * Send notification to requester that budget request was approved
+ */
+function sendBudgetRequestApprovalNotification($email, $name, $request_id, $title, $amount, $president_name) {
+    $subject = "✅ Budget Request #$request_id Approved by President";
+    
+    $body = '
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+            .highlight { background: #d4edda; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
+            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>✅ Budget Request Approved</h2>
+            </div>
+            <div class="content">
+                <p>Dear ' . htmlspecialchars($name) . ',</p>
+                <p>Your budget request has been approved by the Guild President.</p>
+                <div class="highlight">
+                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                    <p><strong>Title:</strong> ' . htmlspecialchars($title) . '</p>
+                    <p><strong>Approved Amount:</strong> RWF ' . number_format($amount, 2) . '</p>
+                    <p><strong>Approved By:</strong> ' . htmlspecialchars($president_name) . '</p>
+                </div>
+                <p>You can now proceed with the implementation as per your action plan.</p>
+            </div>
+            <div class="footer">
+                <p>Isonga - RPSU Management System</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+    
+    return sendEmail($email, $subject, $body);
+}
+
+/**
+ * Send notification to requester that budget request was rejected
+ */
+function sendBudgetRequestRejectionNotification($email, $name, $request_id, $title, $reason, $president_name) {
+    $subject = "📋 Budget Request #$request_id Update";
+    
+    $body = '
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+            .highlight { background: #f8d7da; padding: 15px; margin: 15px 0; border-left: 4px solid #dc3545; }
+            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>📋 Budget Request Update</h2>
+            </div>
+            <div class="content">
+                <p>Dear ' . htmlspecialchars($name) . ',</p>
+                <p>Thank you for your budget request submission. After careful review, the request could not be approved at this time.</p>
+                <div class="highlight">
+                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                    <p><strong>Title:</strong> ' . htmlspecialchars($title) . '</p>
+                    <p><strong>Reason for Rejection:</strong></p>
+                    <p>' . nl2br(htmlspecialchars($reason)) . '</p>
+                    <p><strong>Reviewed By:</strong> ' . htmlspecialchars($president_name) . '</p>
+                </div>
+                <p>If you have questions, please contact the Guild President\'s office.</p>
+            </div>
+            <div class="footer">
+                <p>Isonga - RPSU Management System</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+    
+    return sendEmail($email, $subject, $body);
+}
+
+/**
+ * Send notification to student that president approved their aid
+ */
+function sendStudentAidPresidentApproval($student_email, $student_name, $request_id, $title, $amount, $president_name) {
+    $subject = "✅ Financial Aid Request #$request_id Approved by President";
+    
+    $body = '
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+            .highlight { background: #d4edda; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
+            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>✅ Financial Aid Request Approved</h2>
+            </div>
+            <div class="content">
+                <p>Dear ' . htmlspecialchars($student_name) . ',</p>
+                <p>Great news! Your financial aid request has been approved by the Guild President.</p>
+                <div class="highlight">
+                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                    <p><strong>Title:</strong> ' . htmlspecialchars($title) . '</p>
+                    <p><strong>Approved Amount:</strong> RWF ' . number_format($amount, 2) . '</p>
+                    <p><strong>Approved By:</strong> ' . htmlspecialchars($president_name) . '</p>
+                </div>
+                <p>The Vice Guild Finance will process the disbursement and notify you once completed.</p>
+            </div>
+            <div class="footer">
+                <p>Isonga - RPSU Management System</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+    
+    return sendEmail($student_email, $subject, $body);
+}
+
+/**
+ * Send notification to student that president rejected their aid
+ */
+function sendStudentAidPresidentRejection($student_email, $student_name, $request_id, $title, $reason, $president_name) {
+    $subject = "📋 Update on Financial Aid Request #$request_id";
+    
+    $body = '
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
+            .highlight { background: #f8d7da; padding: 15px; margin: 15px 0; border-left: 4px solid #dc3545; }
+            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>📋 Financial Aid Request Update</h2>
+            </div>
+            <div class="content">
+                <p>Dear ' . htmlspecialchars($student_name) . ',</p>
+                <p>Thank you for your financial aid request submission. After careful review by the President, your request could not be approved at this time.</p>
+                <div class="highlight">
+                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                    <p><strong>Title:</strong> ' . htmlspecialchars($title) . '</p>
+                    <p><strong>Reason for Rejection:</strong></p>
+                    <p>' . nl2br(htmlspecialchars($reason)) . '</p>
+                    <p><strong>Reviewed By:</strong> ' . htmlspecialchars($president_name) . '</p>
+                </div>
+                <p>If you have questions about this decision, please contact the Vice Guild Finance office.</p>
+            </div>
+            <div class="footer">
+                <p>Isonga - RPSU Management System</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+    
+    return sendEmail($student_email, $subject, $body);
 }
 
 /**
@@ -142,7 +324,7 @@ function sendPresidentMonthlyReport($month, $year, $summary_data) {
                     <p><strong>Net Balance:</strong> RWF ' . number_format($summary_data['net_balance'], 2) . '</p>
                     <p><strong>Pending Approvals:</strong> ' . $summary_data['pending_approvals'] . '</p>
                 </div>
-                <p><a href="http://localhost/isonga-mis/financial_reports.php">View Full Report</a></p>
+                <p><a href="http://localhost/isonga-mis/guild_president/financial_reports.php">View Full Report</a></p>
             </div>
             <div class="footer">
                 <p>Isonga - RPSU Management System</p>

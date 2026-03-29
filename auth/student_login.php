@@ -44,12 +44,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 FROM users u 
                 LEFT JOIN departments d ON u.department_id = d.id 
                 LEFT JOIN programs p ON u.program_id = p.id 
-                WHERE u.reg_number = ? AND u.role = 'student' AND u.status = 'active'
+                WHERE u.reg_number = ? AND u.role = 'student' AND u.status = 'active' AND u.deleted_at IS NULL
             ");
             $stmt->execute([$reg_number]);
             $user = $stmt->fetch(PDO::FETCH_ASSOC);
             
-            if ($user && $password === $user['password']) {
+            // Verify password using password_verify() for hashed passwords
+            if ($user && password_verify($password, $user['password'])) {
                 // Login successful
                 $_SESSION['user_id'] = $user['id'];
                 $_SESSION['email'] = $user['email'];
@@ -64,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Record login activity
                 recordLoginActivity($pdo, $user['id'], true);
                 
-                // Update last login
+                // Update last login and login count
                 $updateStmt = $pdo->prepare("UPDATE users SET last_login = NOW(), login_count = login_count + 1 WHERE id = ?");
                 $updateStmt->execute([$user['id']]);
                 
@@ -82,15 +83,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[] = "Invalid registration number or password";
             }
         } catch (PDOException $e) {
+            error_log("Student login error: " . $e->getMessage());
             $errors[] = "Login failed. Please try again.";
         }
     }
 }
 
 function recordLoginActivity($pdo, $userId = null, $success = true, $identifier = null) {
-    $stmt = $pdo->prepare("INSERT INTO login_activities (user_id, ip_address, user_agent, login_time, success, failure_reason) VALUES (?, ?, ?, NOW(), ?, ?)");
-    $failure_reason = $success ? null : 'Invalid credentials for ' . $identifier;
-    $stmt->execute([$userId, $_SERVER['REMOTE_ADDR'], $_SERVER['HTTP_USER_AGENT'], $success ? 1 : 0, $failure_reason]);
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO login_activities (user_id, ip_address, user_agent, login_time, success, failure_reason) 
+            VALUES (?, ?, ?, NOW(), ?, ?)
+        ");
+        $failure_reason = $success ? null : 'Invalid credentials for ' . $identifier;
+        $stmt->execute([
+            $userId, 
+            $_SERVER['REMOTE_ADDR'] ?? 'unknown', 
+            $_SERVER['HTTP_USER_AGENT'] ?? 'unknown', 
+            $success ? 1 : 0, 
+            $failure_reason
+        ]);
+    } catch (PDOException $e) {
+        error_log("Failed to record login activity: " . $e->getMessage());
+    }
 }
 ?>
 
@@ -568,7 +583,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
                 </div>
             <?php endif; ?>
 
-            <form method="POST" action="student_login.php">
+            <form method="POST" action="student_login.php" id="loginForm">
                 <div class="input-group">
                     <i class="fas fa-id-card"></i>
                     <input type="text" id="reg_number" name="reg_number" 
@@ -587,7 +602,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
                     </button>
                 </div>
 
-                <button type="submit" class="btn btn-primary">
+                <button type="submit" class="btn btn-primary" id="loginBtn">
                     <i class="fas fa-sign-in-alt"></i> Sign In
                 </button>
             </form>
@@ -621,7 +636,11 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
         function hidePopup() {
             const popup = document.getElementById('logoutPopup');
             if (popup) {
-                popup.remove();
+                popup.style.opacity = '0';
+                popup.style.transform = 'translateX(100%)';
+                setTimeout(() => {
+                    popup.remove();
+                }, 300);
             }
         }
 
@@ -635,6 +654,17 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
             }
         });
 
+        // Add loading state on form submit
+        const loginForm = document.getElementById('loginForm');
+        const loginBtn = document.getElementById('loginBtn');
+        
+        if (loginForm) {
+            loginForm.addEventListener('submit', function() {
+                loginBtn.disabled = true;
+                loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in...';
+            });
+        }
+
         // Add focus effects to inputs
         document.querySelectorAll('input').forEach(input => {
             input.addEventListener('focus', function() {
@@ -645,6 +675,24 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
                 this.parentElement.classList.remove('focused');
             });
         });
+
+        // Clear error messages when typing
+        const regNumberInput = document.getElementById('reg_number');
+        const passwordInput = document.getElementById('password');
+        
+        function clearErrors() {
+            const errorAlert = document.querySelector('.alert-danger');
+            if (errorAlert) {
+                errorAlert.remove();
+            }
+        }
+        
+        if (regNumberInput) {
+            regNumberInput.addEventListener('input', clearErrors);
+        }
+        if (passwordInput) {
+            passwordInput.addEventListener('input', clearErrors);
+        }
     </script>
 </body>
 </html>

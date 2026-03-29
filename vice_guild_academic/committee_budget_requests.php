@@ -78,7 +78,7 @@ if (isset($_FILES['action_plan_file']) && $_FILES['action_plan_file']['error'] !
                 $stmt = $pdo->prepare("
                     INSERT INTO committee_budget_requests 
                     (committee_id, request_title, action_plan_file_path, requested_amount, purpose, requested_by, request_date, status, created_at, updated_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'submitted', NOW(), NOW())
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_DATE, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ");
                 
                 $result = $stmt->execute([
@@ -886,48 +886,177 @@ error_log("Stats: " . print_r($stats, true));
             justify-content: center;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
+        /* =============================================
+           RESPONSIVE — mobile-first breakpoints
+        ============================================= */
+
+        /* Hamburger button (hidden on desktop) */
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+            width: 44px;
+            height: 44px;
+            background: var(--light-gray);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            padding: 10px;
+            transition: var(--transition);
+            flex-shrink: 0;
+        }
+        .hamburger span {
+            display: block;
+            height: 2px;
+            background: var(--text-dark);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+        .hamburger:hover { background: var(--academic-primary); }
+        .hamburger:hover span { background: #fff; }
+
+        /* Sidebar overlay */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        /* Table wrapper */
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* ── 1280 px ── */
+        @media (max-width: 1280px) {
             .stats-grid {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
-            
+        }
+
+        /* ── 1024 px ── */
+        @media (max-width: 1024px) {
+            .dashboard-container {
+                grid-template-columns: 200px 1fr;
+            }
+            .brand-text h1 { font-size: 1.05rem; }
+        }
+
+        /* ── 768 px ── tablet */
+        @media (max-width: 768px) {
+            .hamburger { display: flex; }
+
+            .dashboard-container { grid-template-columns: 1fr; }
+
+            /* Sidebar becomes slide-in drawer */
+            .sidebar {
+                position: fixed;
+                top: 80px;
+                left: 0;
+                width: 260px;
+                height: calc(100vh - 80px);
+                z-index: 200;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: var(--shadow-lg);
+            }
+            .sidebar.open { transform: translateX(0); }
+
+            .main-content {
+                height: auto;
+                overflow-y: visible;
+            }
+
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 1rem;
             }
-            
             .page-actions {
                 width: 100%;
-                justify-content: space-between;
+                justify-content: flex-start;
+                flex-wrap: wrap;
             }
+            .page-actions .btn { flex: 1; justify-content: center; }
+
+            .nav-container { padding: 0 1rem; }
+            .user-details { display: none; }
+
+            /* Modal full-width on tablet */
+            .modal-content {
+                width: 95%;
+                max-width: 95%;
+                margin: 1rem;
+            }
+
+            .table th, .table td {
+                padding: 0.6rem 0.5rem;
+                font-size: 0.75rem;
+            }
+
+            .header { height: 70px; }
+            .dashboard-container { min-height: calc(100vh - 70px); }
+            .sidebar { top: 70px; height: calc(100vh - 70px); }
         }
 
+        /* ── 480 px ── large phone */
         @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
+            .header { height: 64px; }
+            .dashboard-container { min-height: calc(100vh - 64px); }
+            .sidebar { top: 64px; height: calc(100vh - 64px); }
+
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+
+            .main-content { padding: 0.875rem; }
+
+            .brand-text h1 { font-size: 0.9rem; }
+
+            .page-title h1 { font-size: 1.1rem; }
+
+            .page-actions { flex-direction: column; }
+            .page-actions .btn { width: 100%; justify-content: center; }
+
+            .stat-card { padding: 0.75rem; gap: 0.75rem; }
+            .stat-number { font-size: 1.15rem; }
+
+            /* Action buttons in table — stack icons */
+            .action-buttons { flex-wrap: wrap; gap: 0.35rem; }
+
+            /* File preview iframe shorter on phones */
+            .file-preview-container { height: 320px; }
+
+            /* Modal */
+            .modal-body { padding: 1rem; }
+            .modal-footer { flex-direction: column; gap: 0.5rem; }
+            .modal-footer .btn { width: 100%; justify-content: center; }
+        }
+
+        /* ── 360 px ── small phone */
+        @media (max-width: 360px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .brand-text h1 { display: none; }
         }
     </style>
 </head>
 <body>
+    <!-- Sidebar overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
+                    <span></span><span></span><span></span>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1226,7 +1355,7 @@ error_log("Stats: " . print_r($stats, true));
 </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-outline" onclick="closeNewRequestModal()">Cancel</button>
+                    <!-- <button type="button" class="btn btn-outline" onclick="closeNewRequestModal()">Cancel</button> -->
                     <button type="submit" class="btn btn-primary" name="submit_request">Submit Request</button>
                 </div>
             </form>
@@ -1238,12 +1367,12 @@ error_log("Stats: " . print_r($stats, true));
         <div class="modal-content">
             <div class="modal-header">
                 <h3 class="modal-title">File Preview</h3>
-                <button class="modal-close" onclick="closeFilePreview()">&times;</button>
+                <!-- <button class="modal-close" onclick="closeFilePreview()">&times;</button> -->
             </div>
             <div class="modal-body">
                 <iframe id="filePreviewFrame" class="file-preview-container" src=""></iframe>
                 <div class="file-preview-actions">
-                    <button class="btn btn-outline" onclick="closeFilePreview()">
+                    <!-- <button class="btn btn-outline" onclick="closeFilePreview()"> -->
                         <i class="fas fa-times"></i> Close
                     </button>
                     <a id="downloadFileLink" class="btn btn-primary" download>
@@ -1255,11 +1384,12 @@ error_log("Stats: " . print_r($stats, true));
     </div>
 
 <script>
-    // Dark Mode Toggle
+    // ── Dark Mode Toggle ──────────────────────────────────────
     const themeToggle = document.getElementById('themeToggle');
     const body = document.body;
 
-    const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const savedTheme = localStorage.getItem('theme') ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     if (savedTheme === 'dark') {
         body.classList.add('dark-mode');
         themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -1270,6 +1400,40 @@ error_log("Stats: " . print_r($stats, true));
         const isDark = body.classList.contains('dark-mode');
         localStorage.setItem('theme', isDark ? 'dark' : 'light');
         themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+    });
+
+    // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
+    const hamburgerBtn   = document.getElementById('hamburgerBtn');
+    const sidebar        = document.querySelector('.sidebar');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+    function openSidebar() {
+        sidebar.classList.add('open');
+        sidebarOverlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+    function closeSidebar() {
+        sidebar.classList.remove('open');
+        sidebarOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    if (hamburgerBtn) hamburgerBtn.addEventListener('click', () =>
+        sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
+    );
+
+    if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+
+    document.querySelectorAll('.sidebar .menu-item a').forEach(link =>
+        link.addEventListener('click', () => { if (window.innerWidth <= 768) closeSidebar(); })
+    );
+
+    window.addEventListener('resize', () => {
+        if (window.innerWidth > 768) {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
     });
 
     // Modal Functions

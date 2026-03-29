@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     $stmt = $pdo->prepare("
                         UPDATE tickets 
-                        SET status = ?, resolution_notes = ?, resolved_at = CASE WHEN ? = 'resolved' THEN NOW() ELSE NULL END 
+                        SET status = ?, resolution_notes = ?, resolved_at = CASE WHEN ? = 'resolved' THEN CURRENT_TIMESTAMP ELSE NULL END 
                         WHERE id = ? AND category_id = 1
                     ");
                     $stmt->execute([$new_status, $resolution_notes, $new_status, $ticket_id]);
@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_comments (ticket_id, user_id, comment, is_internal, created_at) 
-                        VALUES (?, ?, ?, ?, NOW())
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$ticket_id, $user_id, $comment, $is_internal]);
                     
@@ -71,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Log escalation
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_escalations (ticket_id, escalated_by, escalated_to, reason, escalated_at, previous_assignee) 
-                        VALUES (?, ?, ?, ?, NOW(), ?)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                     ");
                     $stmt->execute([$ticket_id, $user_id, $escalate_to, $reason, $current_assignee]);
                     
@@ -131,7 +131,7 @@ if ($department_filter !== 'all') {
 }
 
 if (!empty($search_query)) {
-    $query .= " AND (t.subject LIKE ? OR t.description LIKE ? OR t.name LIKE ? OR t.reg_number LIKE ?)";
+    $query .= " AND (t.subject ILIKE ? OR t.description ILIKE ? OR t.name ILIKE ? OR t.reg_number ILIKE ?)";
     $search_param = "%$search_query%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -1095,70 +1095,148 @@ try {
             transform: translateX(24px);
         }
 
-        /* Responsive */
+        /* =============================================
+           RESPONSIVE — mobile-first breakpoints
+        ============================================= */
+
+        /* Hamburger button (hidden on desktop) */
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+            width: 44px;
+            height: 44px;
+            background: var(--light-gray);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            padding: 10px;
+            transition: var(--transition);
+            flex-shrink: 0;
+        }
+        .hamburger span {
+            display: block;
+            height: 2px;
+            background: var(--text-dark);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+        .hamburger:hover { background: var(--academic-primary); }
+        .hamburger:hover span { background: #fff; }
+
+        /* Sidebar overlay */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        /* Scrollable table wrapper */
+        .table-scroll {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* ── 1024 px ── */
         @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
-            }
-            
-            .form-row {
-                grid-template-columns: 1fr;
-            }
+            .dashboard-container { grid-template-columns: 200px 1fr; }
+            .form-row { grid-template-columns: 1fr; }
+            .brand-text h1 { font-size: 1.05rem; }
         }
 
+        /* ── 768 px ── tablet */
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
+            .hamburger { display: flex; }
+
+            .dashboard-container { grid-template-columns: 1fr; }
+
+            /* Sidebar becomes slide-in drawer */
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 80px;
+                left: 0;
+                width: 260px;
+                height: calc(100vh - 80px);
+                z-index: 200;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: var(--shadow-lg);
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
+            .sidebar.open { transform: translateX(0); }
+
+            .main-content { height: auto; overflow-y: visible; }
+
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .filters-form { grid-template-columns: 1fr; }
+
+            .nav-container { padding: 0 1rem; }
+            .user-details { display: none; }
+
+            /* Ticket detail — stack info panels */
+            .form-row { grid-template-columns: 1fr; }
+
+            /* Comment header wraps on small screens */
+            .comment-header { flex-wrap: wrap; gap: 0.25rem; }
+            .comment-time { width: 100%; }
+
+            .header { height: 70px; }
+            .dashboard-container { min-height: calc(100vh - 70px); }
+            .sidebar { top: 70px; height: calc(100vh - 70px); }
         }
 
+        /* ── 480 px ── large phone */
         @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-            
-            .table-header {
-                flex-direction: column;
-                gap: 1rem;
-                align-items: flex-start;
-            }
-            
-            .table-actions {
-                width: 100%;
-                justify-content: space-between;
-            }
+            .header { height: 64px; }
+            .dashboard-container { min-height: calc(100vh - 64px); }
+            .sidebar { top: 64px; height: calc(100vh - 64px); }
+
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .main-content { padding: 0.875rem; }
+            .brand-text h1 { font-size: 0.9rem; }
+
+            .page-header { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+            .page-title h1 { font-size: 1.15rem; }
+
+            .table-header { flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+            .table-actions { width: 100%; justify-content: flex-start; }
+
+            /* Table cells compact */
+            .table th, .table td { padding: 0.6rem 0.5rem; font-size: 0.75rem; }
+
+            /* Comment avatar smaller */
+            .comment-avatar { width: 32px; height: 32px; font-size: 0.7rem; }
+            .comment-item { gap: 0.6rem; }
+
+            .stat-card { padding: 0.75rem; gap: 0.75rem; }
+            .stat-number { font-size: 1.25rem; }
+
+            .ticket-title { font-size: 1rem; }
+            .ticket-meta { flex-direction: column; gap: 0.4rem; }
+        }
+
+        /* ── 360 px ── small phone */
+        @media (max-width: 360px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .brand-text h1 { display: none; }
         }
     </style>
 </head>
 <body>
+    <!-- Sidebar overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
+                    <span></span><span></span><span></span>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1221,7 +1299,7 @@ try {
                 FROM meeting_attendees ma 
                 JOIN meetings m ON ma.meeting_id = m.id 
                 WHERE ma.user_id = ? 
-                AND m.meeting_date >= CURDATE() 
+                AND m.meeting_date >= CURRENT_DATE 
                 AND m.status = 'scheduled'
                 AND ma.attendance_status = 'invited'
             ");
@@ -1633,6 +1711,7 @@ try {
                             </button>
                         </div>
                     </div>
+                    <div class="table-scroll">
                     <table class="table">
                         <thead>
                             <tr>
@@ -1677,18 +1756,19 @@ try {
                             <?php endif; ?>
                         </tbody>
                     </table>
+                    </div><!-- /.table-scroll -->
                 </div>
             <?php endif; ?>
         </main>
     </div>
 
     <script>
-        // Dark Mode Toggle
+        // ── Dark Mode Toggle ──────────────────────────────────────
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        const savedTheme = localStorage.getItem('theme') ||
+            (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
             themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -1701,11 +1781,42 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh page every 5 minutes if not viewing a specific ticket
+        // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
+        const hamburgerBtn   = document.getElementById('hamburgerBtn');
+        const sidebar        = document.querySelector('.sidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+        function openSidebar() {
+            sidebar.classList.add('open');
+            sidebarOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        if (hamburgerBtn) hamburgerBtn.addEventListener('click', () =>
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
+        );
+        if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+
+        document.querySelectorAll('.sidebar .menu-item a').forEach(link =>
+            link.addEventListener('click', () => { if (window.innerWidth <= 768) closeSidebar(); })
+        );
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        });
+
+        // ── Auto-refresh list view every 5 minutes ────────────────
         if (!window.location.search.includes('id=')) {
-            setInterval(() => {
-                window.location.reload();
-            }, 300000);
+            setInterval(() => { window.location.reload(); }, 300000);
         }
     </script>
 </body>

@@ -42,7 +42,7 @@ function sendStudentAidRequestNotification($student_name, $student_email, $reque
     </body>
     </html>';
     
-    return sendEmailCore($student_email, $subject, $body);
+    return sendEmail($student_email, $subject, $body);
 }
 
 function sendNewAidRequestToFinance($request_id, $student_name, $amount, $urgency, $purpose) {
@@ -130,7 +130,7 @@ function sendAidStatusUpdateToStudent($student_email, $student_name, $request_id
     </body>
     </html>';
     
-    return sendEmailCore($student_email, $subject, $body);
+    return sendEmail($student_email, $subject, $body);
 }
 
 /**
@@ -241,7 +241,7 @@ function sendWelcomeEmail($user_email, $user_name, $role) {
     </body>
     </html>';
     
-    return sendEmailCore($user_email, $subject, $body);
+    return sendEmail($user_email, $subject, $body);
 }
 
 function sendPasswordResetEmail($user_email, $user_name, $reset_token) {
@@ -275,7 +275,7 @@ function sendPasswordResetEmail($user_email, $user_name, $reset_token) {
     </body>
     </html>';
     
-    return sendEmailCore($user_email, $subject, $body);
+    return sendEmail($user_email, $subject, $body);
 }
 
 // Export functions for use in other files
@@ -288,7 +288,7 @@ function getEmailFunctions() {
         'sendTransactionPendingApproval',
         'sendWelcomeEmail',
         'sendPasswordResetEmail',
-        'sendEmailCore',
+        'sendEmail',
         'sendEmailToRole',
         'sendEmailToRoles',
         'createNotification'

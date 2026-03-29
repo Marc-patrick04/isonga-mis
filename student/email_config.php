@@ -205,7 +205,7 @@ function sendStudentSubmissionConfirmation($student_id, $request_type, $request_
         </body>
         </html>';
         
-        return sendEmailCore($student['email'], $subject, $body);
+        return sendEmail($student['email'], $subject, $body);
         
     } catch (PDOException $e) {
         error_log("Failed to send student confirmation: " . $e->getMessage());
@@ -436,7 +436,7 @@ function sendStudentStatusUpdate($student_id, $request_type, $request_id, $statu
         </body>
         </html>';
         
-        return sendEmailCore($student['email'], $subject, $body);
+        return sendEmail($student['email'], $subject, $body);
         
     } catch (PDOException $e) {
         error_log("Failed to send status update: " . $e->getMessage());

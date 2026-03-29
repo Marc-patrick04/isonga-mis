@@ -42,16 +42,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($action === 'confirm') {
                     $stmt = $pdo->prepare("
                         INSERT INTO meeting_attendance (meeting_id, committee_member_id, attendance_status, recorded_by, created_at)
-                        VALUES (?, ?, 'present', ?, NOW())
-                        ON DUPLICATE KEY UPDATE attendance_status = 'present', updated_at = NOW()
+                        VALUES (?, ?, 'present', ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT (meeting_id, committee_member_id)
+                        DO UPDATE SET attendance_status = 'present', updated_at = CURRENT_TIMESTAMP
                     ");
                     $stmt->execute([$meeting_id, $committee_member_id, $user_id]);
                     $_SESSION['success_message'] = "Attendance confirmed successfully!";
                 } elseif ($action === 'decline') {
                     $stmt = $pdo->prepare("
                         INSERT INTO meeting_attendance (meeting_id, committee_member_id, attendance_status, recorded_by, created_at)
-                        VALUES (?, ?, 'absent', ?, NOW())
-                        ON DUPLICATE KEY UPDATE attendance_status = 'absent', updated_at = NOW()
+                        VALUES (?, ?, 'absent', ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT (meeting_id, committee_member_id)
+                        DO UPDATE SET attendance_status = 'absent', updated_at = CURRENT_TIMESTAMP
                     ");
                     $stmt->execute([$meeting_id, $committee_member_id, $user_id]);
                     $_SESSION['success_message'] = "Attendance declined successfully!";
@@ -192,10 +194,10 @@ try {
     $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
     
     // Upcoming meetings
-    $upcoming_meetings_count = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    $upcoming_meetings_count = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'")->fetch()['count'];
     
     // Today's meetings
-    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURDATE() AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
+    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURRENT_DATE AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
     
     // User's attendance statistics
     if ($committee_member_id) {
@@ -207,7 +209,7 @@ try {
                 SUM(CASE WHEN ma.attendance_status = 'excused' THEN 1 ELSE 0 END) as excused
             FROM meeting_attendance ma
             JOIN meetings m ON ma.meeting_id = m.id
-            WHERE ma.committee_member_id = ? AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            WHERE ma.committee_member_id = ? AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         ");
         $attendance_stmt->execute([$committee_member_id]);
         $attendance_stats = $attendance_stmt->fetch(PDO::FETCH_ASSOC);
@@ -1085,81 +1087,154 @@ try {
             background: var(--medium-gray);
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .meeting-header {
-                flex-direction: column;
-                gap: 1rem;
-            }
-            
-            .meeting-details {
-                grid-template-columns: 1fr;
-            }
-            
-            .meeting-actions {
-                flex-direction: column;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
-            
-            .filter-row {
-                flex-direction: column;
-                align-items: stretch;
-            }
-            
-            .filter-group {
-                width: 100%;
-            }
+        /* =============================================
+           RESPONSIVE — mobile-first breakpoints
+        ============================================= */
+
+        /* Hamburger button (hidden on desktop) */
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+            width: 44px;
+            height: 44px;
+            background: var(--light-gray);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            padding: 10px;
+            transition: var(--transition);
+            flex-shrink: 0;
+        }
+        .hamburger span {
+            display: block;
+            height: 2px;
+            background: var(--text-dark);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+        .hamburger:hover { background: var(--academic-primary); }
+        .hamburger:hover span { background: #fff; }
+
+        /* Sidebar overlay */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        /* ── 1280 px ── */
+        @media (max-width: 1280px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
         }
 
+        /* ── 1024 px ── */
+        @media (max-width: 1024px) {
+            .dashboard-container { grid-template-columns: 200px 1fr; }
+            .brand-text h1 { font-size: 1.05rem; }
+        }
+
+        /* ── 768 px ── tablet */
+        @media (max-width: 768px) {
+            .hamburger { display: flex; }
+
+            .dashboard-container { grid-template-columns: 1fr; }
+
+            /* Sidebar becomes slide-in drawer */
+            .sidebar {
+                position: fixed;
+                top: 80px;
+                left: 0;
+                width: 260px;
+                height: calc(100vh - 80px);
+                z-index: 200;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: var(--shadow-lg);
+            }
+            .sidebar.open { transform: translateX(0); }
+
+            .main-content { height: auto; overflow-y: visible; }
+
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+
+            .meeting-header { flex-direction: column; gap: 0.75rem; }
+            .meeting-meta { flex-wrap: wrap; gap: 0.5rem; }
+            .meeting-details { grid-template-columns: 1fr 1fr; }
+            .meeting-actions { flex-wrap: wrap; }
+            .meeting-actions .btn { flex: 1; justify-content: center; }
+
+            .nav-container { padding: 0 1rem; }
+            .user-details { display: none; }
+
+            .filter-row { flex-direction: column; align-items: stretch; }
+            .filter-group { width: 100%; }
+            .filter-select, .filter-input { min-width: unset; width: 100%; }
+            .filter-btn, .reset-btn { width: 100%; text-align: center; justify-content: center; }
+
+            .header { height: 70px; }
+            .dashboard-container { min-height: calc(100vh - 70px); }
+            .sidebar { top: 70px; height: calc(100vh - 70px); }
+        }
+
+        /* ── 480 px ── large phone */
         @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-            
+            .header { height: 64px; }
+            .dashboard-container { min-height: calc(100vh - 64px); }
+            .sidebar { top: 64px; height: calc(100vh - 64px); }
+
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .main-content { padding: 0.875rem; }
+
+            .brand-text h1 { font-size: 0.9rem; }
+
+            .page-title { font-size: 1.15rem; }
+
+            .meeting-card { padding: 1rem; }
+            .meeting-title { font-size: 0.95rem; }
+            .meeting-details { grid-template-columns: 1fr; }
+            .meeting-actions { flex-direction: column; }
+            .meeting-actions .btn { width: 100%; justify-content: center; }
+
+            /* Tabs scroll horizontally instead of stacking */
             .tabs {
-                flex-direction: column;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                flex-wrap: nowrap;
+                padding-bottom: 2px;
             }
-            
             .tab {
-                border-bottom: 1px solid var(--medium-gray);
-                border-left: 2px solid transparent;
+                white-space: nowrap;
+                flex-shrink: 0;
+                padding: 0.65rem 1rem;
             }
-            
-            .tab.active {
-                border-left-color: var(--academic-primary);
-                border-bottom-color: var(--medium-gray);
-            }
+
+            .stat-card { padding: 0.75rem; gap: 0.75rem; }
+            .stat-number { font-size: 1.25rem; }
+        }
+
+        /* ── 360 px ── small phone */
+        @media (max-width: 360px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .brand-text h1 { display: none; }
         }
     </style>
 </head>
 <body>
+    <!-- Sidebar overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
+                    <span></span><span></span><span></span>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1713,11 +1788,12 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
+        // ── Dark Mode Toggle ──────────────────────────────────────
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        const savedTheme = localStorage.getItem('theme') ||
+            (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
             themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -1730,7 +1806,40 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Tab functionality
+        // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
+        const hamburgerBtn   = document.getElementById('hamburgerBtn');
+        const sidebar        = document.querySelector('.sidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+        function openSidebar() {
+            sidebar.classList.add('open');
+            sidebarOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        if (hamburgerBtn) hamburgerBtn.addEventListener('click', () =>
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
+        );
+        if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+
+        document.querySelectorAll('.sidebar .menu-item a').forEach(link =>
+            link.addEventListener('click', () => { if (window.innerWidth <= 768) closeSidebar(); })
+        );
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        });
+
+        // ── Tab functionality ─────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function() {
             const tabs = document.querySelectorAll('.tab');
             const tabContents = document.querySelectorAll('.tab-content');
@@ -1738,19 +1847,15 @@ try {
             tabs.forEach(tab => {
                 tab.addEventListener('click', () => {
                     const tabId = tab.getAttribute('data-tab');
-                    
-                    // Remove active class from all tabs and contents
                     tabs.forEach(t => t.classList.remove('active'));
                     tabContents.forEach(content => content.classList.remove('active'));
-                    
-                    // Add active class to clicked tab and corresponding content
                     tab.classList.add('active');
                     document.getElementById(`${tabId}-tab`).classList.add('active');
                 });
             });
         });
 
-        // Auto-refresh page every 5 minutes
+        // ── Auto-refresh every 5 minutes ──────────────────────────
         setInterval(() => {
             console.log('Academic meetings page auto-refresh triggered');
         }, 300000);

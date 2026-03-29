@@ -1074,46 +1074,198 @@ try {
             to { transform: translateY(0); opacity: 1; }
         }
 
-        /* Responsive */
+        /* ── Mobile Nav Overlay ── */
+        .mobile-nav-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+            backdrop-filter: blur(2px);
+        }
+        .mobile-nav-overlay.active { display: block; }
+
+        /* ── Hamburger Button ── */
+        .hamburger-btn {
+            display: none;
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: var(--light-gray);
+            border-radius: 50%;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+        .hamburger-btn:hover {
+            background: var(--academic-primary);
+            color: white;
+        }
+
+        /* ── Sidebar Drawer ── */
+        .sidebar { transition: transform 0.3s ease; }
+
+        /* ── Tablet ── */
         @media (max-width: 1024px) {
             .dashboard-container {
                 grid-template-columns: 200px 1fr;
             }
         }
 
-        @media (max-width: 768px) {
+        /* ── Tablet & below (drawer threshold) ── */
+        @media (max-width: 900px) {
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 260px;
+                height: 100vh;
+                z-index: 200;
+                transform: translateX(-100%);
+                padding-top: 1rem;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.15);
             }
-            
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .hamburger-btn {
+                display: flex;
+            }
+
+            .main-content {
+                height: auto;
+                min-height: calc(100vh - 80px);
+            }
+
             .profile-container {
                 grid-template-columns: 1fr;
             }
-            
+        }
+
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
+            /* Profile tabs: scroll horizontally on mobile */
             .profile-tabs {
-                flex-wrap: wrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                flex-wrap: nowrap;
             }
-            
+            .profile-tabs::-webkit-scrollbar { display: none; }
+
             .profile-tab {
-                flex: 1;
-                min-width: 120px;
-                text-align: center;
+                white-space: nowrap;
+                flex-shrink: 0;
+                padding: 0.85rem 1rem;
+                font-size: 0.8rem;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .tab-content {
+                padding: 1.25rem;
             }
-            
-            .user-details {
-                display: none;
+
+            .modal-content {
+                margin: 8% auto;
+                width: 95%;
+            }
+
+            .modal-actions {
+                flex-direction: column-reverse;
+            }
+
+            .modal-actions .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .profile-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .login-session {
+                flex-wrap: wrap;
+                gap: 0.75rem;
+            }
+
+            .session-status {
+                margin-left: auto;
+            }
+
+            .page-header {
+                padding: 1rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+        }
+
+        /* ── Small phones ── */
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .header {
+                height: 68px;
+            }
+
+            .logos .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .profile-sidebar {
+                padding: 1.25rem;
+            }
+
+            .profile-avatar {
+                width: 100px;
+                height: 100px;
+                font-size: 1.6rem;
+            }
+
+            .profile-stats {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+            }
+
+            .tab-content {
+                padding: 1rem;
+            }
+
+            .form-section {
+                margin-bottom: 1.25rem;
             }
         }
     </style>
@@ -1123,6 +1275,9 @@ try {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1161,6 +1316,9 @@ try {
             </div>
         </div>
     </header>
+
+    <!-- Mobile Nav Overlay -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
@@ -1652,7 +1810,36 @@ try {
         // Profile Management JavaScript
         document.addEventListener('DOMContentLoaded', function() {
             console.log('DOM loaded - initializing profile scripts');
-            
+
+            // ── Mobile Nav (hamburger sidebar) ──
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            const navSidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('mobileNavOverlay');
+
+            function openNavSidebar() {
+                navSidebar.classList.add('open');
+                overlay.classList.add('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeNavSidebar() {
+                navSidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+
+            hamburgerBtn?.addEventListener('click', () => {
+                navSidebar.classList.contains('open') ? closeNavSidebar() : openNavSidebar();
+            });
+
+            overlay?.addEventListener('click', closeNavSidebar);
+
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 900) closeNavSidebar();
+            });
+
             // Modal elements
             const avatarModal = document.getElementById('avatarModal');
             const avatarUploadBtn = document.getElementById('avatarUploadBtn');

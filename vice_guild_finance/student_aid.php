@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/email_config.php';
 
 // Check if user is logged in and is Vice Guild Finance
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'vice_guild_finance') {
@@ -41,7 +42,7 @@ if ($action === 'delete_request' && isset($_GET['id'])) {
     }
 }
 
-// Get filter parameters (simplified)
+// Get filter parameters
 $status_filter = $_GET['status'] ?? 'all';
 $search = $_GET['search'] ?? '';
 
@@ -104,16 +105,20 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM student_financial_aid");
     $total_requests = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
 
-    // Pending requests
-    $stmt = $pdo->query("SELECT COUNT(*) as pending FROM student_financial_aid WHERE status = 'submitted'");
+    // Pending requests (submitted and under_review)
+    $stmt = $pdo->query("SELECT COUNT(*) as pending FROM student_financial_aid WHERE status IN ('submitted', 'under_review')");
     $pending_requests = $stmt->fetch(PDO::FETCH_ASSOC)['pending'] ?? 0;
 
-    // Approved requests
+    // Pending president approval
+    $stmt = $pdo->query("SELECT COUNT(*) as pending_president FROM student_financial_aid WHERE status = 'pending_president'");
+    $pending_president = $stmt->fetch(PDO::FETCH_ASSOC)['pending_president'] ?? 0;
+
+    // Approved requests (by president, waiting for disbursement)
     $stmt = $pdo->query("SELECT COUNT(*) as approved FROM student_financial_aid WHERE status = 'approved'");
     $approved_requests = $stmt->fetch(PDO::FETCH_ASSOC)['approved'] ?? 0;
 
     // Total amount requested
-    $stmt = $pdo->query("SELECT SUM(amount_requested) as total_requested FROM student_financial_aid WHERE status IN ('submitted', 'under_review', 'approved')");
+    $stmt = $pdo->query("SELECT SUM(amount_requested) as total_requested FROM student_financial_aid WHERE status IN ('submitted', 'under_review', 'pending_president', 'approved')");
     $total_requested = $stmt->fetch(PDO::FETCH_ASSOC)['total_requested'] ?? 0;
 
     // Total amount approved
@@ -126,7 +131,7 @@ try {
     error_log("Student aid statistics error: " . $e->getMessage());
 }
 
-// Get current academic year (fallback if function doesn't exist)
+// Get current academic year
 try {
     require_once '../config/academic_year.php';
     $current_academic_year = getCurrentAcademicYear();
@@ -134,154 +139,29 @@ try {
     $current_academic_year = date('Y') . '/' . (date('Y') + 1);
 }
 
-// Add this function for student aid transactions
-function recordStudentAidTransaction($aid_request_id, $approved_amount, $user_id) {
-    global $pdo;
-    
-    try {
-        // Get student aid request details
-        $stmt = $pdo->prepare("
-            SELECT sfa.*, u.full_name as student_name, u.reg_number as registration_number
-            FROM student_financial_aid sfa
-            LEFT JOIN users u ON sfa.student_id = u.id
-            WHERE sfa.id = ?
-        ");
-        $stmt->execute([$aid_request_id]);
-        $request = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$request) {
-            throw new Exception("Student aid request not found");
-        }
-        
-        // Get the student aid category ID
-        $stmt = $pdo->prepare("SELECT id FROM budget_categories WHERE category_name = 'Student Financial Aid' AND is_active = 1");
-        $stmt->execute();
-        $category = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$category) {
-            throw new Exception("Student Financial Aid category not found");
-        }
-        
-        // Record the transaction
-        $stmt = $pdo->prepare("
-            INSERT INTO financial_transactions (
-                transaction_type, category_id, amount, description, transaction_date,
-                payee_payer, payment_method, status, requested_by, approved_by_finance
-            ) VALUES (
-                'expense', ?, ?, ?, CURDATE(),
-                ?, 'bank_transfer', 'approved_by_finance', ?, ?
-            )
-        ");
-        
-        $description = "Student Financial Aid: " . $request['request_title'] . " - " . $request['student_name'];
-        
-        $stmt->execute([
-            $category['id'],
-            $approved_amount,
-            $description,
-            $request['student_name'] . " (" . $request['registration_number'] . ")",
-            $request['student_id'],
-            $user_id
-        ]);
-        
-        return $pdo->lastInsertId();
-        
-    } catch (PDOException $e) {
-        error_log("Student aid transaction recording error: " . $e->getMessage());
-        throw new Exception("Failed to record student aid transaction: " . $e->getMessage());
-    }
+function getStatusBadgeClass($status) {
+    $classes = [
+        'submitted' => 'status-submitted',
+        'under_review' => 'status-under_review',
+        'pending_president' => 'status-pending-president',
+        'approved' => 'status-approved',
+        'rejected' => 'status-rejected',
+        'disbursed' => 'status-disbursed'
+    ];
+    return $classes[$status] ?? 'status-submitted';
 }
 
-// In view_student_aid.php, update the status update section:
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'];
-    
-    try {
-        if ($action === 'update_status') {
-            $status = $_POST['status'];
-            $amount_approved = $_POST['amount_approved'] ?? 0;
-            $review_notes = trim($_POST['review_notes']);
-            
-            $update_data = [
-                'status' => $status,
-                'reviewed_by' => $user_id,
-                'review_date' => date('Y-m-d H:i:s'),
-                'review_notes' => $review_notes
-            ];
-            
-            if ($status === 'approved' || $status === 'disbursed') {
-                $update_data['amount_approved'] = $amount_approved;
-            }
-            
-            if ($status === 'disbursed') {
-                $update_data['disbursement_date'] = date('Y-m-d');
-                
-                // Record transaction when marking as disbursed
-                $transaction_id = recordStudentAidTransaction($request_id, $amount_approved, $user_id);
-                $update_data['transaction_id'] = $transaction_id;
-            }
-            
-            // Handle approval letter upload (existing code remains the same)
-            if (isset($_FILES['approval_letter']) && $_FILES['approval_letter']['error'] === UPLOAD_ERR_OK) {
-                $upload_dir = '../assets/uploads/student_appr_letters/';
-                if (!is_dir($upload_dir)) {
-                    mkdir($upload_dir, 0755, true);
-                }
-                
-                $file_extension = pathinfo($_FILES['approval_letter']['name'], PATHINFO_EXTENSION);
-                $file_name = 'approval_' . $request['registration_number'] . '_' . time() . '.' . $file_extension;
-                $file_path = $upload_dir . $file_name;
-                
-                if (move_uploaded_file($_FILES['approval_letter']['tmp_name'], $file_path)) {
-                    $update_data['approval_letter_path'] = $file_path;
-                } else {
-                    throw new Exception("Failed to upload approval letter.");
-                }
-            }
-            
-            $sql = "UPDATE student_financial_aid SET ";
-            $params = [];
-            foreach ($update_data as $key => $value) {
-                $sql .= "$key = ?, ";
-                $params[] = $value;
-            }
-            $sql = rtrim($sql, ', ') . " WHERE id = ?";
-            $params[] = $request_id;
-            
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute($params);
-            
-            $message = "Request updated successfully!" . ($status === 'disbursed' ? " Transaction recorded." : "");
-            $message_type = "success";
-            
-            // Refresh request data
-            $stmt = $pdo->prepare("
-                SELECT 
-                    sfa.*,
-                    u.full_name as student_name,
-                    u.email as student_email,
-                    u.phone as student_phone,
-                    u.reg_number as registration_number,
-                    u.academic_year,
-                    ur.full_name as reviewer_name,
-                    d.name as department_name,
-                    p.name as program_name
-                FROM student_financial_aid sfa
-                LEFT JOIN users u ON sfa.student_id = u.id
-                LEFT JOIN departments d ON u.department_id = d.id
-                LEFT JOIN programs p ON u.program_id = p.id
-                LEFT JOIN users ur ON sfa.reviewed_by = ur.id
-                WHERE sfa.id = ?
-            ");
-            $stmt->execute([$request_id]);
-            $request = $stmt->fetch(PDO::FETCH_ASSOC);
-        }
-    } catch (Exception $e) {
-        $message = "Error: " . $e->getMessage();
-        $message_type = "error";
-    }
+function getStatusText($status) {
+    $texts = [
+        'submitted' => 'Submitted',
+        'under_review' => 'Under Review',
+        'pending_president' => 'Pending President',
+        'approved' => 'Approved',
+        'rejected' => 'Rejected',
+        'disbursed' => 'Disbursed'
+    ];
+    return $texts[$status] ?? ucfirst(str_replace('_', ' ', $status));
 }
-
 ?>
 
 <!DOCTYPE html>
@@ -294,7 +174,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* All your existing CSS remains the same, just simplified the filters section */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -308,6 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --finance-primary: #1976D2;
             --finance-secondary: #2196F3;
             --finance-accent: #0D47A1;
@@ -319,6 +205,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -334,17 +222,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --finance-primary: #2196F3;
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
         }
 
         body {
@@ -361,14 +243,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -378,7 +257,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -387,38 +265,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -426,22 +309,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -450,101 +318,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-dark);
             cursor: pointer;
+            color: var(--text-dark);
             transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -2px;
-            right: -2px;
-            background: var(--danger);
-            color: white;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            border: 2px solid var(--white);
+            border-color: var(--finance-primary);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -574,9 +437,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -589,6 +450,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-left: auto;
         }
 
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -608,14 +483,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--finance-primary);
@@ -640,6 +515,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         .stat-card.danger {
             border-left-color: var(--danger);
+        }
+
+        .stat-card.info {
+            border-left-color: var(--info);
         }
 
         .stat-icon {
@@ -673,12 +552,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: var(--danger);
         }
 
+        .stat-card.info .stat-icon {
+            background: #d1ecf1;
+            color: var(--info);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -686,34 +570,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        .stat-trend {
+        /* Filters */
+        .filters {
             display: flex;
-            align-items: center;
-            gap: 0.25rem;
-            font-size: 0.75rem;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            min-width: 200px;
+        }
+
+        .filter-label {
+            font-size: 0.8rem;
             font-weight: 600;
-            margin-top: 0.25rem;
+            color: var(--text-dark);
         }
 
-        .trend-positive {
-            color: var(--success);
-        }
-
-        .trend-negative {
-            color: var(--danger);
-        }
-
-        /* Content Grid */
-        .content-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
-        }
-
+        /* Card */
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -736,28 +619,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: var(--text-dark);
         }
 
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .card-header-btn:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
-        }
-
         .card-body {
             padding: 1.25rem;
+            overflow-x: auto;
         }
 
         /* Tables */
@@ -812,6 +676,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #004085;
         }
 
+        .status-pending-president {
+            background: #ffe5b4;
+            color: #e65100;
+        }
+
         .status-approved {
             background: #d4edda;
             color: #155724;
@@ -856,51 +725,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #155724;
         }
 
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--finance-primary);
-            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
+        /* Buttons */
         .btn {
-            padding: 0.75rem 1.5rem;
+            padding: 0.5rem 1rem;
             border: none;
             border-radius: var(--border-radius);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 600;
             cursor: pointer;
             transition: var(--transition);
@@ -917,17 +747,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         .btn-primary:hover {
             background: var(--finance-accent);
-            transform: translateY(-1px);
         }
 
         .btn-success {
             background: var(--success);
             color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: var(--text-dark);
         }
 
         .btn-danger {
@@ -936,92 +760,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
         }
 
-              /* Modal */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .modal.active {
-            display: flex;
-        }
-
-        .modal-content {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
-            width: 90%;
-            max-width: 600px;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .modal-body {
-            padding: 1.5rem;
-        }
-
-        .modal-footer {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: flex-end;
-            gap: 0.5rem;
-        }
-
-        .close {
-            background: none;
-            border: none;
-            font-size: 1.25rem;
-            cursor: pointer;
-            color: var(--dark-gray);
-        }
-
-        /* Request Details */
-        .request-details {
-            display: grid;
-            gap: 1rem;
-        }
-
-        .detail-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: start;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .detail-label {
-            font-weight: 600;
-            color: var(--text-dark);
-            min-width: 120px;
-        }
-
-        .detail-value {
-            flex: 1;
-            color: var(--dark-gray);
-        }
-
-        /* Alerts */
+        /* Alert */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
@@ -1042,19 +785,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                z-index: 1000;
+            }
+            
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .main-content.sidebar-collapsed {
+                margin-left: 0;
+            }
+            
+            .mobile-menu-toggle {
+                display: block;
+            }
+            
+            .overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 999;
+            }
+            
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
             .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
+                flex-direction: column;
             }
             
             .stats-grid {
@@ -1066,6 +838,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 align-items: stretch;
             }
             
+            .filter-group {
+                min-width: auto;
+            }
+            
             .nav-container {
                 padding: 0 1rem;
             }
@@ -1073,61 +849,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             .user-details {
                 display: none;
             }
+            
+            .main-content {
+                padding: 1rem;
+            }
+            
+            .table {
+                font-size: 0.7rem;
+            }
+            
+            .table th, .table td {
+                padding: 0.5rem;
+            }
         }
 
         @media (max-width: 480px) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .main-content {
-                padding: 1rem;
-            }
         }
-        /* ... (all your existing CSS styles remain exactly the same) ... */
-
-        /* Simplified Filters */
-        .filters {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-            align-items: end;
-        }
-
-        .filter-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-            min-width: 200px;
-        }
-
-        .filter-label {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Student Financial Aid</h1>
                 </div>
             </div>
             <div class="user-menu">
-                <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                </div>
+                <button class="icon-btn" id="themeToggle">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <button class="icon-btn" id="sidebarToggleBtn">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
@@ -1151,7 +916,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1238,10 +1006,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Student Financial Aid 💰</h1>
+                    <h1>Student Financial Aid</h1>
                     <p>Manage and review student financial assistance requests for <?php echo $current_academic_year; ?> academic year</p>
                 </div>
             </div>
@@ -1253,47 +1021,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             <?php endif; ?>
 
-            <!-- Student Aid Overview Stats -->
+            <!-- Statistics Cards -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-file-alt"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $total_requests; ?></div>
                         <div class="stat-label">Total Requests</div>
                     </div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-clock"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $pending_requests; ?></div>
                         <div class="stat-label">Pending Review</div>
                     </div>
                 </div>
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-check-circle"></i>
+                <div class="stat-card info">
+                    <div class="stat-icon"><i class="fas fa-user-check"></i></div>
+                    <div class="stat-content">
+                        <div class="stat-number"><?php echo $pending_president; ?></div>
+                        <div class="stat-label">Pending President</div>
                     </div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $approved_requests; ?></div>
-                        <div class="stat-label">Approved Requests</div>
+                        <div class="stat-label">Ready for Disbursement</div>
                     </div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-money-bill-wave"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-money-bill-wave"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($total_approved, 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($total_approved, 0); ?></div>
                         <div class="stat-label">Total Approved</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Simple Filters -->
+            <!-- Filters -->
             <div class="filters">
                 <div class="filter-group">
                     <label class="filter-label">Status</label>
@@ -1301,6 +1068,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <option value="all" <?php echo $status_filter === 'all' ? 'selected' : ''; ?>>All Statuses</option>
                         <option value="submitted" <?php echo $status_filter === 'submitted' ? 'selected' : ''; ?>>Submitted</option>
                         <option value="under_review" <?php echo $status_filter === 'under_review' ? 'selected' : ''; ?>>Under Review</option>
+                        <option value="pending_president" <?php echo $status_filter === 'pending_president' ? 'selected' : ''; ?>>Pending President</option>
                         <option value="approved" <?php echo $status_filter === 'approved' ? 'selected' : ''; ?>>Approved</option>
                         <option value="rejected" <?php echo $status_filter === 'rejected' ? 'selected' : ''; ?>>Rejected</option>
                         <option value="disbursed" <?php echo $status_filter === 'disbursed' ? 'selected' : ''; ?>>Disbursed</option>
@@ -1319,89 +1087,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             </div>
 
-            <!-- Student Aid Requests Table -->
+            <!-- Requests Table -->
             <div class="card">
                 <div class="card-header">
                     <h3>Student Financial Aid Requests</h3>
-                    <div class="card-header-actions">
-                        <span class="filter-label" style="margin-right: 1rem;">
-                            Showing <?php echo count($aid_requests); ?> request(s)
-                        </span>
-                    </div>
+                    <span class="filter-label">Showing <?php echo count($aid_requests); ?> request(s)</span>
                 </div>
                 <div class="card-body">
                     <?php if (empty($aid_requests)): ?>
-                        <div style="text-align: center; color: var(--dark-gray); padding: 3rem;">
-                            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                            <p>No student aid requests found matching your criteria.</p>
-                            <?php if ($status_filter !== 'all' || !empty($search)): ?>
-                                <button class="btn btn-primary" onclick="resetFilters()" style="margin-top: 1rem;">
-                                    <i class="fas fa-redo"></i> Reset Filters
-                                </button>
-                            <?php endif; ?>
+                        <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
+                            <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5;"></i>
+                            <p>No student aid requests found</p>
                         </div>
                     <?php else: ?>
-                        <table class="table">
-                            <thead>
-                                <tr>
-                                    <th>Student</th>
-                                    <th>Request Details</th>
-                                    <th>Amount</th>
-                                    <th>Urgency</th>
-                                    <th>Status</th>
-                                    <th>Date</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($aid_requests as $request): ?>
+                        <div style="overflow-x: auto;">
+                            <table class="table">
+                                <thead>
                                     <tr>
-                                        <td>
-                                            <strong><?php echo htmlspecialchars($request['student_name']); ?></strong>
-                                            <br>
-                                            <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($request['registration_number']); ?></small>
-                                        </td>
-                                        <td>
-                                            <strong><?php echo htmlspecialchars($request['request_title']); ?></strong>
-                                            <br>
-                                            <small style="color: var(--dark-gray);">
-                                                <?php echo htmlspecialchars(substr($request['purpose'], 0, 100)); ?>
-                                                <?php echo strlen($request['purpose']) > 100 ? '...' : ''; ?>
-                                            </small>
-                                        </td>
-                                        <td>
-                                            <div class="amount requested">RWF <?php echo number_format($request['amount_requested'], 2); ?></div>
-                                            <?php if ($request['amount_approved'] > 0): ?>
-                                                <div class="amount approved">RWF <?php echo number_format($request['amount_approved'], 2); ?></div>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <span class="urgency-badge urgency-<?php echo $request['urgency_level']; ?>">
-                                                <?php echo ucfirst($request['urgency_level']); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge status-<?php echo $request['status']; ?>">
-                                                <?php echo ucfirst(str_replace('_', ' ', $request['status'])); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <?php echo date('M j, Y', strtotime($request['created_at'])); ?>
-                                        </td>
-                                        <td>
-                                            <div style="display: flex; gap: 0.25rem;">
-                                                <a href="view_student_aid.php?id=<?php echo $request['id']; ?>" class="btn btn-primary btn-sm">
-                                                    <i class="fas fa-eye"></i> View
-                                                </a>
-                                                <a href="?action=delete_request&id=<?php echo $request['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this request?')">
-                                                    <i class="fas fa-trash"></i>
-                                                </a>
-                                            </div>
-                                        </td>
+                                        <th>Student</th>
+                                        <th>Request</th>
+                                        <th>Amount</th>
+                                        <th>Urgency</th>
+                                        <th>Status</th>
+                                        <th>Date</th>
+                                        <th>Actions</th>
                                     </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($aid_requests as $req): ?>
+                                        <tr>
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($req['student_name']); ?></strong><br>
+                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($req['registration_number']); ?></small>
+                                            </td>
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($req['request_title']); ?></strong><br>
+                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($req['purpose'], 0, 50)); ?>...</small>
+                                            </td>
+                                            <td>
+                                                <div class="amount requested">RWF <?php echo number_format($req['amount_requested'], 0); ?></div>
+                                                <?php if ($req['amount_approved'] > 0): ?>
+                                                    <div class="amount approved">Approved: RWF <?php echo number_format($req['amount_approved'], 0); ?></div>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <span class="urgency-badge urgency-<?php echo $req['urgency_level']; ?>">
+                                                    <?php echo ucfirst($req['urgency_level']); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <span class="status-badge <?php echo getStatusBadgeClass($req['status']); ?>">
+                                                    <?php echo getStatusText($req['status']); ?>
+                                                </span>
+                                            </td>
+                                            <td><?php echo date('M j, Y', strtotime($req['created_at'])); ?></td>
+                                            <td>
+                                                <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
+                                                    <a href="view_student_aid.php?id=<?php echo $req['id']; ?>" class="btn btn-primary btn-sm">
+                                                        <i class="fas fa-eye"></i> View
+                                                    </a>
+                                                    <a href="?action=delete_request&id=<?php echo $req['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this request?')">
+                                                        <i class="fas fa-trash"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
                     <?php endif; ?>
                 </div>
             </div>
@@ -1426,6 +1180,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active');
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+            });
+        }
+
         // Filter functionality
         function applyFilters() {
             const status = document.getElementById('statusFilter').value;
@@ -1443,14 +1242,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         function resetFilters() {
             window.location.href = 'student_aid.php';
         }
-
-        // Auto-focus search input
-        document.addEventListener('DOMContentLoaded', function() {
-            const searchInput = document.getElementById('searchInput');
-            if (searchInput && !searchInput.value) {
-                searchInput.focus();
-            }
-        });
     </script>
 </body>
 </html>

@@ -25,7 +25,7 @@ try {
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
         WHERE role_specific = 'vice_guild_academic' OR role_specific IS NULL
-        AND is_active = 1
+        AND is_active = TRUE
         ORDER BY name
     ");
     $stmt->execute();
@@ -84,7 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $stmt = $pdo->prepare("
                     INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NOW())
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP)
+                    RETURNING id
                 ");
                 
                 $stmt->execute([
@@ -97,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     json_encode($content_data)
                 ]);
                 
-                $report_id = $pdo->lastInsertId();
+                $report_id = $stmt->fetchColumn();
                 
                 // Handle file uploads if any
                 if (!empty($_FILES['report_files']['name'][0])) {
@@ -1042,63 +1043,160 @@ try {
             padding: 0.25rem;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .template-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
-            
-            .tabs {
-                flex-direction: column;
-            }
-            
-            .tab {
-                border-bottom: 1px solid var(--medium-gray);
-                border-left: 2px solid transparent;
-            }
-            
-            .tab.active {
-                border-left-color: var(--academic-primary);
-                border-bottom-color: var(--medium-gray);
-            }
+        /* =============================================
+           RESPONSIVE — mobile-first breakpoints
+        ============================================= */
+
+        /* Hamburger button (hidden on desktop) */
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            gap: 5px;
+            width: 44px;
+            height: 44px;
+            background: var(--light-gray);
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            padding: 10px;
+            transition: var(--transition);
+            flex-shrink: 0;
+        }
+        .hamburger span {
+            display: block;
+            height: 2px;
+            background: var(--text-dark);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+        .hamburger:hover { background: var(--academic-primary); }
+        .hamburger:hover span { background: #fff; }
+
+        /* Sidebar overlay */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+        }
+        .sidebar-overlay.active { display: block; }
+
+        /* Scrollable table wrapper */
+        .table-responsive {
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
+        /* ── 1280 px ── */
+        @media (max-width: 1280px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .template-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        /* ── 1024 px ── */
+        @media (max-width: 1024px) {
+            .dashboard-container { grid-template-columns: 200px 1fr; }
+            .brand-text h1 { font-size: 1.05rem; }
+        }
+
+        /* ── 768 px ── tablet */
+        @media (max-width: 768px) {
+            .hamburger { display: flex; }
+
+            .dashboard-container { grid-template-columns: 1fr; }
+
+            /* Sidebar becomes slide-in drawer */
+            .sidebar {
+                position: fixed;
+                top: 80px;
+                left: 0;
+                width: 260px;
+                height: calc(100vh - 80px);
+                z-index: 200;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                box-shadow: var(--shadow-lg);
+            }
+            .sidebar.open { transform: translateX(0); }
+
+            .main-content { height: auto; overflow-y: visible; }
+
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .template-grid { grid-template-columns: 1fr; }
+
+            .nav-container { padding: 0 1rem; }
+            .user-details { display: none; }
+
+            /* Tabs scroll horizontally */
+            .tabs {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                flex-wrap: nowrap;
+                padding-bottom: 2px;
+            }
+            .tab { white-space: nowrap; flex-shrink: 0; }
+
+            /* Modal full-width */
+            #reportModal > div {
+                width: 95% !important;
+                max-width: 95% !important;
+                margin: 1rem;
+            }
+
+            .header { height: 70px; }
+            .dashboard-container { min-height: calc(100vh - 70px); }
+            .sidebar { top: 70px; height: calc(100vh - 70px); }
+        }
+
+        /* ── 480 px ── large phone */
         @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
+            .header { height: 64px; }
+            .dashboard-container { min-height: calc(100vh - 64px); }
+            .sidebar { top: 64px; height: calc(100vh - 64px); }
+
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .main-content { padding: 0.875rem; }
+            .brand-text h1 { font-size: 0.9rem; }
+
+            .welcome-section h1 { font-size: 1.15rem; }
+
+            .stat-card { padding: 0.75rem; gap: 0.75rem; }
+            .stat-number { font-size: 1.25rem; }
+
+            .template-card { padding: 1rem; }
+
+            /* Table compact */
+            .table th, .table td { padding: 0.6rem 0.5rem; font-size: 0.75rem; }
+
+            /* Report form submit buttons stack */
+            #reportForm .form-group:last-child { display: flex; flex-direction: column; gap: 0.5rem; }
+            #reportForm .form-group:last-child .btn { width: 100%; justify-content: center; }
+
+            /* File upload smaller padding */
+            .file-upload { padding: 1.25rem; }
+        }
+
+        /* ── 360 px ── small phone */
+        @media (max-width: 360px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .brand-text h1 { display: none; }
         }
     </style>
 </head>
 <body>
+    <!-- Sidebar overlay for mobile -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
+                    <span></span><span></span><span></span>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1158,7 +1256,7 @@ try {
                 FROM meeting_attendees ma 
                 JOIN meetings m ON ma.meeting_id = m.id 
                 WHERE ma.user_id = ? 
-                AND m.meeting_date >= CURDATE() 
+                AND m.meeting_date >= CURRENT_DATE 
                 AND m.status = 'scheduled'
                 AND ma.attendance_status = 'invited'
             ");
@@ -1173,12 +1271,6 @@ try {
         <?php endif; ?>
     </a>
 </li>
-                <li class="menu-item">
-                    <!-- <a href="academic_meetings.php">
-                        <i class="fas fa-calendar-check"></i>
-                        <span>Meetings</span>
-                    </a> -->
-                </li>
                 <li class="menu-item">
                     <a href="academic_tickets.php">
                         <i class="fas fa-graduation-cap"></i>
@@ -1483,11 +1575,12 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
+        // ── Dark Mode Toggle ──────────────────────────────────────
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        const savedTheme = localStorage.getItem('theme') ||
+            (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
             themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -1500,7 +1593,40 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Tab functionality
+        // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
+        const hamburgerBtn   = document.getElementById('hamburgerBtn');
+        const sidebar        = document.querySelector('.sidebar');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+        function openSidebar() {
+            sidebar.classList.add('open');
+            sidebarOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+            sidebarOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        if (hamburgerBtn) hamburgerBtn.addEventListener('click', () =>
+            sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
+        );
+        if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
+
+        document.querySelectorAll('.sidebar .menu-item a').forEach(link =>
+            link.addEventListener('click', () => { if (window.innerWidth <= 768) closeSidebar(); })
+        );
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        });
+
+        // ── Tab functionality ─────────────────────────────────────
         document.addEventListener('DOMContentLoaded', function() {
             const tabs = document.querySelectorAll('.tab');
             const tabContents = document.querySelectorAll('.tab-content');

@@ -38,29 +38,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 $file_path = $upload_dir . $file_name;
                 
                 if (move_uploaded_file($file['tmp_name'], $file_path)) {
-                    $imported_data = [];
                     $success_count = 0;
                     $duplicate_count = 0;
                     $invalid_count = 0;
+                    $not_student_count = 0;
                     $errors = [];
                     
-                    // Parse CSV file with BOM handling
                     if (($handle = fopen($file_path, "r")) !== FALSE) {
-                        // Read the first line (headers)
                         $first_line = fgets($handle);
-                        
-                        // Remove BOM if present
                         $first_line = preg_replace('/^\xEF\xBB\xBF/', '', $first_line);
-                        
-                        // Parse the headers
                         $headers = str_getcsv($first_line);
                         $headers = array_map('trim', $headers);
                         $headers_lower = array_map('strtolower', $headers);
                         
-                        // Required headers
-                        $required_headers = ['name', 'role'];
-                        
-                        // Check for missing required headers
+                        $required_headers = ['email', 'role'];
                         $missing_headers = [];
                         foreach ($required_headers as $required) {
                             if (!in_array($required, $headers_lower)) {
@@ -83,54 +74,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     $row_lower[strtolower($header)] = isset($data[$index]) ? trim($data[$index]) : '';
                                 }
                                 
-                                $name = $row_lower['name'] ?? '';
+                                $email = $row_lower['email'] ?? '';
                                 $role = $row_lower['role'] ?? '';
                                 
-                                if (empty($name) || empty($role)) {
+                                if (empty($email) || empty($role)) {
                                     $invalid_count++;
-                                    $errors[] = "Row $row_count: Missing name or role";
+                                    $errors[] = "Row $row_count: Missing email or role";
                                     continue;
                                 }
                                 
-                                // Check if member already exists by email
-                                $email = $row_lower['email'] ?? '';
-                                if (!empty($email)) {
-                                    $check_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE email = ?");
-                                    $check_stmt->execute([$email]);
-                                    if ($check_stmt->fetch()) {
-                                        $duplicate_count++;
-                                        continue;
-                                    }
+                                // Check if student exists
+                                $student_stmt = $pdo->prepare("SELECT id, full_name, reg_number, phone, department_id, program_id, academic_year FROM users WHERE email = ? AND role = 'student' AND status = 'active' AND deleted_at IS NULL");
+                                $student_stmt->execute([$email]);
+                                $student = $student_stmt->fetch(PDO::FETCH_ASSOC);
+                                
+                                if (!$student) {
+                                    $not_student_count++;
+                                    $errors[] = "Row $row_count: Email '$email' is not registered as a student. Please add the student first.";
+                                    continue;
                                 }
                                 
-                                // Check if student exists and get their details
-                                $user_id_val = null;
-                                if (!empty($email)) {
-                                    $user_stmt = $pdo->prepare("SELECT id FROM users WHERE email = ? AND role = 'student'");
-                                    $user_stmt->execute([$email]);
-                                    $user_id_val = $user_stmt->fetchColumn();
+                                // Check if already a committee member
+                                $check_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE email = ?");
+                                $check_stmt->execute([$email]);
+                                if ($check_stmt->fetch()) {
+                                    $duplicate_count++;
+                                    continue;
                                 }
                                 
                                 try {
                                     $stmt = $pdo->prepare("
                                         INSERT INTO committee_members (
-                                            user_id, name, role, reg_number, email, phone, 
-                                            academic_year, bio, portfolio_description, 
-                                            role_order, status, created_by, created_at
-                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                                            user_id, name, reg_number, role, role_order, 
+                                            department_id, program_id, academic_year, 
+                                            email, phone, bio, portfolio_description, 
+                                            status, created_by, created_at
+                                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                                     ");
                                     
                                     $stmt->execute([
-                                        $user_id_val,
-                                        $name,
+                                        $student['id'],
+                                        $student['full_name'],
+                                        $student['reg_number'],
                                         $role,
-                                        !empty($row_lower['reg_number']) ? $row_lower['reg_number'] : null,
-                                        !empty($email) ? $email : null,
-                                        !empty($row_lower['phone']) ? $row_lower['phone'] : null,
-                                        !empty($row_lower['academic_year']) ? $row_lower['academic_year'] : null,
+                                        isset($row_lower['role_order']) && is_numeric($row_lower['role_order']) ? (int)$row_lower['role_order'] : 0,
+                                        $student['department_id'],
+                                        $student['program_id'],
+                                        $student['academic_year'],
+                                        $email,
+                                        $student['phone'],
                                         !empty($row_lower['bio']) ? $row_lower['bio'] : null,
                                         !empty($row_lower['portfolio_description']) ? $row_lower['portfolio_description'] : null,
-                                        isset($row_lower['role_order']) && is_numeric($row_lower['role_order']) ? (int)$row_lower['role_order'] : 0,
                                         isset($row_lower['status']) && in_array(strtolower($row_lower['status']), ['active', 'inactive']) ? strtolower($row_lower['status']) : 'active',
                                         $user_id
                                     ]);
@@ -141,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 }
                             }
                             
-                            $message = "Import completed! Success: $success_count, Duplicates: $duplicate_count, Failed: $invalid_count";
+                            $message = "Import completed! Success: $success_count, Duplicates: $duplicate_count, Failed: $invalid_count, Not Students: $not_student_count";
                             if (!empty($errors) && count($errors) <= 5) {
                                 $message .= "<br>Errors: " . implode('<br>', $errors);
                             } elseif (!empty($errors)) {
@@ -155,7 +149,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         $error = "Could not open the CSV file.";
                     }
                     
-                    // Delete the uploaded file
                     if (file_exists($file_path)) {
                         unlink($file_path);
                     }
@@ -177,6 +170,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
         try {
+            $student_id = $_POST['student_id'] ?? null;
+            $student = null;
+            
+            // If student_id is provided, get student details
+            if ($student_id) {
+                $student_stmt = $pdo->prepare("SELECT id, full_name, reg_number, email, phone, department_id, program_id, academic_year FROM users WHERE id = ? AND role = 'student' AND status = 'active' AND deleted_at IS NULL");
+                $student_stmt->execute([$student_id]);
+                $student = $student_stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if (!$student) {
+                    throw new Exception("Student not found or not active.");
+                }
+            }
+            
+            if (!$student) {
+                throw new Exception("Please select a valid student from the search results. Only existing students can be added to the committee.");
+            }
+            
+            // Check if already a committee member
+            $check_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ?");
+            $check_stmt->execute([$student['id']]);
+            if ($check_stmt->fetch()) {
+                throw new Exception("This student is already a committee member.");
+            }
+            
             $photo_url = null;
             if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
                 $upload_dir = '../assets/uploads/committee/';
@@ -209,16 +227,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             ");
             
             $stmt->execute([
-                !empty($_POST['user_id']) ? $_POST['user_id'] : null,
-                $_POST['name'],
-                $_POST['reg_number'] ?? null,
+                $student['id'],
+                $student['full_name'],
+                $student['reg_number'],
                 $_POST['role'],
                 $_POST['role_order'] ?? 0,
-                !empty($_POST['department_id']) ? $_POST['department_id'] : null,
-                !empty($_POST['program_id']) ? $_POST['program_id'] : null,
-                $_POST['academic_year'] ?? null,
-                $_POST['email'] ?? null,
-                $_POST['phone'] ?? null,
+                $student['department_id'],
+                $student['program_id'],
+                $student['academic_year'],
+                $student['email'],
+                $student['phone'],
                 $_POST['bio'] ?? null,
                 $_POST['portfolio_description'] ?? null,
                 $photo_url,
@@ -226,9 +244,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $user_id
             ]);
             
-            $message = "Committee member added successfully!";
+            $message = "Student added to committee successfully!";
             header("Location: committee.php?msg=" . urlencode($message));
             exit();
+        } catch (Exception $e) {
+            $error = $e->getMessage();
         } catch (PDOException $e) {
             $error = "Error adding committee member: " . $e->getMessage();
         }
@@ -273,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $updateFields = [];
             $params = [];
             
-            $allowedFields = ['name', 'reg_number', 'role', 'role_order', 'department_id', 'program_id', 'academic_year', 'email', 'phone', 'bio', 'portfolio_description', 'status'];
+            $allowedFields = ['role', 'role_order', 'bio', 'portfolio_description', 'status'];
             
             foreach ($allowedFields as $field) {
                 if (isset($_POST[$field])) {
@@ -404,23 +424,47 @@ if (isset($_GET['get_member']) && isset($_GET['id'])) {
     exit();
 }
 
-// Search student via AJAX
+// Search student via AJAX - Only returns students not already in committee
 if (isset($_GET['search_student']) && isset($_GET['query'])) {
     header('Content-Type: application/json');
     $query = trim($_GET['query']);
     
     try {
         $stmt = $pdo->prepare("
-            SELECT id, full_name, reg_number, email, phone, department_id, program_id, academic_year 
-            FROM users 
-            WHERE (role = 'student' AND status = 'active') 
-            AND (reg_number ILIKE ? OR full_name ILIKE ?)
-            LIMIT 5
+            SELECT u.id, u.full_name, u.reg_number, u.email, u.phone, u.department_id, u.program_id, u.academic_year,
+                   d.name as department_name, p.name as program_name
+            FROM users u
+            LEFT JOIN departments d ON u.department_id = d.id
+            LEFT JOIN programs p ON u.program_id = p.id
+            WHERE u.role = 'student' 
+            AND u.status = 'active' 
+            AND u.deleted_at IS NULL
+            AND u.id NOT IN (SELECT user_id FROM committee_members WHERE user_id IS NOT NULL)
+            AND (u.reg_number ILIKE ? OR u.full_name ILIKE ? OR u.email ILIKE ?)
+            LIMIT 10
         ");
         $search_term = "%$query%";
-        $stmt->execute([$search_term, $search_term]);
+        $stmt->execute([$search_term, $search_term, $search_term]);
         $students = $stmt->fetchAll(PDO::FETCH_ASSOC);
         echo json_encode($students);
+    } catch (PDOException $e) {
+        echo json_encode(['error' => $e->getMessage()]);
+    }
+    exit();
+}
+
+// Get student details by ID
+if (isset($_GET['get_student']) && isset($_GET['id'])) {
+    header('Content-Type: application/json');
+    try {
+        $stmt = $pdo->prepare("
+            SELECT id, full_name, reg_number, email, phone, department_id, program_id, academic_year
+            FROM users 
+            WHERE id = ? AND role = 'student' AND status = 'active' AND deleted_at IS NULL
+        ");
+        $stmt->execute([$_GET['id']]);
+        $student = $stmt->fetch(PDO::FETCH_ASSOC);
+        echo json_encode($student);
     } catch (PDOException $e) {
         echo json_encode(['error' => $e->getMessage()]);
     }
@@ -591,6 +635,7 @@ $logo_path = '../assets/images/rp_logo.png';
             --shadow: 0 1px 3px rgba(0,0,0,0.1);
             --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1);
             --border-radius: 12px;
+            --transition: all 0.3s ease;
         }
 
         body.dark-mode {
@@ -727,7 +772,6 @@ $logo_path = '../assets/images/rp_logo.png';
             min-height: calc(100vh - 65px);
         }
 
-        /* Sidebar */
         .sidebar {
             width: 260px;
             background: var(--card-bg);
@@ -760,14 +804,12 @@ $logo_path = '../assets/images/rp_logo.png';
             color: var(--primary);
         }
 
-        /* Main Content */
         .main-content {
             flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
         }
 
-        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
@@ -785,7 +827,6 @@ $logo_path = '../assets/images/rp_logo.png';
             gap: 0.5rem;
         }
 
-        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
             border: none;
@@ -921,7 +962,6 @@ $logo_path = '../assets/images/rp_logo.png';
             width: 250px;
         }
 
-        /* View Toggle */
         .view-toggle {
             display: flex;
             gap: 0.5rem;
@@ -944,7 +984,6 @@ $logo_path = '../assets/images/rp_logo.png';
             border-color: var(--primary);
         }
 
-        /* Bulk Actions */
         .bulk-actions-bar {
             background: var(--card-bg);
             padding: 0.8rem;
@@ -1252,7 +1291,6 @@ $logo_path = '../assets/images/rp_logo.png';
             color: var(--text-secondary);
         }
 
-        /* Sample Table Styles */
         .sample-table-container {
             background: var(--bg-primary);
             border-radius: 8px;
@@ -1450,8 +1488,7 @@ $logo_path = '../assets/images/rp_logo.png';
                                 <th>Phone</th>
                                 <th>Status</th>
                                 <th width="120">Actions</th>
-                            </tr>
-                        </thead>
+                            </thead>
                         <tbody>
                             <?php if (empty($committee_members)): ?>
                                 <tr>
@@ -1459,7 +1496,7 @@ $logo_path = '../assets/images/rp_logo.png';
                                         <div class="empty-state">
                                             <i class="fas fa-user-tie" style="font-size: 3rem; opacity: 0.5;"></i>
                                             <h3>No committee members found</h3>
-                                            <p>Click "Add Member" to create one.</p>
+                                            <p>Click "Add Member" to add a student to the committee.</p>
                                         </div>
                                     </td>
                                 </tr>
@@ -1542,7 +1579,7 @@ $logo_path = '../assets/images/rp_logo.png';
         </main>
     </div>
 
-    <!-- Add/Edit Modal with Student Search -->
+    <!-- Add Modal with Student Search -->
     <div id="memberModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
@@ -1551,56 +1588,28 @@ $logo_path = '../assets/images/rp_logo.png';
             </div>
             <form method="POST" enctype="multipart/form-data" id="memberForm">
                 <input type="hidden" name="action" id="formAction" value="add">
-                <input type="hidden" name="member_id" id="memberId">
+                <input type="hidden" name="member_id" id="memberId" value="">
+                <input type="hidden" name="student_id" id="studentId" value="">
                 
                 <!-- Student Search Section -->
                 <div class="alert alert-info" style="margin-bottom: 1rem;">
-                    <i class="fas fa-info-circle"></i> <strong>Quick Student Search:</strong> Search by registration number or name to auto-fill student details.
+                    <i class="fas fa-info-circle"></i> <strong>Important:</strong> Only existing students can be added to the committee. 
+                    If a student is not found, please add them first in <a href="students.php" style="color: var(--primary);">Student Management</a>.
                 </div>
                 
                 <div class="form-group search-container">
-                    <label>Search Student</label>
-                    <input type="text" id="studentSearchInput" class="form-control" placeholder="Enter registration number or name..." autocomplete="off">
+                    <label>Search Student *</label>
+                    <input type="text" id="studentSearchInput" class="form-control" placeholder="Enter registration number or name..." autocomplete="off" required>
                     <div id="studentSearchResults" class="student-search-results"></div>
                 </div>
                 
-                <div class="form-group">
-                    <label>Full Name *</label>
-                    <input type="text" name="name" id="name" required>
+                <div id="selectedStudentInfo" style="display: none;" class="info-box">
+                    <strong><i class="fas fa-user-check"></i> Selected Student:</strong>
+                    <div id="studentDetails"></div>
                 </div>
+                
                 <div class="form-group">
-                    <label>Registration Number</label>
-                    <input type="text" name="reg_number" id="reg_number">
-                </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" name="email" id="email">
-                </div>
-                <div class="form-group">
-                    <label>Phone</label>
-                    <input type="text" name="phone" id="phone">
-                </div>
-                <div class="form-group">
-                    <label>Department</label>
-                    <select name="department_id" id="department_id">
-                        <option value="">Select Department</option>
-                        <?php foreach ($departments as $dept): ?>
-                            <option value="<?php echo $dept['id']; ?>"><?php echo htmlspecialchars($dept['name']); ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Program</label>
-                    <select name="program_id" id="program_id">
-                        <option value="">Select Program</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Academic Year</label>
-                    <input type="text" name="academic_year" id="academic_year" placeholder="e.g., 2024-2025">
-                </div>
-                <div class="form-group">
-                    <label>Role *</label>
+                    <label>Committee Role *</label>
                     <select name="role" id="role" required>
                         <option value="">Select Role</option>
                         <?php foreach ($available_roles as $key => $name): ?>
@@ -1608,23 +1617,28 @@ $logo_path = '../assets/images/rp_logo.png';
                         <?php endforeach; ?>
                     </select>
                 </div>
+                
                 <div class="form-group">
                     <label>Role Order</label>
                     <input type="number" name="role_order" id="role_order" value="0">
                 </div>
+                
                 <div class="form-group">
                     <label>Bio</label>
                     <textarea name="bio" id="bio" rows="3"></textarea>
                 </div>
+                
                 <div class="form-group">
                     <label>Portfolio Description</label>
                     <textarea name="portfolio_description" id="portfolio_description" rows="3"></textarea>
                 </div>
+                
                 <div class="form-group">
                     <label>Profile Photo</label>
                     <input type="file" name="photo" id="photo" accept="image/*" onchange="previewImage(this)">
                     <div id="imagePreview" class="image-preview" style="display: none;"></div>
                 </div>
+                
                 <div class="form-group">
                     <label>Status</label>
                     <select name="status" id="status">
@@ -1632,9 +1646,10 @@ $logo_path = '../assets/images/rp_logo.png';
                         <option value="inactive">Inactive</option>
                     </select>
                 </div>
+                
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Member</button>
+                    <button type="submit" class="btn btn-primary" id="submitBtn" disabled>Add to Committee</button>
                 </div>
             </form>
         </div>
@@ -1656,18 +1671,24 @@ $logo_path = '../assets/images/rp_logo.png';
                 </div>
 
                 <div class="info-box">
+                    <strong><i class="fas fa-info-circle"></i> Important:</strong>
+                    <p>Only existing students can be added to the committee. The email must match an existing student record.</p>
+                </div>
+
+                <div class="info-box">
                     <strong><i class="fas fa-info-circle"></i> Required Columns:</strong>
-                    <p><strong>name</strong> (required), <strong>role</strong> (required), <strong>email</strong>, <strong>reg_number</strong>, <strong>phone</strong>, <strong>academic_year</strong>, <strong>status</strong> (active/inactive)</p>
+                    <p><strong>email</strong> (required - must match existing student), <strong>role</strong> (required)</p>
                 </div>
 
                 <div class="sample-table-container">
                     <h4 style="margin-bottom: 0.5rem;"><i class="fas fa-table"></i> Sample Format</h4>
                     <table class="sample-table">
                         <thead>
-                            <tr><th>name</th><th>role</th><th>email</th><th>reg_number</th><th>phone</th><th>status</th></tr>
+                            <tr><th>email</th><th>role</th><th>role_order</th><th>status</th></tr>
                         </thead>
                         <tbody>
-                            <tr><td>John Doe</td><td>guild_president</td><td>john@rpsu.rw</td><td>20RP000</td><td>0788123456</td><td>active</td></tr>
+                            <tr><td>student.email@rpsu.rw</td><td>guild_president</td><td>1</td><td>active</td></tr>
+                            <tr><td>another.student@rpsu.rw</td><td>general_secretary</td><td>2</td><td>active</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1689,6 +1710,7 @@ $logo_path = '../assets/images/rp_logo.png';
 
     <script>
         let searchTimeout;
+        let selectedStudent = null;
         
         // Theme Toggle
         const themeToggle = document.getElementById('themeToggle');
@@ -1737,141 +1759,102 @@ $logo_path = '../assets/images/rp_logo.png';
         // Student Search Functionality
         const studentSearchInput = document.getElementById('studentSearchInput');
         const searchResults = document.getElementById('studentSearchResults');
+        const selectedStudentInfo = document.getElementById('selectedStudentInfo');
+        const studentDetails = document.getElementById('studentDetails');
+        const submitBtn = document.getElementById('submitBtn');
         
-        studentSearchInput.addEventListener('input', function() {
-            clearTimeout(searchTimeout);
-            const query = this.value.trim();
-            
-            if (query.length < 2) {
-                searchResults.style.display = 'none';
-                return;
-            }
-            
-            searchTimeout = setTimeout(() => {
-                fetch(`committee.php?search_student=1&query=${encodeURIComponent(query)}`)
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.error) {
-                            console.error(data.error);
-                            return;
-                        }
-                        
-                        if (data.length === 0) {
-                            searchResults.innerHTML = '<div class="student-search-result">No students found</div>';
-                            searchResults.style.display = 'block';
-                            return;
-                        }
-                        
-                        searchResults.innerHTML = data.map(student => `
-                            <div class="student-search-result" onclick="selectStudent(${student.id}, '${escapeHtml(student.full_name)}', '${escapeHtml(student.reg_number)}', '${escapeHtml(student.email)}', '${escapeHtml(student.phone)}', ${student.department_id || 'null'}, ${student.program_id || 'null'}, '${escapeHtml(student.academic_year)}')">
-                                <div class="student-result-name">${escapeHtml(student.full_name)}</div>
-                                <div class="student-result-details">Reg: ${escapeHtml(student.reg_number)} | Email: ${escapeHtml(student.email)}</div>
-                            </div>
-                        `).join('');
-                        searchResults.style.display = 'block';
-                    })
-                    .catch(error => {
-                        console.error('Error:', error);
-                    });
-            }, 300);
-        });
+        if (studentSearchInput) {
+            studentSearchInput.addEventListener('input', function() {
+                clearTimeout(searchTimeout);
+                const query = this.value.trim();
+                
+                if (query.length < 2) {
+                    if (searchResults) searchResults.style.display = 'none';
+                    return;
+                }
+                
+                searchTimeout = setTimeout(() => {
+                    fetch(`committee.php?search_student=1&query=${encodeURIComponent(query)}`)
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.error) {
+                                console.error(data.error);
+                                return;
+                            }
+                            
+                            if (data.length === 0) {
+                                if (searchResults) {
+                                    searchResults.innerHTML = '<div class="student-search-result">No students found. <a href="students.php" style="color: var(--primary);">Add a student first</a></div>';
+                                    searchResults.style.display = 'block';
+                                }
+                                return;
+                            }
+                            
+                            if (searchResults) {
+                                searchResults.innerHTML = data.map(student => `
+                                    <div class="student-search-result" onclick="selectStudent(${student.id}, '${escapeHtml(student.full_name)}', '${escapeHtml(student.reg_number)}', '${escapeHtml(student.email)}', '${escapeHtml(student.phone)}', '${escapeHtml(student.department_name || '-')}', '${escapeHtml(student.program_name || '-')}', '${escapeHtml(student.academic_year || '-')}')">
+                                        <div class="student-result-name">${escapeHtml(student.full_name)}</div>
+                                        <div class="student-result-details">Reg: ${escapeHtml(student.reg_number)} | Email: ${escapeHtml(student.email)}</div>
+                                    </div>
+                                `).join('');
+                                searchResults.style.display = 'block';
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                        });
+                }, 300);
+            });
+        }
         
         // Close search results when clicking outside
         document.addEventListener('click', function(e) {
-            if (!studentSearchInput.contains(e.target) && !searchResults.contains(e.target)) {
-                searchResults.style.display = 'none';
+            if (studentSearchInput && searchResults && !studentSearchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                if (searchResults) searchResults.style.display = 'none';
             }
         });
         
         function escapeHtml(text) {
+            if (!text) return '';
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
         
-        function selectStudent(id, name, regNumber, email, phone, departmentId, programId, academicYear) {
-            // Fill form fields
-            document.getElementById('name').value = name;
-            document.getElementById('reg_number').value = regNumber;
-            document.getElementById('email').value = email;
-            document.getElementById('phone').value = phone;
-            document.getElementById('academic_year').value = academicYear;
+        function selectStudent(id, name, regNumber, email, phone, dept, program, year) {
+            selectedStudent = { id, name, regNumber, email, phone, dept, program, year };
             
-            // Set hidden user_id field
-            const userIdField = document.createElement('input');
-            userIdField.type = 'hidden';
-            userIdField.name = 'user_id';
-            userIdField.value = id;
-            
-            // Remove existing user_id if present
-            const existingUserId = document.querySelector('input[name="user_id"]');
-            if (existingUserId) {
-                existingUserId.remove();
+            // Display selected student info
+            if (studentDetails) {
+                studentDetails.innerHTML = `
+                    <strong>${escapeHtml(name)}</strong><br>
+                    Reg: ${escapeHtml(regNumber)}<br>
+                    Email: ${escapeHtml(email)}<br>
+                    Phone: ${escapeHtml(phone || 'N/A')}<br>
+                    Department: ${escapeHtml(dept)}<br>
+                    Program: ${escapeHtml(program)}<br>
+                    Academic Year: ${escapeHtml(year)}
+                `;
             }
-            document.getElementById('memberForm').appendChild(userIdField);
+            if (selectedStudentInfo) selectedStudentInfo.style.display = 'block';
             
-            // Set department
-            if (departmentId) {
-                document.getElementById('department_id').value = departmentId;
-                // Trigger program loading
-                loadPrograms(departmentId, programId);
-            }
+            // Set student_id field
+            const studentIdField = document.getElementById('studentId');
+            if (studentIdField) studentIdField.value = id;
             
             // Clear search and hide results
-            studentSearchInput.value = '';
-            searchResults.style.display = 'none';
+            if (studentSearchInput) studentSearchInput.value = name;
+            if (searchResults) searchResults.style.display = 'none';
             
-            // Show success message
-            const alertDiv = document.createElement('div');
-            alertDiv.className = 'alert alert-success';
-            alertDiv.style.marginBottom = '1rem';
-            alertDiv.innerHTML = '<i class="fas fa-check-circle"></i> Student details loaded! You can now edit and assign a committee role.';
-            document.getElementById('memberForm').insertBefore(alertDiv, document.getElementById('memberForm').firstChild);
-            setTimeout(() => alertDiv.remove(), 3000);
+            // Enable submit button
+            if (submitBtn) submitBtn.disabled = false;
+            
+            // Clear any previous error messages
+            const existingAlert = document.querySelector('#memberForm .alert-danger');
+            if (existingAlert) existingAlert.remove();
         }
         
-        function loadPrograms(departmentId, selectedProgramId = null) {
-            if (!departmentId) {
-                document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
-                return;
-            }
-            
-            fetch(`committee.php?get_programs=1&department_id=${departmentId}`)
-                .then(res => res.json())
-                .then(data => {
-                    let options = '<option value="">Select Program</option>';
-                    data.forEach(program => {
-                        const selected = selectedProgramId == program.id ? 'selected' : '';
-                        options += `<option value="${program.id}" ${selected}>${escapeHtml(program.name)}</option>`;
-                    });
-                    document.getElementById('program_id').innerHTML = options;
-                })
-                .catch(error => console.error('Error loading programs:', error));
-        }
-        
-        // Department change handler
-        document.getElementById('department_id').addEventListener('change', function() {
-            loadPrograms(this.value);
-        });
-
-        // Modal functions
-        function openAddModal() {
-            document.getElementById('modalTitle').textContent = 'Add Committee Member';
-            document.getElementById('formAction').value = 'add';
-            document.getElementById('memberId').value = '';
-            document.getElementById('memberForm').reset();
-            document.getElementById('imagePreview').style.display = 'none';
-            document.getElementById('studentSearchInput').value = '';
-            
-            // Remove any existing user_id field
-            const existingUserId = document.querySelector('input[name="user_id"]');
-            if (existingUserId) {
-                existingUserId.remove();
-            }
-            
-            document.getElementById('memberModal').classList.add('active');
-        }
-
+        // Edit Modal functions
         function openEditModal(id) {
             event.stopPropagation();
             
@@ -1884,34 +1867,45 @@ $logo_path = '../assets/images/rp_logo.png';
                         return;
                     }
                     
+                    // For edit, we use the add modal but with different title and action
                     document.getElementById('modalTitle').textContent = 'Edit Committee Member';
                     document.getElementById('formAction').value = 'edit';
                     document.getElementById('memberId').value = member.id;
-                    document.getElementById('name').value = member.name || '';
-                    document.getElementById('reg_number').value = member.reg_number || '';
-                    document.getElementById('email').value = member.email || '';
-                    document.getElementById('phone').value = member.phone || '';
                     document.getElementById('role').value = member.role;
                     document.getElementById('role_order').value = member.role_order || 0;
-                    document.getElementById('academic_year').value = member.academic_year || '';
                     document.getElementById('bio').value = member.bio || '';
                     document.getElementById('portfolio_description').value = member.portfolio_description || '';
                     document.getElementById('status').value = member.status;
                     
-                    if (member.department_id) {
-                        document.getElementById('department_id').value = member.department_id;
-                        loadPrograms(member.department_id, member.program_id);
+                    // Hide student search section for edit (can't change student)
+                    const searchContainer = document.querySelector('.search-container');
+                    if (searchContainer) searchContainer.style.display = 'none';
+                    
+                    const selectedInfo = document.getElementById('selectedStudentInfo');
+                    const studentDetailsDiv = document.getElementById('studentDetails');
+                    if (selectedInfo) selectedInfo.style.display = 'block';
+                    if (studentDetailsDiv) {
+                        studentDetailsDiv.innerHTML = `
+                            <strong>${escapeHtml(member.name)}</strong><br>
+                            Reg: ${escapeHtml(member.reg_number || '-')}<br>
+                            Email: ${escapeHtml(member.email || '-')}<br>
+                            Phone: ${escapeHtml(member.phone || '-')}
+                        `;
                     }
                     
                     const preview = document.getElementById('imagePreview');
-                    if (member.photo_url && member.photo_url.trim() !== '') {
-                        preview.innerHTML = `<img src="../${member.photo_url}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;">`;
-                        preview.style.display = 'block';
-                    } else {
-                        preview.innerHTML = '';
-                        preview.style.display = 'none';
+                    if (preview) {
+                        if (member.photo_url && member.photo_url.trim() !== '') {
+                            preview.innerHTML = `<img src="../${member.photo_url}" alt="Preview" style="width: 100%; height: 100%; object-fit: cover;">`;
+                            preview.style.display = 'block';
+                        } else {
+                            preview.innerHTML = '';
+                            preview.style.display = 'none';
+                        }
                     }
                     
+                    const editSubmitBtn = document.getElementById('submitBtn');
+                    if (editSubmitBtn) editSubmitBtn.disabled = false;
                     document.getElementById('memberModal').classList.add('active');
                 })
                 .catch(error => {
@@ -1919,19 +1913,73 @@ $logo_path = '../assets/images/rp_logo.png';
                     alert('Error loading member data');
                 });
         }
-
+        
+        // Add Modal functions
+        function openAddModal() {
+            // Reset form for add
+            document.getElementById('modalTitle').textContent = 'Add Committee Member';
+            document.getElementById('formAction').value = 'add';
+            document.getElementById('memberId').value = '';
+            
+            // Reset all form fields
+            const form = document.getElementById('memberForm');
+            if (form) form.reset();
+            
+            // Reset image preview
+            const imagePreview = document.getElementById('imagePreview');
+            if (imagePreview) {
+                imagePreview.style.display = 'none';
+                imagePreview.innerHTML = '';
+            }
+            
+            // Reset student search section
+            const studentSearch = document.getElementById('studentSearchInput');
+            if (studentSearch) studentSearch.value = '';
+            
+            const studentIdField = document.getElementById('studentId');
+            if (studentIdField) studentIdField.value = '';
+            
+            const selectedInfo = document.getElementById('selectedStudentInfo');
+            if (selectedInfo) selectedInfo.style.display = 'none';
+            
+            const studentDetailsDiv = document.getElementById('studentDetails');
+            if (studentDetailsDiv) studentDetailsDiv.innerHTML = '';
+            
+            // Make sure search container is visible
+            const searchContainer = document.querySelector('.search-container');
+            if (searchContainer) searchContainer.style.display = 'block';
+            
+            // Remove any hidden user_id field if exists
+            const existingUserId = document.querySelector('input[name="user_id"]');
+            if (existingUserId) existingUserId.remove();
+            
+            // Reset selected student
+            selectedStudent = null;
+            
+            // Disable submit button until student is selected
+            const addSubmitBtn = document.getElementById('submitBtn');
+            if (addSubmitBtn) addSubmitBtn.disabled = true;
+            
+            // Remove any existing error/success messages
+            const existingAlert = document.querySelector('#memberForm .alert-danger, #memberForm .alert-success');
+            if (existingAlert) existingAlert.remove();
+            
+            // Show the modal
+            document.getElementById('memberModal').classList.add('active');
+        }
+        
         function closeModal() {
             document.getElementById('memberModal').classList.remove('active');
         }
-
+        
         function openImportModal() {
             document.getElementById('importModal').classList.add('active');
         }
-
+        
         function closeImportModal() {
             document.getElementById('importModal').classList.remove('active');
         }
-
+        
         function previewImage(input) {
             const preview = document.getElementById('imagePreview');
             if (input.files && input.files[0]) {
@@ -1946,11 +1994,11 @@ $logo_path = '../assets/images/rp_logo.png';
                 preview.style.display = 'none';
             }
         }
-
+        
         function toggleAll(source) {
             document.querySelectorAll('.member-checkbox').forEach(cb => cb.checked = source.checked);
         }
-
+        
         function confirmBulk() {
             const action = document.getElementById('bulk_action').value;
             const checked = document.querySelectorAll('.member-checkbox:checked').length;
@@ -1958,11 +2006,12 @@ $logo_path = '../assets/images/rp_logo.png';
             if (checked === 0) { alert('Select members'); return false; }
             return confirm(`${action} ${checked} member(s)?`);
         }
-
+        
         function downloadSampleCSV() {
             const sampleData = [
-                ['name', 'role', 'email', 'reg_number', 'phone', 'academic_year', 'status'],
-                ['John Doe', 'guild_president', 'john@rpsu.rw', '20RP000', '0788123456', '2024-2025', 'active'],
+                ['email', 'role', 'role_order', 'status'],
+                ['student.email@rpsu.rw', 'guild_president', '1', 'active'],
+                ['another.student@rpsu.rw', 'general_secretary', '2', 'active'],
             ];
             
             const csvContent = sampleData.map(row => {
@@ -1978,14 +2027,14 @@ $logo_path = '../assets/images/rp_logo.png';
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
             link.setAttribute('href', url);
-            link.setAttribute('download', 'committee_sample.csv');
+            link.setAttribute('download', 'committee_import_sample.csv');
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
         }
-
+        
         // Close modals when clicking outside
         window.onclick = function(e) {
             const memberModal = document.getElementById('memberModal');

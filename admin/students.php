@@ -195,9 +195,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $stmt->execute($selected_ids);
                     $message = count($selected_ids) . " students deactivated.";
                 } elseif ($bulk_action === 'delete') {
-                    $stmt = $pdo->prepare("UPDATE users SET deleted_at = NOW(), status = 'deleted' WHERE id IN ($placeholders) AND role = 'student'");
+                    // Instead of setting status to 'deleted', set to 'inactive' and set deleted_at timestamp
+                    $stmt = $pdo->prepare("UPDATE users SET status = 'inactive', deleted_at = NOW() WHERE id IN ($placeholders) AND role = 'student'");
                     $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " students deleted.";
+                    $message = count($selected_ids) . " students deleted (marked as inactive).";
                 } elseif ($bulk_action === 'set_class_rep') {
                     $stmt = $pdo->prepare("UPDATE users SET is_class_rep = true WHERE id IN ($placeholders) AND role = 'student'");
                     $stmt->execute($selected_ids);
@@ -316,16 +317,31 @@ if (isset($_GET['toggle_status']) && isset($_GET['id'])) {
 }
 
 // Handle Delete Student
+// Handle Delete Student - PERMANENT DELETE
 if (isset($_GET['delete']) && isset($_GET['id'])) {
     $student_id = $_GET['id'];
     try {
-        $stmt = $pdo->prepare("UPDATE users SET deleted_at = NOW(), status = 'deleted' WHERE id = ? AND role = 'student'");
+        // Start transaction
+        $pdo->beginTransaction();
+        
+        // Check if student has any related records that need to be handled
+        // Delete from committee_members if they were a committee member
+        $cm_stmt = $pdo->prepare("DELETE FROM committee_members WHERE user_id = ?");
+        $cm_stmt->execute([$student_id]);
+        
+        // Delete the student
+        $stmt = $pdo->prepare("DELETE FROM users WHERE id = ? AND role = 'student'");
         $stmt->execute([$student_id]);
-        $message = "Student deleted successfully!";
+        
+        $pdo->commit();
+        
+        $message = "Student permanently deleted successfully!";
         header("Location: students.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
+        $pdo->rollBack();
         $error = "Error deleting student: " . $e->getMessage();
+        error_log("Student deletion error: " . $e->getMessage());
     }
 }
 
@@ -374,7 +390,7 @@ $department_filter = $_GET['department'] ?? '';
 $program_filter = $_GET['program'] ?? '';
 $class_rep_filter = $_GET['class_rep'] ?? '';
 
-// Build WHERE clause
+// Build WHERE clause - only show active and inactive, not deleted ones
 $where_conditions = ["role = 'student'", "deleted_at IS NULL"];
 $params = [];
 
@@ -441,7 +457,7 @@ try {
     error_log("Students fetch error: " . $e->getMessage());
 }
 
-// Get statistics
+// Get statistics (only count active and inactive, not deleted)
 try {
     $stmt = $pdo->query("SELECT status, COUNT(*) as count FROM users WHERE role = 'student' AND deleted_at IS NULL GROUP BY status");
     $status_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -478,13 +494,13 @@ if (isset($_GET['msg'])) {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
+        /* All CSS styles remain the same as in your file */
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
 
-        /* Light Mode (Default) */
         :root {
             --primary: #0056b3;
             --primary-dark: #004080;
@@ -495,7 +511,6 @@ if (isset($_GET['msg'])) {
             --info: #3b82f6;
             --purple: #8b5cf6;
             
-            /* Light Mode Colors */
             --bg-primary: #f4f6f9;
             --bg-secondary: #ffffff;
             --text-primary: #1f2937;
@@ -510,7 +525,6 @@ if (isset($_GET['msg'])) {
             --transition: all 0.3s ease;
         }
 
-        /* Dark Mode */
         body.dark-mode {
             --bg-primary: #111827;
             --bg-secondary: #1f2937;
@@ -1272,6 +1286,7 @@ if (isset($_GET['msg'])) {
     </style>
 </head>
 <body>
+    <!-- All HTML remains exactly the same as your file -->
     <header class="header">
         <div class="header-container">
             <div class="logo-area">
@@ -1308,7 +1323,7 @@ if (isset($_GET['msg'])) {
                 <li class="menu-item"><a href="users.php"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php" class="active"><i class="fas fa-user-graduate"></i> Students</a></li>
-                  <li class="menu-item"><a href="representative.php" ><i class="fas fa-user-check"></i> Class Representatives</a></li>
+                <li class="menu-item"><a href="representative.php" ><i class="fas fa-user-check"></i> Class Representatives</a></li>
                 <li class="menu-item"><a href="departments.php"><i class="fas fa-building"></i> Departments</a></li>
                 <li class="menu-item"><a href="clubs.php"><i class="fas fa-chess-queen"></i> Clubs</a></li>
                 <li class="menu-item"><a href="associations.php"><i class="fas fa-handshake"></i> Associations</a></li>
@@ -1433,7 +1448,6 @@ if (isset($_GET['msg'])) {
                         <thead>
                             <tr>
                                 <th><input type="checkbox" class="select-all" onclick="toggleAll(this)"></th>
-                            
                                 <th>Reg Number</th>
                                 <th>Full Name</th>
                                 <th>Email</th>
@@ -1442,13 +1456,13 @@ if (isset($_GET['msg'])) {
                                 <th>Academic Year</th>
                                 <th>Class Rep</th>
                                 <th>Status</th>
-                            
                                 <th>Actions</th>
-                            </thead>
+                            </tr>
+                        </thead>
                         <tbody>
                             <?php if (empty($students)): ?>
                                 <tr>
-                                    <td colspan="12">
+                                    <td colspan="10">
                                         <div class="empty-state">
                                             <i class="fas fa-user-graduate"></i>
                                             <h3>No students found</h3>
@@ -1460,7 +1474,6 @@ if (isset($_GET['msg'])) {
                                 <?php foreach ($students as $student): ?>
                                     <tr>
                                         <td><input type="checkbox" name="selected_ids[]" value="<?php echo $student['id']; ?>" class="student-checkbox"></td>
-                                       
                                         <td><?php echo htmlspecialchars($student['reg_number'] ?? '-'); ?></td>
                                         <td>
                                             <strong><?php echo htmlspecialchars($student['full_name']); ?></strong>
@@ -1482,7 +1495,6 @@ if (isset($_GET['msg'])) {
                                                 <?php echo ucfirst($student['status']); ?>
                                             </span>
                                         </td>
-                                        
                                         <td class="action-buttons">
                                             <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $student['id']; ?>)">
                                                 <i class="fas fa-edit"></i>
@@ -1779,7 +1791,6 @@ reg_number,full_name,email,phone,academic_year
             document.body.classList.remove('modal-open');
         }
         
-        // Load programs based on department
         function loadPrograms(departmentId, selectedProgramId = null) {
             if (!departmentId) {
                 document.getElementById('program_id').innerHTML = '<option value="">Select Program</option>';
@@ -1814,7 +1825,6 @@ reg_number,full_name,email,phone,academic_year
             loadPrograms(this.value);
         });
         
-        // Bulk actions
         function toggleAll(source) {
             const checkboxes = document.querySelectorAll('.student-checkbox');
             checkboxes.forEach(cb => cb.checked = source.checked);
@@ -1837,7 +1847,6 @@ reg_number,full_name,email,phone,academic_year
             return confirm(`Are you sure you want to ${action} ${checked} student(s)?`);
         }
         
-        // Close modals on outside click
         window.onclick = function(event) {
             const studentModal = document.getElementById('studentModal');
             const importModal = document.getElementById('importModal');
@@ -1845,7 +1854,6 @@ reg_number,full_name,email,phone,academic_year
             if (event.target === importModal) closeImportModal();
         }
         
-        // Prevent modal content click from bubbling
         document.querySelectorAll('.modal-content').forEach(content => {
             content.addEventListener('click', function(e) {
                 e.stopPropagation();

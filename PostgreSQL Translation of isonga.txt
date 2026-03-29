@@ -1,0 +1,2702 @@
+-- PostgreSQL Translation of isonga_portal database
+-- Translated from MySQL dump
+
+-- Enable UUID extension for generating unique identifiers if needed
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- =====================================================
+-- TABLE STRUCTURES
+-- =====================================================
+
+-- Table: academic_events
+CREATE TABLE academic_events (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    event_type VARCHAR(20) DEFAULT 'other' CHECK (event_type IN ('exam','holiday','meeting','workshop','deadline','celebration','other')),
+    event_date DATE NOT NULL,
+    start_time TIME,
+    end_time TIME,
+    location VARCHAR(255),
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','critical')),
+    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: academic_years
+CREATE TABLE academic_years (
+    id SERIAL PRIMARY KEY,
+    academic_year VARCHAR(20) NOT NULL UNIQUE,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    is_current BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: action_logs
+CREATE TABLE action_logs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER,
+    action VARCHAR(255) NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45)
+);
+
+-- Table: allowance_receipts
+CREATE TABLE allowance_receipts (
+    id SERIAL PRIMARY KEY,
+    allowance_type VARCHAR(20) NOT NULL CHECK (allowance_type IN ('communication','mission')),
+    allowance_id INTEGER NOT NULL,
+    recipient_id INTEGER NOT NULL,
+    recipient_name VARCHAR(100) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    purpose TEXT,
+    receipt_date DATE NOT NULL,
+    receipt_file_path VARCHAR(500) NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_size INTEGER,
+    file_type VARCHAR(100),
+    signed_by_recipient BOOLEAN DEFAULT FALSE,
+    recipient_signature_path VARCHAR(500),
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: announcements
+CREATE TABLE announcements (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    excerpt TEXT,
+    author_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'published' CHECK (status IN ('published','draft','archived')),
+    priority VARCHAR(10) DEFAULT 'normal' CHECK (priority IN ('low','normal','high','urgent')),
+    category VARCHAR(100) DEFAULT 'general',
+    image_url VARCHAR(500),
+    expiry_date TIMESTAMP,
+    updated_by INTEGER,
+    view_count INTEGER DEFAULT 0,
+    is_pinned BOOLEAN DEFAULT FALSE
+);
+
+-- Table: arbitration_cases
+CREATE TABLE arbitration_cases (
+    id SERIAL PRIMARY KEY,
+    case_number VARCHAR(50) NOT NULL UNIQUE,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    case_type VARCHAR(30) DEFAULT 'student_dispute' CHECK (case_type IN ('student_dispute','committee_conflict','election_dispute','disciplinary','other')),
+    complainant_id INTEGER,
+    respondent_id INTEGER,
+    complainant_name VARCHAR(100) NOT NULL,
+    respondent_name VARCHAR(100) NOT NULL,
+    complainant_contact VARCHAR(100),
+    respondent_contact VARCHAR(100),
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    status VARCHAR(20) DEFAULT 'filed' CHECK (status IN ('filed','under_review','hearing_scheduled','mediation','resolved','dismissed','appealed')),
+    assigned_to INTEGER,
+    assigned_by INTEGER,
+    assigned_at TIMESTAMP,
+    filing_date DATE NOT NULL,
+    hearing_date TIMESTAMP,
+    resolution_date DATE,
+    resolution_details TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Function to generate case number
+CREATE OR REPLACE FUNCTION generate_case_number()
+RETURNS TRIGGER AS $$
+DECLARE
+    next_num INTEGER;
+    current_year INTEGER;
+BEGIN
+    IF NEW.case_number IS NULL THEN
+        current_year := EXTRACT(YEAR FROM CURRENT_DATE);
+        SELECT COALESCE(MAX(CAST(SUBSTRING(case_number FROM 10) AS INTEGER)), 0) + 1 INTO next_num
+        FROM arbitration_cases
+        WHERE EXTRACT(YEAR FROM created_at) = current_year;
+        NEW.case_number := CONCAT('ARB-', current_year, '-', LPAD(next_num::TEXT, 4, '0'));
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER before_case_insert
+    BEFORE INSERT ON arbitration_cases
+    FOR EACH ROW
+    EXECUTE FUNCTION generate_case_number();
+
+-- Table: arbitration_documents
+CREATE TABLE arbitration_documents (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER,
+    document_type VARCHAR(20) DEFAULT 'other' CHECK (document_type IN ('complaint','response','evidence','hearing_minutes','decision','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(100),
+    file_size INTEGER,
+    confidential BOOLEAN DEFAULT FALSE,
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: arbitration_hearings
+CREATE TABLE arbitration_hearings (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL,
+    hearing_date TIMESTAMP NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    purpose TEXT,
+    minutes TEXT,
+    attendees JSONB,
+    decisions TEXT,
+    next_hearing_date TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','postponed','cancelled')),
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: associations
+CREATE TABLE associations (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(20) DEFAULT 'religious' CHECK (type IN ('religious','cultural','academic','sports','social','other')),
+    description TEXT,
+    established_date DATE,
+    meeting_schedule TEXT,
+    meeting_location VARCHAR(255),
+    faculty_advisor VARCHAR(100),
+    advisor_contact VARCHAR(100),
+    members_count INTEGER DEFAULT 0,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','suspended')),
+    logo_url VARCHAR(500),
+    contact_person VARCHAR(100),
+    contact_email VARCHAR(100),
+    contact_phone VARCHAR(20),
+    social_links JSONB,
+    performance_notes TEXT,
+    goals TEXT,
+    achievements TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: association_activities
+CREATE TABLE association_activities (
+    id SERIAL PRIMARY KEY,
+    association_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    activity_type VARCHAR(20) DEFAULT 'meeting' CHECK (activity_type IN ('meeting','workshop','event','community_service','training','other')),
+    activity_date DATE NOT NULL,
+    start_time TIME,
+    end_time TIME,
+    location VARCHAR(255),
+    participants_count INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled')),
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    organizer_id INTEGER,
+    notes TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: association_members
+CREATE TABLE association_members (
+    id SERIAL PRIMARY KEY,
+    association_id INTEGER NOT NULL,
+    user_id INTEGER,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    department_id INTEGER,
+    program_id INTEGER,
+    academic_year VARCHAR(20),
+    role VARCHAR(20) DEFAULT 'member' CHECK (role IN ('president','vice_president','secretary','treasurer','member','advisor')),
+    join_date DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','graduated')),
+    membership_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_member UNIQUE (association_id, reg_number)
+);
+
+-- Table: association_reports
+CREATE TABLE association_reports (
+    id SERIAL PRIMARY KEY,
+    association_id INTEGER NOT NULL,
+    report_type VARCHAR(10) DEFAULT 'monthly' CHECK (report_type IN ('monthly','quarterly','annual','activity','financial')),
+    title VARCHAR(255) NOT NULL,
+    report_period DATE,
+    content JSONB NOT NULL,
+    submitted_by INTEGER NOT NULL,
+    submitted_at TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','submitted','reviewed','approved')),
+    reviewed_by INTEGER,
+    reviewed_at TIMESTAMP,
+    feedback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: association_resources
+CREATE TABLE association_resources (
+    id SERIAL PRIMARY KEY,
+    association_id INTEGER NOT NULL,
+    resource_type VARCHAR(10) DEFAULT 'document' CHECK (resource_type IN ('document','equipment','financial','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_name VARCHAR(255),
+    file_path VARCHAR(500),
+    file_type VARCHAR(100),
+    file_size INTEGER,
+    quantity INTEGER DEFAULT 1,
+    value DECIMAL(10,2) DEFAULT 0.00,
+    status VARCHAR(10) DEFAULT 'available' CHECK (status IN ('available','in_use','maintenance','lost')),
+    notes TEXT,
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: bank_reconciliations
+CREATE TABLE bank_reconciliations (
+    id SERIAL PRIMARY KEY,
+    reconciliation_date DATE NOT NULL,
+    bank_balance DECIMAL(15,2) NOT NULL,
+    system_balance DECIMAL(15,2) NOT NULL,
+    difference DECIMAL(15,2) NOT NULL,
+    notes TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending','reconciled','discrepancy')),
+    reconciled_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: budget_categories
+CREATE TABLE budget_categories (
+    id SERIAL PRIMARY KEY,
+    category_name VARCHAR(255) NOT NULL,
+    category_type VARCHAR(10) NOT NULL CHECK (category_type IN ('income','expense')),
+    description TEXT,
+    parent_category_id INTEGER,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: campaign_participants
+CREATE TABLE campaign_participants (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER NOT NULL,
+    user_id INTEGER,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    department_id INTEGER,
+    attendance_status VARCHAR(10) DEFAULT 'registered' CHECK (attendance_status IN ('registered','attended','absent')),
+    feedback_rating INTEGER,
+    feedback_comment TEXT,
+    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_participation UNIQUE (campaign_id, reg_number)
+);
+
+-- Table: campaign_resources
+CREATE TABLE campaign_resources (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER NOT NULL,
+    resource_type VARCHAR(10) DEFAULT 'document' CHECK (resource_type IN ('document','equipment','financial','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_name VARCHAR(255),
+    file_path VARCHAR(500),
+    file_type VARCHAR(100),
+    file_size INTEGER,
+    quantity INTEGER DEFAULT 1,
+    cost DECIMAL(10,2) DEFAULT 0.00,
+    status VARCHAR(10) DEFAULT 'available' CHECK (status IN ('available','in_use','consumed')),
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: campaign_tasks
+CREATE TABLE campaign_tasks (
+    id SERIAL PRIMARY KEY,
+    campaign_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    assigned_to INTEGER,
+    due_date DATE,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+    completion_notes TEXT,
+    completed_at TIMESTAMP,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: case_documents
+CREATE TABLE case_documents (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL,
+    document_type VARCHAR(20) DEFAULT 'other' CHECK (document_type IN ('complaint','response','evidence','witness_statement','expert_report','hearing_minutes','decision','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(100),
+    file_size INTEGER,
+    uploaded_by INTEGER NOT NULL,
+    is_confidential BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: case_notes
+CREATE TABLE case_notes (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    note_type VARCHAR(10) DEFAULT 'general' CHECK (note_type IN ('general','hearing','evidence','decision','other')),
+    content TEXT NOT NULL,
+    is_confidential BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: class_rep_reports
+CREATE TABLE class_rep_reports (
+    id SERIAL PRIMARY KEY,
+    template_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    report_type VARCHAR(10) NOT NULL CHECK (report_type IN ('monthly','weekly','activity','incident','meeting','other')),
+    report_period DATE,
+    activity_date DATE,
+    content JSONB NOT NULL,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','submitted','reviewed','approved','rejected')),
+    submitted_at TIMESTAMP,
+    reviewed_by INTEGER,
+    reviewed_at TIMESTAMP,
+    feedback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: class_rep_templates
+CREATE TABLE class_rep_templates (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    report_type VARCHAR(10) DEFAULT 'monthly' CHECK (report_type IN ('monthly','weekly','activity','incident','meeting','other')),
+    fields JSONB NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: clubs
+CREATE TABLE clubs (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category VARCHAR(20) DEFAULT 'academic' CHECK (category IN ('academic','cultural','sports','technical','entrepreneurship','environment','entertainment','other')),
+    department VARCHAR(100),
+    established_date DATE,
+    meeting_schedule TEXT,
+    meeting_location VARCHAR(255),
+    faculty_advisor VARCHAR(100),
+    advisor_contact VARCHAR(100),
+    members_count INTEGER DEFAULT 0,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','suspended')),
+    logo_url VARCHAR(500),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: club_activities
+CREATE TABLE club_activities (
+    id SERIAL PRIMARY KEY,
+    club_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    activity_type VARCHAR(10) DEFAULT 'meeting' CHECK (activity_type IN ('meeting','workshop','competition','social_event','training','other')),
+    activity_date DATE NOT NULL,
+    start_time TIME,
+    end_time TIME,
+    location VARCHAR(255),
+    participants_count INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled')),
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    organizer_id INTEGER,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: club_attendance
+CREATE TABLE club_attendance (
+    id SERIAL PRIMARY KEY,
+    activity_id INTEGER NOT NULL,
+    member_id INTEGER NOT NULL,
+    attendance_status VARCHAR(10) DEFAULT 'absent' CHECK (attendance_status IN ('present','absent','excused')),
+    check_in_time TIMESTAMP,
+    notes TEXT,
+    recorded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_attendance UNIQUE (activity_id, member_id)
+);
+
+-- Table: club_members
+CREATE TABLE club_members (
+    id SERIAL PRIMARY KEY,
+    club_id INTEGER NOT NULL,
+    user_id INTEGER,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    department_id INTEGER,
+    program_id INTEGER,
+    academic_year VARCHAR(20),
+    role VARCHAR(20) DEFAULT 'member' CHECK (role IN ('president','vice_president','secretary','treasurer','member')),
+    join_date DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','graduated')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_member UNIQUE (club_id, reg_number)
+);
+
+-- Table: club_resources
+CREATE TABLE club_resources (
+    id SERIAL PRIMARY KEY,
+    club_id INTEGER NOT NULL,
+    resource_type VARCHAR(10) DEFAULT 'document' CHECK (resource_type IN ('document','equipment','financial','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_name VARCHAR(255),
+    file_path VARCHAR(500),
+    file_type VARCHAR(100),
+    file_size INTEGER,
+    quantity INTEGER DEFAULT 1,
+    value DECIMAL(10,2) DEFAULT 0.00,
+    status VARCHAR(10) DEFAULT 'available' CHECK (status IN ('available','in_use','maintenance','lost')),
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: college_troupe
+CREATE TABLE college_troupe (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    troupe_type VARCHAR(20) DEFAULT 'multidisciplinary' CHECK (troupe_type IN ('music','dance','drama','traditional','multidisciplinary')),
+    established_date DATE,
+    director_id INTEGER,
+    assistant_director_id INTEGER,
+    members_count INTEGER DEFAULT 0,
+    practice_schedule TEXT,
+    practice_location VARCHAR(255),
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','on_break')),
+    achievements TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: committee_audit
+CREATE TABLE committee_audit (
+    id SERIAL PRIMARY KEY,
+    target_member_id INTEGER NOT NULL,
+    committee_role VARCHAR(100) NOT NULL,
+    audit_type VARCHAR(20) DEFAULT 'performance' CHECK (audit_type IN ('performance','financial','compliance','service_explanation')),
+    audit_period DATE NOT NULL,
+    description TEXT NOT NULL,
+    findings TEXT,
+    recommendations TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','follow_up')),
+    audited_by INTEGER NOT NULL,
+    audited_at TIMESTAMP,
+    follow_up_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Function for committee_audit trigger
+CREATE OR REPLACE FUNCTION after_committee_audit_insert()
+RETURNS TRIGGER AS $$
+DECLARE
+    target_user_id INTEGER;
+BEGIN
+    SELECT user_id INTO target_user_id 
+    FROM committee_members 
+    WHERE id = NEW.target_member_id;
+    
+    IF target_user_id IS NOT NULL THEN
+        INSERT INTO system_notifications (
+            user_id,
+            notification_type,
+            title,
+            message,
+            related_id,
+            related_table,
+            created_by,
+            expires_at
+        ) VALUES (
+            target_user_id,
+            'audit_request',
+            'Audit Request from President of Representative Board',
+            CONCAT('You have been requested to undergo a ', NEW.audit_type, ' audit for the period ', 
+                   TO_CHAR(NEW.audit_period, 'Month YYYY'), '. Please check the Committee Audit section for details.'),
+            NEW.id,
+            'committee_audit',
+            NEW.audited_by,
+            CURRENT_TIMESTAMP + INTERVAL '7 days'
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER after_committee_audit_insert_trigger
+    AFTER INSERT ON committee_audit
+    FOR EACH ROW
+    EXECUTE FUNCTION after_committee_audit_insert();
+
+-- Table: committee_budget_requests
+CREATE TABLE committee_budget_requests (
+    id SERIAL PRIMARY KEY,
+    committee_id INTEGER,
+    request_title VARCHAR(255),
+    action_plan_file_path VARCHAR(500),
+    requested_amount DECIMAL(15,2),
+    purpose TEXT,
+    requested_by INTEGER,
+    request_date DATE,
+    status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft','submitted','under_review','approved_by_finance','approved_by_president','rejected','funded')),
+    finance_approval_date TIMESTAMP,
+    president_approval_date TIMESTAMP,
+    finance_approval_notes TEXT,
+    president_approval_notes TEXT,
+    rejection_reason TEXT,
+    approved_amount DECIMAL(15,2),
+    generated_letter_path VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: committee_communication_allowances
+CREATE TABLE committee_communication_allowances (
+    id SERIAL PRIMARY KEY,
+    committee_member_id INTEGER NOT NULL,
+    academic_year VARCHAR(20) NOT NULL,
+    month_year VARCHAR(7) NOT NULL,
+    amount DECIMAL(10,2) DEFAULT 0.00,
+    category_id INTEGER,
+    transaction_id INTEGER,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','approved','paid','cancelled')),
+    payment_date DATE,
+    paid_by INTEGER,
+    paid_at TIMESTAMP,
+    receipt_path VARCHAR(500),
+    notes TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_communication_allowance UNIQUE (committee_member_id, month_year)
+);
+
+-- Table: committee_explanations
+CREATE TABLE committee_explanations (
+    id SERIAL PRIMARY KEY,
+    committee_member_id INTEGER NOT NULL,
+    explanation_type VARCHAR(100) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    deadline DATE NOT NULL,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','responded','satisfied','unsatisfied')),
+    response_text TEXT,
+    responded_at TIMESTAMP,
+    satisfaction_rating INTEGER,
+    requested_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Function for committee_explanations trigger
+CREATE OR REPLACE FUNCTION after_committee_explanations_insert()
+RETURNS TRIGGER AS $$
+DECLARE
+    target_user_id INTEGER;
+BEGIN
+    SELECT user_id INTO target_user_id 
+    FROM committee_members 
+    WHERE id = NEW.committee_member_id;
+    
+    IF target_user_id IS NOT NULL THEN
+        INSERT INTO system_notifications (
+            user_id,
+            notification_type,
+            title,
+            message,
+            related_id,
+            related_table,
+            created_by,
+            expires_at
+        ) VALUES (
+            target_user_id,
+            'explanation_request',
+            'Explanation Request from President of Representative Board',
+            CONCAT('You have been requested to provide an explanation regarding: ', 
+                   NEW.subject, '. Deadline: ', TO_CHAR(NEW.deadline, 'Month DD, YYYY')),
+            NEW.id,
+            'committee_explanations',
+            NEW.requested_by,
+            NEW.deadline + INTERVAL '1 day'
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER after_committee_explanations_insert_trigger
+    AFTER INSERT ON committee_explanations
+    FOR EACH ROW
+    EXECUTE FUNCTION after_committee_explanations_insert();
+
+-- Table: committee_members
+CREATE TABLE committee_members (
+    id SERIAL PRIMARY KEY,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(100) NOT NULL,
+    bio TEXT,
+    photo_url VARCHAR(255),
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    department_id INTEGER,
+    program_id INTEGER,
+    academic_year VARCHAR(20),
+    user_id INTEGER,
+    portfolio_description TEXT,
+    start_date DATE,
+    end_date DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','graduated')),
+    social_links JSONB,
+    achievements TEXT,
+    role_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_committee_role_order ON committee_members(role_order);
+
+-- Table: compiled_action_plans
+CREATE TABLE compiled_action_plans (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    academic_year VARCHAR(20) NOT NULL,
+    total_budget DECIMAL(12,2) DEFAULT 0.00,
+    approved_budget DECIMAL(12,2) DEFAULT 0.00,
+    compiled_by INTEGER NOT NULL,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','submitted','approved','rejected')),
+    compilation_notes TEXT,
+    approval_notes TEXT,
+    approved_by INTEGER,
+    approval_date TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: compiled_plan_items
+CREATE TABLE compiled_plan_items (
+    id SERIAL PRIMARY KEY,
+    compiled_plan_id INTEGER NOT NULL,
+    original_item_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    committee_role VARCHAR(100) NOT NULL,
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    approved_budget DECIMAL(10,2) DEFAULT 0.00,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','critical')),
+    implementation_quarter VARCHAR(2) NOT NULL CHECK (implementation_quarter IN ('Q1','Q2','Q3','Q4')),
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','completed')),
+    sequence_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: conversations
+CREATE TABLE conversations (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255),
+    created_by INTEGER NOT NULL,
+    conversation_type VARCHAR(12) DEFAULT 'direct' CHECK (conversation_type IN ('direct','group','announcement')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: conversation_messages
+CREATE TABLE conversation_messages (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER NOT NULL,
+    sender_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    notification_type VARCHAR(20) CHECK (notification_type IN ('audit_request','explanation_request','meeting_invite','info','warning','urgent')),
+    notification_metadata JSONB,
+    is_system_notification BOOLEAN DEFAULT FALSE,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_notifications ON conversation_messages(sender_id, notification_type, is_system_notification, expires_at)
+    WHERE notification_type IS NOT NULL;
+
+-- Table: conversation_participants
+CREATE TABLE conversation_participants (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role VARCHAR(6) DEFAULT 'member' CHECK (role IN ('member','admin')),
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_read_message_id INTEGER,
+    CONSTRAINT unique_participant UNIQUE (conversation_id, user_id)
+);
+
+-- Table: departments
+CREATE TABLE departments (
+    id SERIAL PRIMARY KEY,
+    code VARCHAR(10) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: documents
+CREATE TABLE documents (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    template_id INTEGER,
+    document_type VARCHAR(20) NOT NULL CHECK (document_type IN ('certificate','receipt','mission','letter','form','report','other')),
+    content TEXT,
+    generated_file VARCHAR(500),
+    metadata JSONB,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','generated','approved','distributed','archived')),
+    generated_by INTEGER NOT NULL,
+    approved_by INTEGER,
+    approved_at TIMESTAMP,
+    recipient_name VARCHAR(255),
+    recipient_email VARCHAR(255),
+    recipient_reg_number VARCHAR(20),
+    purpose TEXT,
+    issue_date DATE,
+    expiry_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: document_categories
+CREATE TABLE document_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    icon VARCHAR(50) DEFAULT 'file',
+    color VARCHAR(7) DEFAULT '#0056b3',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: document_signatures
+CREATE TABLE document_signatures (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    signature_type VARCHAR(10) DEFAULT 'approver' CHECK (signature_type IN ('generator','approver','witness')),
+    signature_path VARCHAR(500),
+    signed_at TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','signed','rejected')),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: document_templates
+CREATE TABLE document_templates (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    category_id INTEGER,
+    template_type VARCHAR(10) DEFAULT 'other' CHECK (template_type IN ('certificate','receipt','mission','letter','form','report','other')),
+    template_file VARCHAR(500),
+    template_content TEXT,
+    fields JSONB,
+    required_roles JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: elections
+CREATE TABLE elections (
+    id SERIAL PRIMARY KEY,
+    election_type VARCHAR(20) DEFAULT 'guild_president' CHECK (election_type IN ('guild_president','executive_committee','class_representative','special')),
+    academic_year VARCHAR(20) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    nomination_start_date DATE NOT NULL,
+    nomination_end_date DATE NOT NULL,
+    campaign_start_date DATE NOT NULL,
+    campaign_end_date DATE NOT NULL,
+    voting_start_date TIMESTAMP NOT NULL,
+    voting_end_date TIMESTAMP NOT NULL,
+    results_announcement_date TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','nomination','campaign','voting','results','completed','cancelled')),
+    election_committee_id INTEGER,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: election_candidates
+CREATE TABLE election_candidates (
+    id SERIAL PRIMARY KEY,
+    election_id INTEGER NOT NULL,
+    user_id INTEGER,
+    student_name VARCHAR(100) NOT NULL,
+    reg_number VARCHAR(20) NOT NULL,
+    position VARCHAR(30) NOT NULL CHECK (position IN ('guild_president','vice_guild_academic','vice_guild_finance','general_secretary','minister_sports','minister_environment','minister_public_relations','minister_health','minister_culture','minister_gender','president_representative_board','vice_president_representative_board','secretary_representative_board','president_arbitration','vice_president_arbitration','advisor_arbitration','secretary_arbitration')),
+    manifesto TEXT,
+    photo_url VARCHAR(500),
+    status VARCHAR(10) DEFAULT 'nominated' CHECK (status IN ('nominated','approved','rejected','withdrawn')),
+    approval_notes TEXT,
+    approved_by INTEGER,
+    approved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_candidate UNIQUE (election_id, position, reg_number)
+);
+
+-- Table: election_committees
+CREATE TABLE election_committees (
+    id SERIAL PRIMARY KEY,
+    academic_year VARCHAR(20) NOT NULL,
+    committee_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    status VARCHAR(10) DEFAULT 'forming' CHECK (status IN ('forming','active','inactive')),
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: election_committee_members
+CREATE TABLE election_committee_members (
+    id SERIAL PRIMARY KEY,
+    election_committee_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role VARCHAR(10) DEFAULT 'member' CHECK (role IN ('chairperson','secretary','member','observer')),
+    assigned_date DATE NOT NULL,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_member UNIQUE (election_committee_id, user_id)
+);
+
+-- Table: election_voters
+CREATE TABLE election_voters (
+    id SERIAL PRIMARY KEY,
+    election_id INTEGER NOT NULL,
+    user_id INTEGER,
+    reg_number VARCHAR(20) NOT NULL,
+    student_name VARCHAR(100) NOT NULL,
+    has_voted BOOLEAN DEFAULT FALSE,
+    voted_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_voter UNIQUE (election_id, reg_number)
+);
+
+-- Table: election_votes
+CREATE TABLE election_votes (
+    id SERIAL PRIMARY KEY,
+    election_id INTEGER NOT NULL,
+    candidate_id INTEGER NOT NULL,
+    voter_id INTEGER NOT NULL,
+    voted_at TIMESTAMP NOT NULL,
+    ip_address VARCHAR(45),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_vote UNIQUE (election_id, voter_id)
+);
+
+-- Function for after_vote_insert trigger
+CREATE OR REPLACE FUNCTION after_vote_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE election_voters 
+    SET has_voted = TRUE, voted_at = NOW() 
+    WHERE id = NEW.voter_id;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER after_vote_insert_trigger
+    AFTER INSERT ON election_votes
+    FOR EACH ROW
+    EXECUTE FUNCTION after_vote_insert();
+
+-- Table: epidemic_alerts
+CREATE TABLE epidemic_alerts (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    disease_type VARCHAR(100) NOT NULL,
+    severity VARCHAR(10) DEFAULT 'medium' CHECK (severity IN ('low','medium','high','critical')),
+    affected_areas JSONB,
+    reported_cases INTEGER DEFAULT 0,
+    suspected_cases INTEGER DEFAULT 0,
+    start_date DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','contained','resolved','false_alarm')),
+    reported_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: equipment_assignments
+CREATE TABLE equipment_assignments (
+    id SERIAL PRIMARY KEY,
+    equipment_id INTEGER NOT NULL,
+    assigned_to_type VARCHAR(12) DEFAULT 'team' CHECK (assigned_to_type IN ('team','facility','individual','department')),
+    assigned_to_id INTEGER NOT NULL,
+    quantity_assigned INTEGER DEFAULT 1,
+    assigned_by INTEGER,
+    assigned_date DATE,
+    expected_return_date DATE,
+    actual_return_date DATE,
+    condition_when_assigned VARCHAR(10) DEFAULT 'good' CHECK (condition_when_assigned IN ('excellent','good','fair','poor')),
+    condition_when_returned VARCHAR(10) CHECK (condition_when_returned IN ('excellent','good','fair','poor','damaged','lost')),
+    notes TEXT,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','returned','overdue','lost')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: equipment_categories
+CREATE TABLE equipment_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    parent_id INTEGER,
+    sport_type VARCHAR(100),
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: equipment_maintenance_log
+CREATE TABLE equipment_maintenance_log (
+    id SERIAL PRIMARY KEY,
+    equipment_id INTEGER NOT NULL,
+    maintenance_type VARCHAR(10) DEFAULT 'routine' CHECK (maintenance_type IN ('routine','repair','cleaning','inspection','other')),
+    description TEXT NOT NULL,
+    performed_by VARCHAR(255),
+    cost DECIMAL(10,2) DEFAULT 0.00,
+    maintenance_date DATE,
+    next_maintenance_date DATE,
+    status_before VARCHAR(20) DEFAULT 'good' CHECK (status_before IN ('excellent','good','fair','poor','needs_replacement')),
+    status_after VARCHAR(20) DEFAULT 'good' CHECK (status_after IN ('excellent','good','fair','poor','needs_replacement')),
+    notes TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: events
+CREATE TABLE events (
+    id SERIAL PRIMARY KEY,
+    category_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    excerpt TEXT,
+    image_url VARCHAR(500),
+    event_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME,
+    location VARCHAR(255) NOT NULL,
+    organizer VARCHAR(255),
+    contact_person VARCHAR(100),
+    contact_email VARCHAR(100),
+    contact_phone VARCHAR(20),
+    max_participants INTEGER,
+    registered_participants INTEGER DEFAULT 0,
+    is_featured BOOLEAN DEFAULT FALSE,
+    status VARCHAR(10) DEFAULT 'published' CHECK (status IN ('draft','published','cancelled','completed')),
+    registration_required BOOLEAN DEFAULT FALSE,
+    registration_deadline DATE,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: event_categories
+CREATE TABLE event_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    color VARCHAR(7) DEFAULT '#0056b3',
+    icon VARCHAR(50) DEFAULT 'calendar',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: event_checklists
+CREATE TABLE event_checklists (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    task_name VARCHAR(255) NOT NULL,
+    task_description TEXT,
+    assigned_to INTEGER,
+    due_date DATE,
+    status VARCHAR(12) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+    completed_at TIMESTAMP,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: event_registrations
+CREATE TABLE event_registrations (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    user_id INTEGER,
+    student_name VARCHAR(100) NOT NULL,
+    student_email VARCHAR(100) NOT NULL,
+    student_reg_number VARCHAR(20) NOT NULL,
+    department VARCHAR(100),
+    phone VARCHAR(20),
+    registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'registered' CHECK (status IN ('registered','attended','cancelled')),
+    CONSTRAINT unique_registration UNIQUE (event_id, student_reg_number)
+);
+
+-- Table: event_team_assignments
+CREATE TABLE event_team_assignments (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    team_member_id INTEGER NOT NULL,
+    assigned_role VARCHAR(255),
+    responsibilities TEXT,
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_by INTEGER NOT NULL,
+    status VARCHAR(10) DEFAULT 'assigned' CHECK (status IN ('assigned','confirmed','completed')),
+    CONSTRAINT unique_event_team UNIQUE (event_id, team_member_id)
+);
+
+-- Table: explanation_requests
+CREATE TABLE explanation_requests (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER,
+    requester_id INTEGER NOT NULL,
+    target_member_id INTEGER NOT NULL,
+    explanation_type VARCHAR(100) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    deadline DATE,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','responded','closed')),
+    response_text TEXT,
+    responded_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: facility_bookings
+CREATE TABLE facility_bookings (
+    id SERIAL PRIMARY KEY,
+    facility_id INTEGER NOT NULL,
+    booked_by INTEGER NOT NULL,
+    purpose VARCHAR(255) NOT NULL,
+    booking_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    participants_count INTEGER,
+    equipment_needed JSONB,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled','completed')),
+    approved_by INTEGER,
+    approved_at TIMESTAMP,
+    rejection_reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: financial_audit_trail
+CREATE TABLE financial_audit_trail (
+    id SERIAL PRIMARY KEY,
+    action_type VARCHAR(100) NOT NULL,
+    table_name VARCHAR(100) NOT NULL,
+    record_id INTEGER NOT NULL,
+    old_values JSONB,
+    new_values JSONB,
+    performed_by INTEGER,
+    performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    user_agent TEXT
+);
+
+-- Table: financial_documents
+CREATE TABLE financial_documents (
+    id SERIAL PRIMARY KEY,
+    document_type VARCHAR(20) NOT NULL CHECK (document_type IN ('receipt','invoice','contract','approval_letter','budget_report','financial_statement','meeting_minutes','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_path VARCHAR(500) NOT NULL,
+    file_size INTEGER,
+    file_type VARCHAR(100),
+    reference_number VARCHAR(100),
+    amount DECIMAL(15,2),
+    related_to VARCHAR(20) CHECK (related_to IN ('transaction','budget_request','student_aid','mission_allowance','committee_request','rental','other')),
+    related_id INTEGER,
+    academic_year VARCHAR(20),
+    uploaded_by INTEGER,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_archived BOOLEAN DEFAULT FALSE
+);
+
+-- Table: financial_transactions
+CREATE TABLE financial_transactions (
+    id SERIAL PRIMARY KEY,
+    transaction_type VARCHAR(7) NOT NULL CHECK (transaction_type IN ('income','expense','transfer')),
+    category_id INTEGER NOT NULL,
+    amount DECIMAL(15,2) NOT NULL,
+    description TEXT,
+    transaction_date DATE NOT NULL,
+    reference_number VARCHAR(100) UNIQUE,
+    payee_payer VARCHAR(255),
+    payment_method VARCHAR(12) NOT NULL CHECK (payment_method IN ('cash','bank_transfer','cheque','mobile_money')),
+    status VARCHAR(16) DEFAULT 'draft' CHECK (status IN ('draft','pending_approval','approved_by_finance','approved_by_president','rejected','completed')),
+    requested_by INTEGER,
+    approved_by_finance INTEGER,
+    approved_by_president INTEGER,
+    approved_at TIMESTAMP,
+    rejection_reason TEXT,
+    supporting_docs_path VARCHAR(500),
+    receipt_path VARCHAR(500),
+    requires_withdrawal BOOLEAN DEFAULT FALSE,
+    withdrawal_amount DECIMAL(15,2),
+    withdrawal_date DATE,
+    withdrawal_receipt_path VARCHAR(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: gallery_categories
+CREATE TABLE gallery_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    cover_image VARCHAR(500),
+    image_count INTEGER DEFAULT 0,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: gallery_images
+CREATE TABLE gallery_images (
+    id SERIAL PRIMARY KEY,
+    category_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    image_path VARCHAR(500) NOT NULL,
+    image_name VARCHAR(255) NOT NULL,
+    file_size INTEGER,
+    file_type VARCHAR(100),
+    dimensions VARCHAR(50),
+    uploaded_by INTEGER NOT NULL,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    views_count INTEGER DEFAULT 0,
+    downloads_count INTEGER DEFAULT 0,
+    featured BOOLEAN DEFAULT FALSE,
+    tags JSONB,
+    metadata JSONB
+);
+
+-- Table: health_campaigns
+CREATE TABLE health_campaigns (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    campaign_type VARCHAR(10) DEFAULT 'awareness' CHECK (campaign_type IN ('awareness','vaccination','screening','workshop','seminar','other')),
+    target_audience VARCHAR(255),
+    start_date DATE NOT NULL,
+    end_date DATE,
+    location VARCHAR(255) NOT NULL,
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    allocated_budget DECIMAL(10,2) DEFAULT 0.00,
+    status VARCHAR(10) DEFAULT 'planned' CHECK (status IN ('planned','ongoing','completed','cancelled')),
+    organizer_id INTEGER NOT NULL,
+    partner_organizations JSONB,
+    expected_participants INTEGER DEFAULT 0,
+    actual_participants INTEGER DEFAULT 0,
+    objectives TEXT,
+    outcomes TEXT,
+    media_coverage TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: health_screenings
+CREATE TABLE health_screenings (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    screening_type VARCHAR(10) DEFAULT 'general' CHECK (screening_type IN ('temperature','symptoms','vaccination','general','targeted')),
+    location VARCHAR(255),
+    screening_date DATE,
+    participants_count INTEGER DEFAULT 0,
+    positive_cases INTEGER DEFAULT 0,
+    notes TEXT,
+    conducted_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: hostels
+CREATE TABLE hostels (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    gender VARCHAR(6) DEFAULT 'mixed' CHECK (gender IN ('male','female','mixed')),
+    location VARCHAR(255) NOT NULL,
+    capacity INTEGER NOT NULL,
+    available_beds INTEGER DEFAULT 0,
+    description TEXT,
+    amenities JSONB,
+    warden_name VARCHAR(100),
+    warden_contact VARCHAR(20),
+    status VARCHAR(12) DEFAULT 'active' CHECK (status IN ('active','maintenance','full','closed')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: hostel_allocations
+CREATE TABLE hostel_allocations (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER NOT NULL,
+    hostel_id INTEGER NOT NULL,
+    room_id INTEGER NOT NULL,
+    bed_number VARCHAR(10),
+    academic_year VARCHAR(20) NOT NULL,
+    allocation_date DATE NOT NULL,
+    check_in_date DATE,
+    check_out_date DATE,
+    status VARCHAR(10) DEFAULT 'allocated' CHECK (status IN ('allocated','checked_in','checked_out','cancelled')),
+    allocation_reason TEXT,
+    allocated_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_allocation UNIQUE (student_id, academic_year)
+);
+
+-- Table: hostel_maintenance
+CREATE TABLE hostel_maintenance (
+    id SERIAL PRIMARY KEY,
+    hostel_id INTEGER NOT NULL,
+    room_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    issue_type VARCHAR(10) DEFAULT 'other' CHECK (issue_type IN ('electrical','plumbing','furniture','cleaning','safety','other')),
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    reported_by VARCHAR(100) NOT NULL,
+    reporter_contact VARCHAR(100),
+    status VARCHAR(12) DEFAULT 'reported' CHECK (status IN ('reported','assigned','in_progress','completed','cancelled')),
+    assigned_to INTEGER,
+    estimated_cost DECIMAL(10,2) DEFAULT 0.00,
+    actual_cost DECIMAL(10,2) DEFAULT 0.00,
+    completion_notes TEXT,
+    reported_by_user INTEGER,
+    assigned_by INTEGER,
+    completed_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    due_date DATE
+);
+
+-- Table: hostel_payments
+CREATE TABLE hostel_payments (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER NOT NULL,
+    hostel_id INTEGER NOT NULL,
+    academic_year VARCHAR(20) NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    payment_date DATE NOT NULL,
+    payment_method VARCHAR(12) DEFAULT 'cash' CHECK (payment_method IN ('cash','bank_transfer','mobile_money')),
+    reference_number VARCHAR(100),
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','completed','failed','refunded')),
+    received_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: hostel_rooms
+CREATE TABLE hostel_rooms (
+    id SERIAL PRIMARY KEY,
+    hostel_id INTEGER NOT NULL,
+    room_number VARCHAR(20) NOT NULL,
+    floor INTEGER DEFAULT 1,
+    capacity INTEGER NOT NULL,
+    available_beds INTEGER DEFAULT 0,
+    room_type VARCHAR(10) DEFAULT 'double' CHECK (room_type IN ('single','double','triple','dormitory')),
+    amenities JSONB,
+    status VARCHAR(12) DEFAULT 'available' CHECK (status IN ('available','occupied','maintenance','reserved')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_room UNIQUE (hostel_id, room_number)
+);
+
+-- Table: hostel_visitors
+CREATE TABLE hostel_visitors (
+    id SERIAL PRIMARY KEY,
+    hostel_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    visitor_name VARCHAR(100) NOT NULL,
+    visitor_phone VARCHAR(20),
+    visitor_id_type VARCHAR(12) DEFAULT 'national_id' CHECK (visitor_id_type IN ('national_id','passport','student_id','other')),
+    visitor_id_number VARCHAR(50),
+    purpose TEXT,
+    check_in_time TIMESTAMP NOT NULL,
+    check_out_time TIMESTAMP,
+    logged_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: innovation_categories
+CREATE TABLE innovation_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: innovation_club_members
+CREATE TABLE innovation_club_members (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    role VARCHAR(10) DEFAULT 'member' CHECK (role IN ('member','team_lead','secretary','treasurer','president')),
+    department VARCHAR(100),
+    joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: innovation_projects
+CREATE TABLE innovation_projects (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    student_id INTEGER NOT NULL,
+    category_id INTEGER,
+    department_id INTEGER,
+    status VARCHAR(16) DEFAULT 'pending_review' CHECK (status IN ('pending_review','approved','rejected','in_progress','completed','archived')),
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+    feedback TEXT,
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    reviewed_by INTEGER,
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: issue_categories
+CREATE TABLE issue_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    assigned_role VARCHAR(50),
+    auto_assign_role VARCHAR(50),
+    sla_days INTEGER DEFAULT 3
+);
+
+-- Table: login_activities
+CREATE TABLE login_activities (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    ip_address VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    login_time TIMESTAMP NOT NULL,
+    success BOOLEAN DEFAULT TRUE,
+    failure_reason VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_login_activities_user ON login_activities(user_id);
+
+-- Table: maintenance_contractors
+CREATE TABLE maintenance_contractors (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    contact_person VARCHAR(100),
+    phone VARCHAR(20),
+    email VARCHAR(100),
+    specialty VARCHAR(10) DEFAULT 'general' CHECK (specialty IN ('electrical','plumbing','carpentry','painting','cleaning','general')),
+    hourly_rate DECIMAL(8,2) DEFAULT 0.00,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: maintenance_requests
+CREATE TABLE maintenance_requests (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    facility_id INTEGER,
+    facility_name VARCHAR(255),
+    location VARCHAR(255) NOT NULL,
+    issue_type VARCHAR(10) DEFAULT 'other' CHECK (issue_type IN ('electrical','plumbing','structural','furniture','equipment','cleaning','safety','other')),
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    reported_by VARCHAR(100) NOT NULL,
+    reporter_contact VARCHAR(100),
+    status VARCHAR(12) DEFAULT 'reported' CHECK (status IN ('reported','assigned','in_progress','completed','cancelled')),
+    assigned_to INTEGER,
+    estimated_cost DECIMAL(10,2) DEFAULT 0.00,
+    actual_cost DECIMAL(10,2) DEFAULT 0.00,
+    completion_notes TEXT,
+    reported_by_user INTEGER,
+    assigned_by INTEGER,
+    completed_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    assigned_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    due_date DATE
+);
+
+-- Table: meetings
+CREATE TABLE meetings (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    meeting_type VARCHAR(12) DEFAULT 'general' CHECK (meeting_type IN ('general','executive','committee','emergency','planning')),
+    committee_role VARCHAR(50),
+    chairperson_id INTEGER NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    meeting_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    status VARCHAR(12) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled','postponed')),
+    agenda TEXT,
+    minutes TEXT,
+    required_attendees JSONB,
+    optional_attendees JSONB,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_committee_meeting BOOLEAN DEFAULT FALSE
+);
+
+-- Table: meeting_actions
+CREATE TABLE meeting_actions (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    agenda_item_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    assigned_to INTEGER NOT NULL,
+    due_date DATE,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    status VARCHAR(12) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+    completion_notes TEXT,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: meeting_action_items
+CREATE TABLE meeting_action_items (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    minute_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    assigned_to INTEGER NOT NULL,
+    due_date DATE,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','critical')),
+    status VARCHAR(12) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+    completion_notes TEXT,
+    completed_at TIMESTAMP,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: meeting_agenda_items
+CREATE TABLE meeting_agenda_items (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    presenter_id INTEGER,
+    duration_minutes INTEGER DEFAULT 15,
+    order_index INTEGER DEFAULT 0,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','deferred')),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: meeting_attendance
+CREATE TABLE meeting_attendance (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    committee_member_id INTEGER NOT NULL,
+    attendance_status VARCHAR(10) DEFAULT 'absent' CHECK (attendance_status IN ('present','absent','excused')),
+    check_in_time TIMESTAMP,
+    notes TEXT,
+    recorded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_attendance UNIQUE (meeting_id, committee_member_id)
+);
+
+-- Table: meeting_documents
+CREATE TABLE meeting_documents (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    document_type VARCHAR(10) DEFAULT 'other' CHECK (document_type IN ('agenda','minutes','presentation','report','other')),
+    title VARCHAR(255) NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(100) NOT NULL,
+    file_size INTEGER NOT NULL,
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: meeting_minutes
+CREATE TABLE meeting_minutes (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    minute_taker_id INTEGER NOT NULL,
+    approved_by INTEGER,
+    content TEXT NOT NULL,
+    attachments JSONB,
+    approval_status VARCHAR(10) DEFAULT 'draft' CHECK (approval_status IN ('draft','submitted','approved','rejected')),
+    approval_notes TEXT,
+    approved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: mission_allowances
+CREATE TABLE mission_allowances (
+    id SERIAL PRIMARY KEY,
+    committee_member_id INTEGER NOT NULL,
+    mission_purpose TEXT NOT NULL,
+    destination VARCHAR(255) NOT NULL,
+    mission_date DATE NOT NULL,
+    amount DECIMAL(10,2) DEFAULT 0.00,
+    category_id INTEGER,
+    transaction_id INTEGER,
+    transport_mode VARCHAR(12) DEFAULT 'public' CHECK (transport_mode IN ('public','private','college_vehicle','other')),
+    academic_year VARCHAR(20) NOT NULL,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','approved','paid','completed','cancelled')),
+    payment_date DATE,
+    paid_by INTEGER,
+    paid_at TIMESTAMP,
+    receipt_path VARCHAR(500),
+    mission_report TEXT,
+    notes TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: monthly_budgets
+CREATE TABLE monthly_budgets (
+    id SERIAL PRIMARY KEY,
+    academic_year VARCHAR(20),
+    month_year VARCHAR(7),
+    category_id INTEGER,
+    allocated_amount DECIMAL(15,2),
+    actual_amount DECIMAL(15,2) DEFAULT 0.00,
+    allocated_by INTEGER,
+    allocation_date DATE,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: news
+CREATE TABLE news (
+    id SERIAL PRIMARY KEY,
+    category_id INTEGER,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    excerpt TEXT,
+    image_url VARCHAR(500),
+    author_id INTEGER,
+    views_count INTEGER DEFAULT 0,
+    is_featured BOOLEAN DEFAULT FALSE,
+    status VARCHAR(10) DEFAULT 'published' CHECK (status IN ('draft','published','archived')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: news_categories
+CREATE TABLE news_categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    color VARCHAR(7) DEFAULT '#0056b3',
+    icon VARCHAR(50) DEFAULT 'newspaper',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: official_correspondence
+CREATE TABLE official_correspondence (
+    id SERIAL PRIMARY KEY,
+    reference_number VARCHAR(50) NOT NULL UNIQUE,
+    title VARCHAR(255) NOT NULL,
+    correspondence_type VARCHAR(8) NOT NULL CHECK (correspondence_type IN ('incoming','outgoing','internal')),
+    sender_recipient VARCHAR(255) NOT NULL,
+    subject TEXT NOT NULL,
+    content TEXT,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','sent','received','archived')),
+    related_document_id INTEGER,
+    assigned_to INTEGER,
+    due_date DATE,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: password_reset_tokens
+CREATE TABLE password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(100) NOT NULL,
+    token VARCHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMP NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: prevention_measures
+CREATE TABLE prevention_measures (
+    id SERIAL PRIMARY KEY,
+    epidemic_alert_id INTEGER,
+    measure_type VARCHAR(10) DEFAULT 'awareness' CHECK (measure_type IN ('awareness','sanitation','vaccination','isolation','screening','other')),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    target_area VARCHAR(255),
+    start_date DATE,
+    end_date DATE,
+    responsible_person INTEGER,
+    status VARCHAR(10) DEFAULT 'planned' CHECK (status IN ('planned','in_progress','completed','cancelled')),
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: programs
+CREATE TABLE programs (
+    id SERIAL PRIMARY KEY,
+    department_id INTEGER,
+    code VARCHAR(10) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    duration_years INTEGER DEFAULT 3,
+    description TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: project_files
+CREATE TABLE project_files (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(100),
+    uploaded_by INTEGER NOT NULL,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: project_progress_updates
+CREATE TABLE project_progress_updates (
+    id SERIAL PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    update_text TEXT NOT NULL,
+    progress_percentage INTEGER DEFAULT 0,
+    updated_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: protocol_events
+CREATE TABLE protocol_events (
+    id SERIAL PRIMARY KEY,
+    event_name VARCHAR(255) NOT NULL,
+    event_type VARCHAR(12) NOT NULL CHECK (event_type IN ('ceremony','meeting','reception','official_visit','workshop','conference','other')),
+    event_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME,
+    location VARCHAR(255) NOT NULL,
+    organizer VARCHAR(255),
+    guest_of_honor VARCHAR(255),
+    expected_attendees INTEGER,
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    protocol_requirements TEXT,
+    security_level VARCHAR(10) DEFAULT 'medium' CHECK (security_level IN ('low','medium','high','maximum')),
+    status VARCHAR(10) DEFAULT 'planned' CHECK (status IN ('planned','confirmed','in_progress','completed','cancelled')),
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: protocol_logistics
+CREATE TABLE protocol_logistics (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    item_type VARCHAR(13) NOT NULL CHECK (item_type IN ('transportation','accommodation','catering','equipment','security','other')),
+    item_name VARCHAR(255) NOT NULL,
+    description TEXT,
+    quantity INTEGER DEFAULT 1,
+    cost DECIMAL(10,2) DEFAULT 0.00,
+    supplier VARCHAR(255),
+    contact_person VARCHAR(255),
+    contact_phone VARCHAR(20),
+    notes TEXT,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','confirmed','delivered','cancelled')),
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: protocol_team
+CREATE TABLE protocol_team (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    role VARCHAR(13) NOT NULL CHECK (role IN ('coordinator','logistics','security','hospitality','transportation','technical')),
+    specialization VARCHAR(255),
+    phone VARCHAR(20),
+    email VARCHAR(255),
+    availability VARCHAR(10) DEFAULT 'available' CHECK (availability IN ('available','busy','unavailable')),
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_user_team UNIQUE (user_id)
+);
+
+-- Table: protocol_visitors
+CREATE TABLE protocol_visitors (
+    id SERIAL PRIMARY KEY,
+    visitor_name VARCHAR(255) NOT NULL,
+    organization VARCHAR(255),
+    purpose TEXT NOT NULL,
+    visit_date DATE NOT NULL,
+    visit_time TIME NOT NULL,
+    expected_duration INTEGER DEFAULT 60,
+    contact_person_id INTEGER,
+    meeting_location VARCHAR(255),
+    special_requirements TEXT,
+    status VARCHAR(10) DEFAULT 'scheduled' CHECK (status IN ('scheduled','arrived','in_meeting','completed','cancelled')),
+    security_clearance VARCHAR(10) DEFAULT 'pending' CHECK (security_clearance IN ('pending','approved','rejected')),
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: rental_payments
+CREATE TABLE rental_payments (
+    id SERIAL PRIMARY KEY,
+    property_id INTEGER,
+    payment_date DATE,
+    amount DECIMAL(10,2),
+    receipt_number VARCHAR(100),
+    receipt_file_path VARCHAR(500),
+    paid_by VARCHAR(255),
+    received_by INTEGER,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','verified','disputed')),
+    verification_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    payment_period VARCHAR(30) NOT NULL CHECK (payment_period IN ('First Semester (5 months)','Second Semester (5 months)','Monthly','Full Year (10 months)','Other')),
+    notes TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: rental_properties
+CREATE TABLE rental_properties (
+    id SERIAL PRIMARY KEY,
+    property_name VARCHAR(255),
+    property_location VARCHAR(255),
+    monthly_rent DECIMAL(10,2),
+    tenant_name VARCHAR(255),
+    tenant_phone VARCHAR(20),
+    lease_start_date DATE,
+    lease_end_date DATE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    tenant_email VARCHAR(255),
+    contract_file_path VARCHAR(500),
+    created_by INTEGER,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: reports
+CREATE TABLE reports (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    template_id INTEGER,
+    user_id INTEGER NOT NULL,
+    report_type VARCHAR(9) NOT NULL CHECK (report_type IN ('monthly','activity','team','incident','financial','academic')),
+    report_period DATE,
+    activity_date DATE,
+    content JSONB NOT NULL,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','submitted','reviewed','approved','rejected')),
+    submitted_at TIMESTAMP,
+    reviewed_by INTEGER,
+    reviewed_at TIMESTAMP,
+    feedback TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_team_report BOOLEAN DEFAULT FALSE,
+    team_role VARCHAR(13) DEFAULT 'combined' CHECK (team_role IN ('president','vice_president','secretary','combined')),
+    team_report_id INTEGER,
+    assigned_sections JSONB
+);
+
+-- Table: report_media
+CREATE TABLE report_media (
+    id SERIAL PRIMARY KEY,
+    report_id INTEGER NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(100) NOT NULL,
+    file_size INTEGER NOT NULL,
+    uploaded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: report_sections
+CREATE TABLE report_sections (
+    id SERIAL PRIMARY KEY,
+    report_id INTEGER NOT NULL,
+    section_title VARCHAR(255) NOT NULL,
+    assigned_to INTEGER NOT NULL,
+    content TEXT,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','completed','reviewed')),
+    order_index INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: report_templates
+CREATE TABLE report_templates (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    role_specific VARCHAR(50),
+    report_type VARCHAR(10) DEFAULT 'monthly' CHECK (report_type IN ('monthly','activity','team','incident','financial','academic')),
+    fields JSONB NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: rep_meetings
+CREATE TABLE rep_meetings (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    meeting_type VARCHAR(12) DEFAULT 'general' CHECK (meeting_type IN ('general','emergency','planning','review','training')),
+    organizer_id INTEGER NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    meeting_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    status VARCHAR(12) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled','postponed')),
+    agenda TEXT,
+    minutes TEXT,
+    required_attendees JSONB,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: rep_meeting_action_items
+CREATE TABLE rep_meeting_action_items (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    assigned_to INTEGER NOT NULL,
+    due_date DATE,
+    priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low','medium','high','urgent')),
+    status VARCHAR(12) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','cancelled')),
+    completion_notes TEXT,
+    completed_at TIMESTAMP,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: rep_meeting_agenda_items
+CREATE TABLE rep_meeting_agenda_items (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    presenter_id INTEGER,
+    duration_minutes INTEGER DEFAULT 15,
+    order_index INTEGER DEFAULT 0,
+    status VARCHAR(10) DEFAULT 'pending' CHECK (status IN ('pending','in_progress','completed','deferred')),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: rep_meeting_attendance
+CREATE TABLE rep_meeting_attendance (
+    id SERIAL PRIMARY KEY,
+    meeting_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    attendance_status VARCHAR(10) DEFAULT 'absent' CHECK (attendance_status IN ('present','absent','excused','late')),
+    check_in_time TIMESTAMP,
+    notes TEXT,
+    recorded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_attendance UNIQUE (meeting_id, user_id)
+);
+
+-- Table: rpsu_account
+CREATE TABLE rpsu_account (
+    id SERIAL PRIMARY KEY,
+    account_name VARCHAR(255) DEFAULT 'RPSU Main Account',
+    account_number VARCHAR(50) UNIQUE,
+    bank_name VARCHAR(255),
+    branch_name VARCHAR(255),
+    current_balance DECIMAL(15,2) DEFAULT 0.00,
+    min_balance DECIMAL(15,2) DEFAULT 0.00,
+    signatory1_id INTEGER,
+    signatory2_id INTEGER,
+    signatory3_id INTEGER,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: sanitation_reports
+CREATE TABLE sanitation_reports (
+    id SERIAL PRIMARY KEY,
+    location VARCHAR(255) NOT NULL,
+    area_type VARCHAR(16) DEFAULT 'common_area' CHECK (area_type IN ('hostel','classroom','cafeteria','restroom','common_area','sports_facility')),
+    inspection_date DATE,
+    cleanliness_rating INTEGER DEFAULT 5,
+    issues_found TEXT,
+    actions_taken TEXT,
+    follow_up_required BOOLEAN DEFAULT FALSE,
+    inspected_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: security_incidents
+CREATE TABLE security_incidents (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    incident_type VARCHAR(17) DEFAULT 'other' CHECK (incident_type IN ('theft','assault','vandalism','harassment','unauthorized_access','other')),
+    location VARCHAR(255) NOT NULL,
+    severity VARCHAR(10) DEFAULT 'medium' CHECK (severity IN ('low','medium','high','critical')),
+    reported_by VARCHAR(100) NOT NULL,
+    reporter_contact VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'reported' CHECK (status IN ('reported','under_investigation','resolved','closed')),
+    resolution_notes TEXT,
+    action_taken TEXT,
+    reported_by_user INTEGER,
+    resolved_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP
+);
+
+-- Table: security_prevention_measures
+CREATE TABLE security_prevention_measures (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    measure_type VARCHAR(10) DEFAULT 'awareness' CHECK (measure_type IN ('awareness','patrol','equipment','policy','training')),
+    target_area VARCHAR(255),
+    implementation_date DATE,
+    status VARCHAR(12) DEFAULT 'planned' CHECK (status IN ('planned','in_progress','implemented','cancelled')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: sports_competitions
+CREATE TABLE sports_competitions (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    sport_type VARCHAR(100) NOT NULL,
+    competition_type VARCHAR(12) DEFAULT 'tournament' CHECK (competition_type IN ('tournament','league','friendly','championship','cup')),
+    organizer VARCHAR(255),
+    location VARCHAR(255) NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE,
+    participating_teams JSONB,
+    entry_fee DECIMAL(10,2) DEFAULT 0.00,
+    prize_money DECIMAL(10,2) DEFAULT 0.00,
+    status VARCHAR(10) DEFAULT 'upcoming' CHECK (status IN ('upcoming','ongoing','completed','cancelled')),
+    results JSONB,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: sports_equipment
+CREATE TABLE sports_equipment (
+    id SERIAL PRIMARY KEY,
+    equipment_name VARCHAR(255) NOT NULL,
+    category_id INTEGER,
+    category_custom VARCHAR(100),
+    sport_type VARCHAR(100),
+    quantity INTEGER NOT NULL,
+    available_quantity INTEGER DEFAULT 0,
+    equipment_condition VARCHAR(16) DEFAULT 'good' CHECK (equipment_condition IN ('excellent','good','fair','poor','needs_replacement')),
+    location VARCHAR(255),
+    storage_location VARCHAR(255),
+    purchase_date DATE,
+    purchase_price DECIMAL(10,2) DEFAULT 0.00,
+    brand VARCHAR(100),
+    model VARCHAR(100),
+    serial_number VARCHAR(100),
+    warranty_until DATE,
+    maintenance_schedule TEXT,
+    last_maintenance DATE,
+    next_maintenance DATE,
+    status VARCHAR(10) DEFAULT 'available' CHECK (status IN ('available','in_use','maintenance','retired','lost','damaged')),
+    notes TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: sports_facilities
+CREATE TABLE sports_facilities (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(10) DEFAULT 'field' CHECK (type IN ('field','court','track','gym','pool','hall','other')),
+    location VARCHAR(255) NOT NULL,
+    capacity INTEGER,
+    status VARCHAR(12) DEFAULT 'available' CHECK (status IN ('available','maintenance','occupied','closed')),
+    description TEXT,
+    equipment_included TEXT,
+    booking_requirements TEXT,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: sports_teams
+CREATE TABLE sports_teams (
+    id SERIAL PRIMARY KEY,
+    sport_type VARCHAR(100) NOT NULL,
+    team_name VARCHAR(255) NOT NULL,
+    team_gender VARCHAR(6) DEFAULT 'mixed' CHECK (team_gender IN ('male','female','mixed')),
+    category VARCHAR(10) DEFAULT 'college' CHECK (category IN ('college','department','club','national')),
+    coach_id INTEGER,
+    captain_id INTEGER,
+    members_count INTEGER DEFAULT 0,
+    achievements TEXT,
+    training_schedule TEXT,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','suspended')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: student_contributions
+CREATE TABLE student_contributions (
+    id SERIAL PRIMARY KEY,
+    academic_year VARCHAR(20) NOT NULL,
+    amount_per_student DECIMAL(10,2) NOT NULL,
+    total_expected DECIMAL(15,2) NOT NULL,
+    total_collected DECIMAL(15,2) DEFAULT 0.00,
+    collection_deadline DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','completed','cancelled')),
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: student_financial_aid
+CREATE TABLE student_financial_aid (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER,
+    request_title VARCHAR(255),
+    request_letter_path VARCHAR(500),
+    amount_requested DECIMAL(10,2),
+    amount_approved DECIMAL(10,2),
+    urgency_level VARCHAR(10) CHECK (urgency_level IN ('low','medium','high','emergency')),
+    purpose TEXT,
+    supporting_docs_path VARCHAR(500),
+    approval_letter_path TEXT,
+    status VARCHAR(10) DEFAULT 'submitted' CHECK (status IN ('submitted','under_review','approved','rejected','disbursed')),
+    reviewed_by INTEGER,
+    review_notes TEXT,
+    review_date TIMESTAMP,
+    disbursement_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: system_notifications
+CREATE TABLE system_notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    notification_type VARCHAR(20) DEFAULT 'info' CHECK (notification_type IN ('audit_request','explanation_request','meeting_invite','report_submission','budget_approval','ticket_assignment','warning','info')),
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    related_id INTEGER,
+    related_table VARCHAR(100),
+    is_read BOOLEAN DEFAULT FALSE,
+    read_at TIMESTAMP,
+    is_archived BOOLEAN DEFAULT FALSE,
+    expires_at TIMESTAMP,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: team_members
+CREATE TABLE team_members (
+    id SERIAL PRIMARY KEY,
+    team_id INTEGER NOT NULL,
+    user_id INTEGER,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    department_id INTEGER,
+    position VARCHAR(100),
+    jersey_number INTEGER,
+    join_date DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','injured','inactive','graduated')),
+    skills VARCHAR(500),
+    performance_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_team_member UNIQUE (team_id, reg_number)
+);
+
+-- Table: team_reports
+CREATE TABLE team_reports (
+    id SERIAL PRIMARY KEY,
+    team_leader_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    report_type VARCHAR(8) NOT NULL CHECK (report_type IN ('monthly','activity','special')),
+    report_period DATE,
+    overall_summary TEXT,
+    feedback TEXT,
+    status VARCHAR(10) DEFAULT 'draft' CHECK (status IN ('draft','submitted','reviewed','approved')),
+    submitted_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: team_report_approvals
+CREATE TABLE team_report_approvals (
+    id SERIAL PRIMARY KEY,
+    report_id INTEGER NOT NULL,
+    committee_member_id INTEGER NOT NULL,
+    approval_status VARCHAR(10) DEFAULT 'pending' CHECK (approval_status IN ('pending','approved','rejected')),
+    comments TEXT,
+    approved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_approval UNIQUE (report_id, committee_member_id)
+);
+
+-- Table: team_report_contributions
+CREATE TABLE team_report_contributions (
+    id SERIAL PRIMARY KEY,
+    team_report_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    section_title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    media_files JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: tickets
+CREATE TABLE tickets (
+    id SERIAL PRIMARY KEY,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    phone VARCHAR(20) NOT NULL,
+    department_id INTEGER,
+    program_id INTEGER,
+    academic_year VARCHAR(20) NOT NULL,
+    category_id INTEGER,
+    assigned_to INTEGER,
+    subject VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    priority VARCHAR(6) DEFAULT 'medium' CHECK (priority IN ('low','medium','high')),
+    preferred_contact VARCHAR(5) DEFAULT 'email' CHECK (preferred_contact IN ('email','sms','phone')),
+    status VARCHAR(10) DEFAULT 'open' CHECK (status IN ('open','in_progress','resolved','closed')),
+    resolved_at TIMESTAMP,
+    resolution_notes TEXT,
+    student_feedback TEXT,
+    feedback_rating INTEGER,
+    escalation_level INTEGER DEFAULT 0,
+    due_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_tickets_status ON tickets(status);
+CREATE INDEX idx_tickets_category ON tickets(category_id);
+CREATE INDEX idx_tickets_reg_number ON tickets(reg_number);
+
+-- Table: ticket_assignments
+CREATE TABLE ticket_assignments (
+    id SERIAL PRIMARY KEY,
+    ticket_id INTEGER NOT NULL,
+    assigned_to INTEGER NOT NULL,
+    assigned_by INTEGER NOT NULL,
+    assigned_at TIMESTAMP NOT NULL,
+    reason TEXT
+);
+
+-- Table: ticket_comments
+CREATE TABLE ticket_comments (
+    id SERIAL PRIMARY KEY,
+    ticket_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    comment TEXT NOT NULL,
+    is_internal BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: ticket_escalations
+CREATE TABLE ticket_escalations (
+    id SERIAL PRIMARY KEY,
+    ticket_id INTEGER NOT NULL,
+    escalated_by INTEGER NOT NULL,
+    escalated_to INTEGER NOT NULL,
+    reason TEXT,
+    escalated_at TIMESTAMP NOT NULL,
+    previous_assignee INTEGER
+);
+
+-- Table: training_attendance
+CREATE TABLE training_attendance (
+    id SERIAL PRIMARY KEY,
+    training_session_id INTEGER NOT NULL,
+    team_member_id INTEGER NOT NULL,
+    attendance_status VARCHAR(10) DEFAULT 'absent' CHECK (attendance_status IN ('present','absent','excused','late')),
+    performance_rating INTEGER,
+    notes TEXT,
+    recorded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_attendance UNIQUE (training_session_id, team_member_id)
+);
+
+-- Table: training_sessions
+CREATE TABLE training_sessions (
+    id SERIAL PRIMARY KEY,
+    team_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    facility_id INTEGER,
+    session_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    focus_areas TEXT,
+    attendance_count INTEGER DEFAULT 0,
+    coach_notes TEXT,
+    status VARCHAR(10) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: troupe_members
+CREATE TABLE troupe_members (
+    id SERIAL PRIMARY KEY,
+    troupe_id INTEGER NOT NULL,
+    user_id INTEGER,
+    reg_number VARCHAR(20) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    department_id INTEGER,
+    program_id INTEGER,
+    academic_year VARCHAR(20),
+    role VARCHAR(17) DEFAULT 'performer' CHECK (role IN ('director','assistant_director','lead_performer','performer','trainee','technician')),
+    specialization VARCHAR(255),
+    join_date DATE,
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','graduated')),
+    skills TEXT,
+    performance_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_troupe_member UNIQUE (troupe_id, reg_number)
+);
+
+-- Table: troupe_performances
+CREATE TABLE troupe_performances (
+    id SERIAL PRIMARY KEY,
+    troupe_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    performance_type VARCHAR(16) DEFAULT 'cultural_event' CHECK (performance_type IN ('competition','concert','festival','cultural_event','external_booking','practice_showcase')),
+    event_date DATE NOT NULL,
+    start_time TIME,
+    end_time TIME,
+    location VARCHAR(255) NOT NULL,
+    organizer VARCHAR(255),
+    audience_count INTEGER,
+    status VARCHAR(10) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled')),
+    results TEXT,
+    awards_won TEXT,
+    budget DECIMAL(10,2) DEFAULT 0.00,
+    expenses DECIMAL(10,2) DEFAULT 0.00,
+    media_files JSONB,
+    created_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: troupe_practice_attendance
+CREATE TABLE troupe_practice_attendance (
+    id SERIAL PRIMARY KEY,
+    practice_session_id INTEGER NOT NULL,
+    member_id INTEGER NOT NULL,
+    attendance_status VARCHAR(10) DEFAULT 'absent' CHECK (attendance_status IN ('present','absent','excused','late')),
+    performance_rating INTEGER,
+    notes TEXT,
+    recorded_by INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_attendance UNIQUE (practice_session_id, member_id)
+);
+
+-- Table: troupe_practice_sessions
+CREATE TABLE troupe_practice_sessions (
+    id SERIAL PRIMARY KEY,
+    troupe_id INTEGER NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    focus_areas TEXT,
+    session_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    location VARCHAR(255) NOT NULL,
+    attendance_count INTEGER DEFAULT 0,
+    coach_notes TEXT,
+    status VARCHAR(10) DEFAULT 'scheduled' CHECK (status IN ('scheduled','ongoing','completed','cancelled')),
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: uploaded_documents
+CREATE TABLE uploaded_documents (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(100) NOT NULL,
+    file_size INTEGER NOT NULL,
+    category_id INTEGER,
+    access_level VARCHAR(12) DEFAULT 'committee' CHECK (access_level IN ('public','committee','executive','confidential')),
+    uploaded_by INTEGER NOT NULL,
+    downloads_count INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: users
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    reg_number VARCHAR(20),
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL,
+    full_name VARCHAR(100) NOT NULL,
+    email VARCHAR(100),
+    phone VARCHAR(20),
+    date_of_birth DATE,
+    gender VARCHAR(6) CHECK (gender IN ('male','female','other')),
+    bio TEXT,
+    address TEXT,
+    emergency_contact_name VARCHAR(100),
+    emergency_contact_phone VARCHAR(20),
+    email_notifications BOOLEAN DEFAULT TRUE,
+    sms_notifications BOOLEAN DEFAULT TRUE,
+    preferred_language VARCHAR(2) DEFAULT 'en' CHECK (preferred_language IN ('en','rw','fr')),
+    theme_preference VARCHAR(5) DEFAULT 'auto' CHECK (theme_preference IN ('light','dark','auto')),
+    two_factor_enabled BOOLEAN DEFAULT FALSE,
+    last_password_change TIMESTAMP,
+    academic_year VARCHAR(7) DEFAULT 'Year 1' CHECK (academic_year IN ('Year 1','Year 2','Year 3','B-Tech','M-Tech')),
+    is_class_rep BOOLEAN DEFAULT FALSE,
+    avatar_url VARCHAR(255),
+    status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active','inactive','suspended')),
+    last_login TIMESTAMP,
+    login_count INTEGER DEFAULT 0,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    department_id INTEGER,
+    program_id INTEGER
+);
+
+CREATE INDEX idx_users_role ON users(role);
+CREATE INDEX idx_users_status ON users(status);
+
+-- Table: user_sessions
+CREATE TABLE user_sessions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    session_id VARCHAR(128) NOT NULL UNIQUE,
+    ip_address VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: vaccination_records
+CREATE TABLE vaccination_records (
+    id SERIAL PRIMARY KEY,
+    student_reg_number VARCHAR(20),
+    vaccine_type VARCHAR(100),
+    dose_number INTEGER DEFAULT 1,
+    vaccination_date DATE,
+    next_due_date DATE,
+    health_worker VARCHAR(100),
+    notes TEXT,
+    verified BOOLEAN DEFAULT FALSE,
+    created_by INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table: visitor_security_clearances
+CREATE TABLE visitor_security_clearances (
+    id SERIAL PRIMARY KEY,
+    visitor_id INTEGER NOT NULL,
+    cleared_by INTEGER NOT NULL,
+    clearance_status VARCHAR(10) DEFAULT 'pending' CHECK (clearance_status IN ('pending','approved','rejected')),
+    clearance_notes TEXT,
+    clearance_date TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- VIEWS
+-- =====================================================
+
+-- View: active_arbitration_cases
+CREATE VIEW active_arbitration_cases AS
+SELECT 
+    ac.id,
+    ac.case_number,
+    ac.title,
+    ac.description,
+    ac.case_type,
+    ac.complainant_id,
+    ac.respondent_id,
+    ac.complainant_name,
+    ac.respondent_name,
+    ac.complainant_contact,
+    ac.respondent_contact,
+    ac.priority,
+    ac.status,
+    ac.assigned_to,
+    ac.filing_date,
+    ac.hearing_date,
+    ac.resolution_date,
+    ac.resolution_details,
+    ac.created_by,
+    ac.created_at,
+    ac.updated_at,
+    u.full_name AS assigned_to_name,
+    (CURRENT_DATE - ac.filing_date) AS days_open
+FROM arbitration_cases ac
+LEFT JOIN users u ON ac.assigned_to = u.id
+WHERE ac.status IN ('filed', 'under_review', 'hearing_scheduled', 'mediation')
+ORDER BY 
+    CASE ac.priority
+        WHEN 'urgent' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END ASC,
+    ac.filing_date DESC;
+
+-- View: election_results
+CREATE VIEW election_results AS
+SELECT 
+    ec.election_id,
+    ec.position,
+    ec.student_name,
+    ec.reg_number,
+    COUNT(ev.id) AS vote_count,
+    ROUND((COUNT(ev.id) * 100.0) / NULLIF(
+        (SELECT COUNT(*) 
+         FROM election_votes ev2 
+         JOIN election_candidates ec2 ON ev2.candidate_id = ec2.id 
+         WHERE ec2.position = ec.position AND ec2.election_id = ec.election_id), 0), 2) AS percentage
+FROM election_candidates ec
+LEFT JOIN election_votes ev ON ec.id = ev.candidate_id
+GROUP BY ec.id, ec.election_id, ec.position, ec.student_name, ec.reg_number
+ORDER BY ec.election_id, ec.position, vote_count DESC;
+
+-- View: election_statistics
+CREATE VIEW election_statistics AS
+SELECT 
+    e.id,
+    e.title,
+    e.academic_year,
+    e.status,
+    COUNT(DISTINCT ec.id) AS candidate_count,
+    COUNT(DISTINCT ev.id) AS voter_count,
+    COUNT(DISTINCT ev2.id) AS votes_cast,
+    ROUND((COUNT(DISTINCT ev2.id) * 100.0) / NULLIF(COUNT(DISTINCT ev.id), 0), 2) AS turnout_percentage
+FROM elections e
+LEFT JOIN election_candidates ec ON e.id = ec.election_id
+LEFT JOIN election_voters ev ON e.id = ev.election_id
+LEFT JOIN election_voters ev2 ON e.id = ev2.election_id AND ev2.has_voted = TRUE
+GROUP BY e.id, e.title, e.academic_year, e.status;
+
+-- View: news_with_categories
+CREATE VIEW news_with_categories AS
+SELECT 
+    n.id,
+    n.category_id,
+    n.title,
+    n.content,
+    n.excerpt,
+    n.image_url,
+    n.author_id,
+    n.views_count,
+    n.is_featured,
+    n.status,
+    n.created_at,
+    n.updated_at,
+    nc.name AS category_name,
+    nc.slug AS category_slug,
+    nc.color AS category_color,
+    nc.icon AS category_icon,
+    u.full_name AS author_name,
+    u.role AS author_role
+FROM news n
+LEFT JOIN news_categories nc ON n.category_id = nc.id
+LEFT JOIN users u ON n.author_id = u.id
+WHERE n.status = 'published'
+ORDER BY n.created_at DESC;
+
+-- =====================================================
+-- STORED PROCEDURES
+-- =====================================================
+
+-- Procedure: CalculateElectionResults
+CREATE OR REPLACE PROCEDURE CalculateElectionResults(election_id_param INTEGER)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    SELECT 
+        position,
+        student_name,
+        reg_number,
+        vote_count,
+        percentage,
+        CASE 
+            WHEN vote_count = MAX(vote_count) OVER (PARTITION BY position) THEN 'WINNER'
+            ELSE ''
+        END as result
+    FROM election_results 
+    WHERE election_id = election_id_param
+    ORDER BY position, vote_count DESC;
+END;
+$$;
+
+-- Procedure: GetArbitrationStatistics
+CREATE OR REPLACE PROCEDURE GetArbitrationStatistics(start_date DATE, end_date DATE)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    SELECT 
+        status,
+        COUNT(*) as case_count,
+        AVG(EXTRACT(DAY FROM (COALESCE(resolution_date, CURRENT_DATE) - filing_date))) as avg_resolution_days
+    FROM arbitration_cases 
+    WHERE filing_date BETWEEN start_date AND end_date
+    GROUP BY status;
+END;
+$$;
+
+-- Procedure: IncrementNewsViews
+CREATE OR REPLACE PROCEDURE IncrementNewsViews(news_id INTEGER)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE news SET views_count = views_count + 1 WHERE id = news_id;
+END;
+$$;
+
+-- =====================================================
+-- FOREIGN KEY CONSTRAINTS (Optional - Add as needed)
+-- =====================================================
+
+-- Note: Foreign key constraints can be added as needed. Due to MyISAM engine in MySQL,
+-- some tables didn't have foreign keys. Add them as needed for data integrity.
+
+-- Example:
+-- ALTER TABLE committee_communication_allowances
+--     ADD CONSTRAINT fk_comm_allowances_category 
+--     FOREIGN KEY (category_id) REFERENCES budget_categories(id) ON DELETE SET NULL;
+-- 
+-- ALTER TABLE financial_transactions
+--     ADD CONSTRAINT fk_fin_transactions_category 
+--     FOREIGN KEY (category_id) REFERENCES budget_categories(id) ON DELETE RESTRICT;
+
+-- =====================================================
+-- POSTGRESQL-SPECIFIC OPTIMIZATIONS
+-- =====================================================
+
+-- Create indexes for common queries
+CREATE INDEX idx_arbitration_cases_status ON arbitration_cases(status);
+CREATE INDEX idx_arbitration_cases_priority ON arbitration_cases(priority);
+CREATE INDEX idx_arbitration_cases_filing_date ON arbitration_cases(filing_date);
+
+CREATE INDEX idx_committee_budget_requests_status ON committee_budget_requests(status);
+CREATE INDEX idx_committee_budget_requests_request_date ON committee_budget_requests(request_date);
+
+CREATE INDEX idx_tickets_status ON tickets(status);
+CREATE INDEX idx_tickets_category_id ON tickets(category_id);
+CREATE INDEX idx_tickets_reg_number ON tickets(reg_number);
+
+CREATE INDEX idx_news_status_created ON news(status, created_at);
+CREATE INDEX idx_news_category_id ON news(category_id);
+CREATE INDEX idx_news_author_id ON news(author_id);
+
+CREATE INDEX idx_users_role_status ON users(role, status);
+CREATE INDEX idx_users_email ON users(email);
+
+-- =====================================================
+-- SEQUENCES (Auto-increment is handled by SERIAL)
+-- =====================================================
+-- SERIAL automatically creates sequences, no manual sequence creation needed

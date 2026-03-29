@@ -1230,76 +1230,261 @@ try {
             border-left-color: var(--danger);
         }
 
-        /* Responsive */
+        /* ── Mobile Nav Overlay ── */
+        .mobile-nav-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+            backdrop-filter: blur(2px);
+        }
+        .mobile-nav-overlay.active { display: block; }
+
+        /* ── Hamburger Button ── */
+        .hamburger-btn {
+            display: none;
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: var(--light-gray);
+            border-radius: 50%;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+        .hamburger-btn:hover {
+            background: var(--academic-primary);
+            color: white;
+        }
+
+        /* ── Sidebar Drawer ── */
+        .sidebar { transition: transform 0.3s ease; }
+
+        /* ── Tablet ── */
         @media (max-width: 1024px) {
             .dashboard-container {
                 grid-template-columns: 200px 1fr;
             }
-            
+
             .calendar-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .calendar-sidebar {
-                order: -1;
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 1.5rem;
             }
         }
 
-        @media (max-width: 768px) {
+        /* ── Drawer threshold ── */
+        @media (max-width: 900px) {
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 260px;
+                height: 100vh;
+                z-index: 200;
+                transform: translateX(-100%);
+                padding-top: 1rem;
+                box-shadow: var(--shadow-lg);
             }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
+
+            .sidebar.open {
+                transform: translateX(0);
             }
-            
-            .calendar-controls {
-                flex-direction: column;
-                align-items: stretch;
+
+            .hamburger-btn {
+                display: flex;
             }
-            
-            .navigation-controls {
-                justify-content: center;
-            }
-            
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .month-grid .calendar-day {
-                min-height: 80px;
+
+            .main-content {
+                height: auto;
+                min-height: calc(100vh - 80px);
             }
         }
 
-        @media (max-width: 480px) {
-            .main-content {
-                padding: 1rem;
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .view-controls {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+            }
+
+            .page-actions {
+                width: 100%;
                 flex-wrap: wrap;
             }
-            
-            .month-header, .month-grid {
-                grid-template-columns: repeat(7, 1fr);
-                font-size: 0.7rem;
+
+            .page-actions .btn {
+                flex: 1 1 auto;
+                justify-content: center;
+                min-width: 120px;
             }
-            
+
+            .calendar-controls {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.75rem;
+            }
+
+            .navigation-controls {
+                justify-content: space-between;
+            }
+
+            .current-period {
+                min-width: 0;
+                flex: 1;
+                font-size: 0.9rem;
+            }
+
+            .view-controls {
+                display: grid;
+                grid-template-columns: repeat(3, 1fr);
+                gap: 0.5rem;
+            }
+
+            .view-btn {
+                text-align: center;
+                justify-content: center;
+            }
+
+            .weekday-header {
+                padding: 0.5rem 0.25rem;
+                font-size: 0.65rem;
+            }
+
+            .month-grid {
+                min-height: 400px;
+            }
+
             .calendar-day {
-                padding: 0.25rem;
+                min-height: 80px;
+                padding: 0.3rem;
+            }
+
+            .day-number {
+                font-size: 0.8rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .week-header,
+            .week-grid {
+                grid-template-columns: 50px repeat(7, 1fr);
+                font-size: 0.7rem;
+                overflow-x: auto;
+            }
+
+            .hour-slot {
+                padding: 0.5rem;
+                gap: 0.5rem;
+            }
+
+            .hour-label {
+                min-width: 50px;
+                font-size: 0.75rem;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .form-actions {
+                flex-wrap: wrap;
+                justify-content: stretch;
+            }
+
+            .form-actions .btn {
+                flex: 1 1 auto;
+                justify-content: center;
+            }
+
+            .calendar-sidebar {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ── Small phones ── */
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .header {
+                height: 68px;
+            }
+
+            .logos .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .weekday-header {
+                padding: 0.4rem 0.1rem;
+                font-size: 0.6rem;
+            }
+
+            .calendar-day {
+                padding: 0.2rem;
                 min-height: 60px;
             }
-            
+
+            .day-number {
+                font-size: 0.7rem;
+            }
+
             .day-event {
-                padding: 0.1rem 0.25rem;
-                font-size: 0.6rem;
+                padding: 0.1rem 0.2rem;
+                font-size: 0.58rem;
+                border-left-width: 2px;
+            }
+
+            .event-title {
+                font-size: 0.58rem;
+            }
+
+            .day-event .event-time {
+                display: none;
+            }
+
+            .month-grid {
+                min-height: 340px;
+            }
+
+            .quick-stats {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .upcoming-event {
+                padding: 0.75rem;
+                gap: 0.75rem;
             }
         }
 
@@ -1318,6 +1503,9 @@ try {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1353,6 +1541,9 @@ try {
             </div>
         </div>
     </header>
+
+    <!-- Mobile Nav Overlay -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
@@ -1843,6 +2034,37 @@ try {
     </div>
 
     <script>
+        // ── Mobile Nav (hamburger sidebar) ──
+        (function() {
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            const navSidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('mobileNavOverlay');
+
+            function openNav() {
+                navSidebar.classList.add('open');
+                overlay.classList.add('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeNav() {
+                navSidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+
+            hamburgerBtn.addEventListener('click', () => {
+                navSidebar.classList.contains('open') ? closeNav() : openNav();
+            });
+
+            overlay.addEventListener('click', closeNav);
+
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 900) closeNav();
+            });
+        })();
+
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
