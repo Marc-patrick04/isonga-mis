@@ -678,6 +678,9 @@ try {
                     <button type="submit" name="add_sample" class="btn btn-primary">
                         <i class="fas fa-save"></i> ADD 
                     </button>
+                    <a href="download.php" class="btn btn-success">
+    <i class="fas fa-download"></i> Download Excel
+</a>
                 </div>
             </form>
         </div>
