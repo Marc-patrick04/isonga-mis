@@ -20,12 +20,26 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get unread messages count for badge
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Get available templates for Minister of Gender
 try {
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'minister_gender' OR role_specific IS NULL
-        AND is_active = 1
+        WHERE (role_specific = 'minister_gender' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -59,8 +73,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $template_id = $_POST['template_id'] ?? null;
         $title = $_POST['title'] ?? '';
         $report_type = $_POST['report_type'] ?? 'activity';
-        $report_period = $_POST['report_period'] ?? null;
-        $activity_date = $_POST['activity_date'] ?? null;
+        $report_period = !empty($_POST['report_period']) ? $_POST['report_period'] : null;
+        $activity_date = !empty($_POST['activity_date']) ? $_POST['activity_date'] : null;
         
         // Get template to validate fields
         $selected_template = null;
@@ -76,15 +90,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $template_fields = json_decode($selected_template['fields'], true);
             
             // Collect form data based on template fields
-            foreach ($template_fields['sections'] as $section) {
-                $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                $content_data[$field_name] = $_POST[$field_name] ?? '';
+            if (isset($template_fields['sections']) && is_array($template_fields['sections'])) {
+                foreach ($template_fields['sections'] as $section) {
+                    $field_name = strtolower(str_replace(' ', '_', $section['title']));
+                    $content_data[$field_name] = $_POST[$field_name] ?? '';
+                }
             }
             
             try {
                 $stmt = $pdo->prepare("
-                    INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NOW())
+                    INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ");
                 
                 $stmt->execute([
@@ -116,8 +132,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             
                             if (move_uploaded_file($file_tmp, $file_path)) {
                                 $stmt = $pdo->prepare("
-                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by)
-                                    VALUES (?, ?, ?, ?, ?, ?)
+                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                                 ");
                                 $stmt->execute([
                                     $report_id,
@@ -183,9 +199,11 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
             
             // Report content
             $content = json_decode($report['content'], true);
-            foreach ($content as $key => $value) {
-                $label = ucwords(str_replace('_', ' ', $key));
-                fputcsv($output, [$label . ':', $value]);
+            if (is_array($content)) {
+                foreach ($content as $key => $value) {
+                    $label = ucwords(str_replace('_', ' ', $key));
+                    fputcsv($output, [$label . ':', $value]);
+                }
             }
             
             fclose($output);
@@ -203,15 +221,25 @@ try {
     $stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total_reports,
-            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted_reports,
-            SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_reports,
-            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
-            SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_reports
+            COUNT(CASE WHEN status = 'submitted' THEN 1 END) as submitted_reports,
+            COUNT(CASE WHEN status = 'reviewed' THEN 1 END) as reviewed_reports,
+            COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_reports,
+            COUNT(CASE WHEN status = 'draft' THEN 1 END) as draft_reports
         FROM reports 
         WHERE user_id = ?
     ");
     $stmt->execute([$user_id]);
     $report_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$report_stats) {
+        $report_stats = [
+            'total_reports' => 0,
+            'submitted_reports' => 0,
+            'reviewed_reports' => 0,
+            'approved_reports' => 0,
+            'draft_reports' => 0
+        ];
+    }
 } catch (PDOException $e) {
     $report_stats = [
         'total_reports' => 0,
@@ -541,8 +569,8 @@ try {
         
         if (!$check_stmt->fetch()) {
             $insert_stmt = $pdo->prepare("
-                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, NOW())
+                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $insert_stmt->execute([
                 $template_data['name'],
@@ -557,8 +585,8 @@ try {
     // Refresh templates list
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'minister_gender' OR role_specific IS NULL
-        AND is_active = 1
+        WHERE (role_specific = 'minister_gender' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -572,11 +600,11 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Gender Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-        <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-purple: #8B5CF6;
@@ -600,6 +628,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -640,14 +670,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -657,7 +684,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -666,38 +692,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -705,22 +737,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -729,41 +746,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -773,50 +781,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -846,26 +889,20 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
-        }
-
-        .menu-badge {
-            background: var(--danger);
-            color: white;
-            border-radius: 10px;
-            padding: 0.1rem 0.4rem;
-            font-size: 0.7rem;
-            font-weight: 600;
-            margin-left: auto;
+            width: 20px;
         }
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -897,7 +934,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-purple);
+            border-left: 4px solid var(--primary-purple);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -930,13 +967,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -951,7 +989,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -974,7 +1012,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -982,8 +1020,51 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            background: var(--white);
+            border-radius: var(--border-radius);
+            padding: 0.25rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            background: none;
+            border: none;
+            border-radius: var(--border-radius);
+            font-weight: 500;
+            color: var(--dark-gray);
+            cursor: pointer;
+            transition: var(--transition);
+            text-align: center;
+            font-size: 0.85rem;
+        }
+
+        .tab.active {
+            background: var(--primary-purple);
+            color: white;
+        }
+
+        .tab:hover:not(.active) {
+            background: var(--light-gray);
+            color: var(--text-dark);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
         }
 
         /* Cards */
@@ -993,6 +1074,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -1001,6 +1084,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-purple);
         }
 
         .card-header h3 {
@@ -1033,46 +1119,10 @@ try {
             padding: 1.25rem;
         }
 
-        /* Tabs */
-        .tabs {
-            display: flex;
-            background: var(--white);
-            border-radius: var(--border-radius);
-            padding: 0.5rem;
-            margin-bottom: 1.5rem;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .tab {
-            flex: 1;
-            padding: 0.75rem 1rem;
-            background: none;
-            border: none;
-            border-radius: var(--border-radius);
-            font-weight: 500;
-            color: var(--dark-gray);
-            cursor: pointer;
-            transition: var(--transition);
-            text-align: center;
-        }
-
-        .tab.active {
-            background: var(--primary-purple);
-            color: white;
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
         /* Template Grid */
         .template-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 1rem;
         }
 
@@ -1080,7 +1130,7 @@ try {
             background: var(--white);
             border: 2px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            padding: 1.5rem;
+            padding: 1.25rem;
             cursor: pointer;
             transition: var(--transition);
             position: relative;
@@ -1157,7 +1207,7 @@ try {
 
         /* Forms */
         .form-group {
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
         }
 
         .form-label {
@@ -1170,7 +1220,7 @@ try {
 
         .form-control {
             width: 100%;
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
@@ -1205,7 +1255,7 @@ try {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.2rem;
             border: none;
             border-radius: var(--border-radius);
             font-weight: 500;
@@ -1236,7 +1286,7 @@ try {
         }
 
         .btn-sm {
-            padding: 0.5rem 1rem;
+            padding: 0.4rem 0.8rem;
             font-size: 0.75rem;
         }
 
@@ -1244,7 +1294,7 @@ try {
         .file-upload {
             border: 2px dashed var(--medium-gray);
             border-radius: var(--border-radius);
-            padding: 2rem;
+            padding: 1.5rem;
             text-align: center;
             cursor: pointer;
             transition: var(--transition);
@@ -1252,12 +1302,13 @@ try {
 
         .file-upload:hover {
             border-color: var(--primary-purple);
+            background: var(--light-purple);
         }
 
         .file-upload i {
-            font-size: 2rem;
+            font-size: 1.5rem;
             color: var(--dark-gray);
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
         }
 
         .file-input {
@@ -1272,7 +1323,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 0.75rem;
+            padding: 0.5rem 0.75rem;
             background: var(--light-gray);
             border-radius: var(--border-radius);
             margin-bottom: 0.5rem;
@@ -1284,9 +1335,19 @@ try {
             color: var(--danger);
             cursor: pointer;
             padding: 0.25rem;
+            border-radius: 4px;
+        }
+
+        .file-remove:hover {
+            background: var(--danger);
+            color: white;
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -1306,13 +1367,13 @@ try {
             font-size: 0.75rem;
         }
 
-        .table-responsive {
-            overflow-x: auto;
+        .table tbody tr:hover {
+            background: var(--light-purple);
         }
 
         /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -1331,17 +1392,17 @@ try {
 
         .status-reviewed {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-approved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-rejected {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         /* Alerts */
@@ -1350,6 +1411,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1375,36 +1439,179 @@ try {
             color: var(--dark-gray);
         }
 
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--light-purple);
+        }
+
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.25rem;
+            color: var(--dark-gray);
+            cursor: pointer;
+        }
+
+        .modal-close:hover {
+            color: var(--text-dark);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-purple);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .template-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .tabs {
+                flex-direction: column;
             }
-            
-            .user-details {
-                display: none;
+
+            .tab {
+                text-align: left;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1412,25 +1619,52 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .tabs {
-                flex-direction: column;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                width: 95%;
+                margin: 10% auto;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Gender Reports</h1>
                 </div>
@@ -1440,8 +1674,11 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1454,11 +1691,11 @@ try {
                     </div>
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
-                        <div class="user-role">Minister of Gender</div>
+                        <div class="user-role">Minister of Gender & Protocol</div>
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-                    <i class="fas fa-sign-out-alt"></i>
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1467,81 +1704,79 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-               <!-- Sidebar -->
-      <nav class="sidebar">
-    <ul class="sidebar-menu">
-        <li class="menu-item">
-            <a href="dashboard.php">
-                <i class="fas fa-tachometer-alt"></i>
-                <span>Dashboard</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="tickets.php" >
-                <i class="fas fa-ticket-alt"></i>
-                <span>Gender Issues</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="protocol.php">
-                <i class="fas fa-handshake"></i>
-                <span>Protocol & Visitors</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="clubs.php">
-                <i class="fas fa-users"></i>
-                <span>Gender Clubs</span>
-            </a>
-        </li>
-
-        <li class="menu-item">
-            <a href="hostel-management.php">
-                <i class="fas fa-building"></i>
-                <span>Hostel Management</span>
-            </a>
-        </li>
-        
-        <!-- Added Action Funding -->
-        <li class="menu-item">
-            <a href="action-funding.php">
-                <i class="fas fa-money-bill-wave"></i>
-                <span>Action Funding</span>
-            </a>
-        </li>
-        
-        <li class="menu-item">
-            <a href="reports.php" class="active">
-                <i class="fas fa-file-alt"></i>
-                <span>Reports & Analytics</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="meetings.php">
-                <i class="fas fa-calendar-alt"></i>
-                <span>Meetings</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="messages.php">
-                <i class="fas fa-comments"></i>
-                <span>Messages</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="profile.php">
-                <i class="fas fa-user-cog"></i>
-                <span>Profile & Settings</span>
-            </a>
-        </li>
-    </ul>
-</nav>
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <ul class="sidebar-menu">
+                <li class="menu-item">
+                    <a href="dashboard.php">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Gender Issues</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="protocol.php">
+                        <i class="fas fa-handshake"></i>
+                        <span>Protocol & Visitors</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="clubs.php">
+                        <i class="fas fa-users"></i>
+                        <span>Gender Clubs</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="hostel-management.php">
+                        <i class="fas fa-building"></i>
+                        <span>Hostel Management</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="action-funding.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="reports.php" class="active">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Reports & Analytics</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Gender Reports & Analytics</h1>
@@ -1552,14 +1787,14 @@ try {
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1571,7 +1806,7 @@ try {
                         <i class="fas fa-file-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['total_reports']; ?></div>
+                        <div class="stat-number"><?php echo number_format($report_stats['total_reports']); ?></div>
                         <div class="stat-label">Total Reports</div>
                     </div>
                 </div>
@@ -1580,7 +1815,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['submitted_reports']; ?></div>
+                        <div class="stat-number"><?php echo number_format($report_stats['submitted_reports']); ?></div>
                         <div class="stat-label">Submitted</div>
                     </div>
                 </div>
@@ -1589,7 +1824,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['approved_reports']; ?></div>
+                        <div class="stat-number"><?php echo number_format($report_stats['approved_reports']); ?></div>
                         <div class="stat-label">Approved</div>
                     </div>
                 </div>
@@ -1598,7 +1833,7 @@ try {
                         <i class="fas fa-clipboard-list"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo count($templates); ?></div>
+                        <div class="stat-number"><?php echo number_format(count($templates)); ?></div>
                         <div class="stat-label">Templates</div>
                     </div>
                 </div>
@@ -1716,7 +1951,7 @@ try {
                                 <i class="fas fa-exclamation-triangle"></i> No gender reports submitted yet.
                             </div>
                         <?php else: ?>
-                            <div class="table-responsive">
+                            <div class="table-container">
                                 <table class="table">
                                     <thead>
                                         <tr>
@@ -1773,13 +2008,13 @@ try {
     </div>
 
     <!-- Report View Modal -->
-    <div id="reportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-        <div style="background: var(--white); border-radius: var(--border-radius); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: between; align-items: center;">
+    <div id="reportModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
                 <h3 id="modalTitle">Gender Report Details</h3>
-                <button onclick="closeModal()" style="background: none; border: none; font-size: 1.25rem; color: var(--dark-gray); cursor: pointer;">&times;</button>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
             </div>
-            <div style="padding: 1.5rem;" id="modalContent">
+            <div class="modal-body" id="modalContent">
                 <!-- Content will be loaded here -->
             </div>
         </div>
@@ -1801,6 +2036,61 @@ try {
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab functionality
@@ -1828,6 +2118,13 @@ try {
                     selectTemplate(templateId);
                 });
             });
+
+            // Add loading animations
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
         });
 
         // Template selection function
@@ -1852,56 +2149,60 @@ try {
         // Load template fields via AJAX
         async function loadTemplateFields(templateId) {
             try {
-                const response = await fetch(`../api/get_template_fields.php?template_id=${templateId}`);
-                const data = await response.json();
+                // Since we don't have an API endpoint, we'll use the templates data from PHP
+                const templatesData = <?php echo json_encode($templates); ?>;
+                const template = templatesData.find(t => t.id == templateId);
                 
                 const fieldsContainer = document.getElementById('templateFields');
                 fieldsContainer.innerHTML = '';
                 
-                if (data.fields && data.fields.sections) {
-                    data.fields.sections.forEach(section => {
-                        const fieldName = section.title.toLowerCase().replace(/ /g, '_');
-                        const fieldId = `field_${fieldName}`;
-                        
-                        const fieldGroup = document.createElement('div');
-                        fieldGroup.className = 'form-group';
-                        
-                        let fieldHtml = `
-                            <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '*' : ''}</label>
-                        `;
-                        
-                        if (section.type === 'textarea' || section.type === 'richtext') {
-                            fieldHtml += `
-                                <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
-                                          ${section.required ? 'required' : ''} 
-                                          placeholder="${section.description || ''}"
-                                          rows="6"></textarea>
+                if (template && template.fields) {
+                    const fields = JSON.parse(template.fields);
+                    if (fields.sections && fields.sections.length) {
+                        fields.sections.forEach(section => {
+                            const fieldName = section.title.toLowerCase().replace(/ /g, '_');
+                            const fieldId = `field_${fieldName}`;
+                            
+                            const fieldGroup = document.createElement('div');
+                            fieldGroup.className = 'form-group';
+                            
+                            let fieldHtml = `
+                                <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '*' : ''}</label>
                             `;
-                        } else if (section.type === 'date') {
-                            fieldHtml += `
-                                <input type="date" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}>
-                            `;
-                        } else if (section.type === 'number') {
-                            fieldHtml += `
-                                <input type="number" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}>
-                            `;
-                        } else {
-                            fieldHtml += `
-                                <input type="text" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}
-                                       placeholder="${section.description || ''}">
-                            `;
-                        }
-                        
-                        if (section.description) {
-                            fieldHtml += `<div class="form-text">${section.description}</div>`;
-                        }
-                        
-                        fieldGroup.innerHTML = fieldHtml;
-                        fieldsContainer.appendChild(fieldGroup);
-                    });
+                            
+                            if (section.type === 'textarea' || section.type === 'richtext') {
+                                fieldHtml += `
+                                    <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
+                                              ${section.required ? 'required' : ''} 
+                                              placeholder="${section.description || ''}"
+                                              rows="6"></textarea>
+                                `;
+                            } else if (section.type === 'date') {
+                                fieldHtml += `
+                                    <input type="date" class="form-control" id="${fieldId}" name="${fieldName}" 
+                                           ${section.required ? 'required' : ''}>
+                                `;
+                            } else if (section.type === 'number') {
+                                fieldHtml += `
+                                    <input type="number" class="form-control" id="${fieldId}" name="${fieldName}" 
+                                           ${section.required ? 'required' : ''}>
+                                `;
+                            } else {
+                                fieldHtml += `
+                                    <input type="text" class="form-control" id="${fieldId}" name="${fieldName}" 
+                                           ${section.required ? 'required' : ''}
+                                           placeholder="${section.description || ''}">
+                                `;
+                            }
+                            
+                            if (section.description) {
+                                fieldHtml += `<div class="form-text">${section.description}</div>`;
+                            }
+                            
+                            fieldGroup.innerHTML = fieldHtml;
+                            fieldsContainer.appendChild(fieldGroup);
+                        });
+                    }
                 }
             } catch (error) {
                 console.error('Error loading template fields:', error);
@@ -1944,37 +2245,28 @@ try {
             document.getElementById('reportForm').style.display = 'none';
             document.getElementById('reportForm').reset();
             document.getElementById('fileList').innerHTML = '';
+            document.getElementById('templateFields').innerHTML = '';
         }
 
         // View report in modal
         async function viewReport(reportId) {
             try {
+                // Fetch report data
                 const response = await fetch(`../api/get_report.php?id=${reportId}`);
                 const report = await response.json();
                 
-                document.getElementById('modalTitle').textContent = report.title;
+                document.getElementById('modalTitle').textContent = report.title || 'Gender Report Details';
                 
-                let content = `
-                    <div class="form-group">
-                        <label class="form-label">Template</label>
-                        <div>${report.template_name || 'Custom'}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Report Type</label>
-                        <div>${report.report_type}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <span class="status-badge status-${report.status}">${report.status}</span>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Submitted</label>
-                        <div>${new Date(report.submitted_at).toLocaleDateString()}</div>
-                    </div>
-                `;
+                let content = '';
                 
                 if (report.content) {
-                    const reportContent = JSON.parse(report.content);
+                    let reportContent;
+                    if (typeof report.content === 'string') {
+                        reportContent = JSON.parse(report.content);
+                    } else {
+                        reportContent = report.content;
+                    }
+                    
                     Object.keys(reportContent).forEach(key => {
                         if (reportContent[key]) {
                             const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
@@ -1988,16 +2280,24 @@ try {
                     });
                 }
                 
+                if (!content) {
+                    content = '<div class="alert alert-warning">No content available for this report.</div>';
+                }
+                
                 document.getElementById('modalContent').innerHTML = content;
                 document.getElementById('reportModal').style.display = 'flex';
+                document.body.style.overflow = 'hidden';
             } catch (error) {
                 console.error('Error loading report:', error);
-                alert('Error loading report details');
+                document.getElementById('modalContent').innerHTML = '<div class="alert alert-danger">Error loading report details.</div>';
+                document.getElementById('reportModal').style.display = 'flex';
+                document.body.style.overflow = 'hidden';
             }
         }
 
         function closeModal() {
             document.getElementById('reportModal').style.display = 'none';
+            document.body.style.overflow = '';
         }
 
         // Close modal when clicking outside
@@ -2006,6 +2306,17 @@ try {
                 closeModal();
             }
         });
+
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
+            });
+        }, 5000);
     </script>
 </body>
 </html>

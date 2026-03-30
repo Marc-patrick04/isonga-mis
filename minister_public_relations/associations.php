@@ -1,4 +1,3 @@
-
 <?php
 session_start();
 require_once '../config/database.php';
@@ -15,11 +14,43 @@ $association_id = $_GET['association_id'] ?? null;
 $member_id = $_GET['member_id'] ?? null;
 $activity_id = $_GET['activity_id'] ?? null;
 $message = '';
+$error = '';
+
+// Initialize variables to prevent undefined errors
+$unread_messages = 0;
+$pending_tickets = 0;
+
+// Get user profile data
+try {
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$user_id]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $user = [];
+    error_log("User profile error: " . $e->getMessage());
+}
+
+// Initialize other variables
+$associations = [];
+$members = [];
+$activities = [];
+$departments = [];
+$programs = [];
+$stats = [
+    'total_associations' => 0, 
+    'total_members' => 0, 
+    'active_associations' => 0,
+    'religious_associations' => 0,
+    'cultural_associations' => 0,
+    'academic_associations' => 0
+];
+$current_association = null;
+$current_member = null;
+$current_activity = null;
 
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add_association' || $action === 'edit_association') {
-        // Handle association creation/editing
         $name = trim($_POST['name']);
         $type = $_POST['type'] ?? 'religious';
         $description = trim($_POST['description']);
@@ -52,6 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $performance_notes, $goals, $achievements, $status, $user_id
                     ]);
                     $message = "Association '$name' created successfully!";
+                    $action = 'dashboard';
                 } else {
                     $stmt = $pdo->prepare("
                         UPDATE associations 
@@ -67,14 +99,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $performance_notes, $goals, $achievements, $status, $association_id
                     ]);
                     $message = "Association updated successfully!";
+                    $action = 'view';
                 }
             } catch (PDOException $e) {
-                $message = "Error saving association: " . $e->getMessage();
+                $error = "Error saving association: " . $e->getMessage();
             }
+        } else {
+            $error = "Association name is required.";
         }
     }
     elseif ($action === 'add_member' || $action === 'edit_member') {
-        // Handle member management
         $reg_number = trim($_POST['reg_number']);
         $name = trim($_POST['name']);
         $email = trim($_POST['email']);
@@ -90,11 +124,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($reg_number) && !empty($name) && $association_id) {
             try {
                 if ($action === 'add_member') {
-                    // Check if member already exists in this association
                     $check_stmt = $pdo->prepare("SELECT id FROM association_members WHERE association_id = ? AND reg_number = ?");
                     $check_stmt->execute([$association_id, $reg_number]);
                     if ($check_stmt->fetch()) {
-                        $message = "Member with registration number $reg_number already exists in this association!";
+                        $error = "Member with registration number $reg_number already exists in this association!";
                     } else {
                         $stmt = $pdo->prepare("
                             INSERT INTO association_members 
@@ -107,13 +140,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $program_id, $academic_year, $role, $join_date, $status, $membership_notes
                         ]);
                         
-                        // Update association members count
                         $update_stmt = $pdo->prepare("
                             UPDATE associations SET members_count = members_count + 1 WHERE id = ?
                         ");
                         $update_stmt->execute([$association_id]);
                         
                         $message = "Member added successfully!";
+                        $action = 'view';
                     }
                 } else {
                     $stmt = $pdo->prepare("
@@ -128,14 +161,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $academic_year, $role, $join_date, $status, $membership_notes, $member_id, $association_id
                     ]);
                     $message = "Member updated successfully!";
+                    $action = 'view';
                 }
             } catch (PDOException $e) {
-                $message = "Error saving member: " . $e->getMessage();
+                $error = "Error saving member: " . $e->getMessage();
             }
+        } else {
+            $error = "Registration number and name are required.";
         }
     }
     elseif ($action === 'add_activity' || $action === 'edit_activity') {
-        // Handle activity management
         $title = trim($_POST['title']);
         $description = trim($_POST['description']);
         $activity_type = $_POST['activity_type'] ?? 'meeting';
@@ -162,6 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $end_time, $location, $participants_count, $budget, $status, $notes, $user_id
                     ]);
                     $message = "Activity added successfully!";
+                    $action = 'view';
                 } else {
                     $stmt = $pdo->prepare("
                         UPDATE association_activities 
@@ -175,10 +211,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $location, $participants_count, $budget, $status, $notes, $activity_id, $association_id
                     ]);
                     $message = "Activity updated successfully!";
+                    $action = 'view';
                 }
             } catch (PDOException $e) {
-                $message = "Error saving activity: " . $e->getMessage();
+                $error = "Error saving activity: " . $e->getMessage();
             }
+        } else {
+            $error = "Activity title is required.";
         }
     }
 }
@@ -187,7 +226,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (isset($_GET['delete'])) {
     if ($_GET['delete'] === 'association' && $association_id) {
         try {
-            // Check if association has members
             $check_stmt = $pdo->prepare("SELECT COUNT(*) FROM association_members WHERE association_id = ?");
             $check_stmt->execute([$association_id]);
             $member_count = $check_stmt->fetchColumn();
@@ -196,11 +234,12 @@ if (isset($_GET['delete'])) {
                 $stmt = $pdo->prepare("DELETE FROM associations WHERE id = ?");
                 $stmt->execute([$association_id]);
                 $message = "Association deleted successfully!";
+                $action = 'dashboard';
             } else {
-                $message = "Cannot delete association with members. Please remove all members first.";
+                $error = "Cannot delete association with members. Please remove all members first.";
             }
         } catch (PDOException $e) {
-            $message = "Error deleting association: " . $e->getMessage();
+            $error = "Error deleting association: " . $e->getMessage();
         }
     }
     elseif ($_GET['delete'] === 'member' && $member_id && $association_id) {
@@ -208,15 +247,15 @@ if (isset($_GET['delete'])) {
             $stmt = $pdo->prepare("DELETE FROM association_members WHERE id = ? AND association_id = ?");
             $stmt->execute([$member_id, $association_id]);
             
-            // Update association members count
             $update_stmt = $pdo->prepare("
                 UPDATE associations SET members_count = GREATEST(0, members_count - 1) WHERE id = ?
             ");
             $update_stmt->execute([$association_id]);
             
             $message = "Member removed successfully!";
+            $action = 'view';
         } catch (PDOException $e) {
-            $message = "Error deleting member: " . $e->getMessage();
+            $error = "Error deleting member: " . $e->getMessage();
         }
     }
     elseif ($_GET['delete'] === 'activity' && $activity_id && $association_id) {
@@ -224,8 +263,9 @@ if (isset($_GET['delete'])) {
             $stmt = $pdo->prepare("DELETE FROM association_activities WHERE id = ? AND association_id = ?");
             $stmt->execute([$activity_id, $association_id]);
             $message = "Activity deleted successfully!";
+            $action = 'view';
         } catch (PDOException $e) {
-            $message = "Error deleting activity: " . $e->getMessage();
+            $error = "Error deleting activity: " . $e->getMessage();
         }
     }
 }
@@ -249,22 +289,23 @@ try {
     $stats_stmt = $pdo->query("
         SELECT 
             COUNT(*) as total_associations,
-            SUM(members_count) as total_members,
+            COALESCE(SUM(members_count), 0) as total_members,
             COUNT(CASE WHEN status = 'active' THEN 1 END) as active_associations,
             COUNT(CASE WHEN type = 'religious' THEN 1 END) as religious_associations,
             COUNT(CASE WHEN type = 'cultural' THEN 1 END) as cultural_associations,
             COUNT(CASE WHEN type = 'academic' THEN 1 END) as academic_associations
         FROM associations
     ");
-    $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
+    $stats_result = $stats_stmt->fetch(PDO::FETCH_ASSOC);
+    if ($stats_result) {
+        $stats = $stats_result;
+    }
     
     if ($association_id) {
-        // Get specific association details
         $association_stmt = $pdo->prepare("SELECT * FROM associations WHERE id = ?");
         $association_stmt->execute([$association_id]);
         $current_association = $association_stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Get association members
         $members_stmt = $pdo->prepare("
             SELECT am.*, d.name as department_name, p.name as program_name
             FROM association_members am
@@ -285,7 +326,6 @@ try {
         $members_stmt->execute([$association_id]);
         $members = $members_stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Get association activities
         $activities_stmt = $pdo->prepare("
             SELECT * FROM association_activities 
             WHERE association_id = ? 
@@ -294,11 +334,10 @@ try {
         $activities_stmt->execute([$association_id]);
         $activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Get departments and programs for dropdowns
-        $departments_stmt = $pdo->query("SELECT * FROM departments WHERE is_active = 1 ORDER BY name");
+        $departments_stmt = $pdo->query("SELECT * FROM departments WHERE is_active = true ORDER BY name");
         $departments = $departments_stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        $programs_stmt = $pdo->query("SELECT * FROM programs WHERE is_active = 1 ORDER BY name");
+        $programs_stmt = $pdo->query("SELECT * FROM programs WHERE is_active = true ORDER BY name");
         $programs = $programs_stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
@@ -320,11 +359,39 @@ try {
         $current_activity = $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
+    // Get unread messages count
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_messages 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $unread_messages = $result['unread_messages'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+        error_log("Unread messages query error: " . $e->getMessage());
+    }
+    
+    // Get pending tickets count
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as pending_tickets 
+            FROM tickets 
+            WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pending_tickets = $result['pending_tickets'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_tickets = 0;
+        error_log("Pending tickets query error: " . $e->getMessage());
+    }
+    
 } catch (PDOException $e) {
     error_log("Associations data error: " . $e->getMessage());
-    $associations = $members = $activities = $departments = $programs = [];
-    $stats = ['total_associations' => 0, 'total_members' => 0, 'active_associations' => 0];
-    $current_association = $current_member = $current_activity = null;
 }
 ?>
 
@@ -332,13 +399,12 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Associations Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
-        
         :root {
             --primary-purple: #8B5CF6;
             --secondary-purple: #A78BFA;
@@ -359,6 +425,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -374,7 +442,6 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-purple) 0%, var(--accent-purple) 100%);
         }
 
         * {
@@ -397,14 +464,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -414,7 +478,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -423,10 +486,16 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -435,7 +504,7 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
         }
@@ -443,18 +512,18 @@ try {
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -462,22 +531,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -486,41 +540,33 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -530,50 +576,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -603,9 +684,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -620,16 +699,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title {
@@ -638,351 +726,19 @@ try {
             color: var(--text-dark);
         }
 
+        .page-description {
+            color: var(--dark-gray);
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
         .page-actions {
             display: flex;
             gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
-        /* Overview Tab Styles */
-.tab-content {
-    display: none;
-    animation: fadeIn 0.3s ease-in-out;
-}
-
-.tab-content.active {
-    display: block;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-.association-details {
-    padding: 1rem 0;
-}
-
-.detail-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2rem;
-    margin-bottom: 2rem;
-}
-
-.detail-section {
-    background: var(--white);
-    border: 1px solid var(--medium-gray);
-    border-radius: var(--border-radius);
-    padding: 1.5rem;
-    box-shadow: var(--shadow-sm);
-    transition: var(--transition);
-}
-
-.detail-section:hover {
-    box-shadow: var(--shadow-md);
-    transform: translateY(-2px);
-}
-
-.detail-section h4 {
-    color: var(--primary-purple);
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 2px solid var(--light-purple);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.detail-section h4::before {
-    content: '';
-    width: 4px;
-    height: 20px;
-    background: var(--gradient-primary);
-    border-radius: 2px;
-}
-
-.detail-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid var(--light-gray);
-}
-
-.detail-item:last-child {
-    border-bottom: none;
-}
-
-.detail-item label {
-    font-weight: 600;
-    color: var(--text-dark);
-    font-size: 0.85rem;
-    min-width: 140px;
-    flex-shrink: 0;
-}
-
-.detail-item span {
-    color: var(--dark-gray);
-    font-size: 0.85rem;
-    text-align: right;
-    flex: 1;
-    margin-left: 1rem;
-    line-height: 1.4;
-}
-
-/* Description and content sections */
-.detail-section p {
-    color: var(--text-dark);
-    line-height: 1.6;
-    font-size: 0.9rem;
-    margin-bottom: 0;
-}
-
-.detail-section:not(.detail-grid .detail-section) {
-    margin-bottom: 1.5rem;
-    background: var(--white);
-    border: 1px solid var(--medium-gray);
-    border-radius: var(--border-radius);
-    padding: 1.5rem;
-    box-shadow: var(--shadow-sm);
-}
-
-.detail-section:not(.detail-grid .detail-section) h4 {
-    color: var(--primary-purple);
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.detail-section:not(.detail-grid .detail-section) h4 i {
-    color: var(--primary-purple);
-    font-size: 1rem;
-}
-
-/* Status and type badges */
-.status-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.status-active {
-    background: linear-gradient(135deg, #d4edda, #c3e6cb);
-    color: #155724;
-    border: 1px solid #c3e6cb;
-}
-
-.status-inactive {
-    background: linear-gradient(135deg, #f8d7da, #f5c6cb);
-    color: #721c24;
-    border: 1px solid #f5c6cb;
-}
-
-.status-suspended {
-    background: linear-gradient(135deg, #fff3cd, #ffeaa7);
-    color: #856404;
-    border: 1px solid #ffeaa7;
-}
-
-.type-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.type-religious {
-    background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-    color: #1565c0;
-    border: 1px solid #bbdefb;
-}
-
-.type-cultural {
-    background: linear-gradient(135deg, #f3e5f5, #e1bee7);
-    color: #7b1fa2;
-    border: 1px solid #e1bee7;
-}
-
-.type-academic {
-    background: linear-gradient(135deg, #e8f5e8, #c8e6c9);
-    color: #2e7d32;
-    border: 1px solid #c8e6c9;
-}
-
-.type-sports {
-    background: linear-gradient(135deg, #fff3e0, #ffcc80);
-    color: #ef6c00;
-    border: 1px solid #ffcc80;
-}
-
-.type-social {
-    background: linear-gradient(135deg, #fce4ec, #f8bbd9);
-    color: #c2185b;
-    border: 1px solid #f8bbd9;
-}
-
-.type-other {
-    background: linear-gradient(135deg, #f5f5f5, #e0e0e0);
-    color: #424242;
-    border: 1px solid #e0e0e0;
-}
-
-/* Role badges */
-.role-badge {
-    padding: 0.2rem 0.6rem;
-    border-radius: 15px;
-    font-size: 0.7rem;
-    font-weight: 600;
-    text-transform: capitalize;
-}
-
-.role-president {
-    background: linear-gradient(135deg, #ffebee, #ffcdd2);
-    color: #c62828;
-}
-
-.role-vice_president {
-    background: linear-gradient(135deg, #f3e5f5, #e1bee7);
-    color: #7b1fa2;
-}
-
-.role-secretary {
-    background: linear-gradient(135deg, #e8f5e8, #c8e6c9);
-    color: #2e7d32;
-}
-
-.role-treasurer {
-    background: linear-gradient(135deg, #fff3e0, #ffcc80);
-    color: #ef6c00;
-}
-
-.role-advisor {
-    background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-    color: #1565c0;
-}
-
-.role-member {
-    background: linear-gradient(135deg, #f5f5f5, #e0e0e0);
-    color: #424242;
-}
-
-/* Responsive Design */
-@media (max-width: 1024px) {
-    .detail-grid {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
-    }
-    
-    .detail-section {
-        padding: 1.25rem;
-    }
-}
-
-@media (max-width: 768px) {
-    .detail-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.25rem;
-    }
-    
-    .detail-item label {
-        min-width: auto;
-        margin-bottom: 0.25rem;
-    }
-    
-    .detail-item span {
-        text-align: left;
-        margin-left: 0;
-    }
-    
-    .detail-section {
-        padding: 1rem;
-    }
-    
-    .detail-section h4 {
-        font-size: 1rem;
-    }
-}
-
-@media (max-width: 480px) {
-    .detail-grid {
-        gap: 1rem;
-    }
-    
-    .detail-section {
-        padding: 0.75rem;
-    }
-    
-    .status-badge,
-    .type-badge,
-    .role-badge {
-        font-size: 0.7rem;
-        padding: 0.2rem 0.5rem;
-    }
-}
-
-/* Dark mode support */
-.dark-mode .detail-section {
-    background: var(--medium-gray);
-    border-color: var(--dark-gray);
-}
-
-.dark-mode .detail-item {
-    border-bottom-color: var(--dark-gray);
-}
-
-.dark-mode .detail-item label {
-    color: var(--text-dark);
-}
-
-.dark-mode .detail-item span {
-    color: var(--dark-gray);
-}
-
-.dark-mode .detail-section p {
-    color: var(--text-dark);
-}
-
-/* Hover effects */
-.detail-item:hover {
-    background: var(--light-purple);
-    margin: 0 -0.5rem;
-    padding: 0.75rem 0.5rem;
-    border-radius: 4px;
-    transition: var(--transition);
-}
-
-/* Icon support for detail items */
-.detail-item[data-icon]::before {
-    content: attr(data-icon);
-    font-family: 'Font Awesome 6 Free';
-    font-weight: 900;
-    margin-right: 0.5rem;
-    color: var(--primary-purple);
-    width: 16px;
-    text-align: center;
-}
-
-/* Optional: Add icons to specific fields */
-.detail-item label[for="type"]::before { content: "📊"; }
-.detail-item label[for="established_date"]::before { content: "📅"; }
-.detail-item label[for="meeting_schedule"]::before { content: "⏰"; }
-.detail-item label[for="meeting_location"]::before { content: "📍"; }
-.detail-item label[for="contact_person"]::before { content: "👤"; }
-.detail-item label[for="contact_email"]::before { content: "📧"; }
-.detail-item label[for="contact_phone"]::before { content: "📞"; }
-.detail-item label[for="faculty_advisor"]::before { content: "🎓"; }
-
+        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
@@ -1045,7 +801,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-purple);
+            border-left: 4px solid var(--primary-purple);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -1070,13 +826,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -1091,7 +848,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -1104,7 +861,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -1112,7 +869,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -1123,6 +880,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -1131,6 +890,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-purple);
         }
 
         .card-header h3 {
@@ -1180,12 +942,12 @@ try {
         }
 
         .association-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
         }
 
         .association-header {
-            padding: 1.25rem;
+            padding: 1rem;
             background: var(--light-purple);
             border-bottom: 1px solid var(--medium-gray);
         }
@@ -1194,22 +956,11 @@ try {
             font-weight: 700;
             color: var(--text-dark);
             margin-bottom: 0.5rem;
-            font-size: 1.1rem;
-        }
-
-        .association-type {
-            display: inline-block;
-            padding: 0.25rem 0.5rem;
-            background: var(--primary-purple);
-            color: white;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
+            font-size: 1rem;
         }
 
         .association-body {
-            padding: 1.25rem;
+            padding: 1rem;
         }
 
         .association-description {
@@ -1224,7 +975,7 @@ try {
 
         .association-stats {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(3, 1fr);
             gap: 0.75rem;
             margin-bottom: 1rem;
         }
@@ -1235,24 +986,82 @@ try {
 
         .stat-value {
             font-weight: 700;
-            font-size: 1.1rem;
+            font-size: 1rem;
             color: var(--primary-purple);
-        }
-
-        .stat-label {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
         }
 
         .association-actions {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
             flex-wrap: wrap;
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--medium-gray);
         }
+
+        .action-link {
+            color: var(--primary-purple);
+            text-decoration: none;
+            font-size: 0.75rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        .action-link:hover {
+            text-decoration: underline;
+        }
+
+        .action-link.danger {
+            color: var(--danger);
+        }
+
+        /* Type and Status Badges */
+        .type-badge, .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .type-religious { background: #e3f2fd; color: #1565c0; }
+        .type-cultural { background: #f3e5f5; color: #7b1fa2; }
+        .type-academic { background: #e8f5e8; color: #2e7d32; }
+        .type-sports { background: #fff3e0; color: #ef6c00; }
+        .type-social { background: #fce4ec; color: #c2185b; }
+        .type-other { background: #f5f5f5; color: #424242; }
+
+        .status-active { background: #d4edda; color: #155724; }
+        .status-inactive { background: #f8d7da; color: #721c24; }
+        .status-suspended { background: #fff3cd; color: #856404; }
+
+        /* Role Badges */
+        .role-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 15px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+
+        .role-president { background: #ffebee; color: #c62828; }
+        .role-vice_president { background: #f3e5f5; color: #7b1fa2; }
+        .role-secretary { background: #e8f5e8; color: #2e7d32; }
+        .role-treasurer { background: #fff3e0; color: #ef6c00; }
+        .role-advisor { background: #e3f2fd; color: #1565c0; }
+        .role-member { background: #f5f5f5; color: #424242; }
 
         /* Forms */
         .form-group {
             margin-bottom: 1rem;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
         }
 
         .form-label {
@@ -1280,23 +1089,29 @@ try {
             box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
         }
 
+        textarea.form-control {
+            resize: vertical;
+        }
+
         .form-text {
             font-size: 0.75rem;
             color: var(--dark-gray);
             margin-top: 0.25rem;
         }
 
-        .checkbox-group {
+        .form-actions {
             display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .checkbox-group input[type="checkbox"] {
-            width: auto;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--medium-gray);
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -1316,73 +1131,17 @@ try {
             font-size: 0.75rem;
         }
 
-        .status-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-active {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-inactive {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .status-suspended {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .role-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .role-president {
-            background: var(--primary-purple);
-            color: white;
-        }
-
-        .role-vice_president {
-            background: var(--secondary-purple);
-            color: white;
-        }
-
-        .role-secretary {
-            background: var(--success);
-            color: white;
-        }
-
-        .role-treasurer {
-            background: var(--warning);
-            color: black;
-        }
-
-        .role-advisor {
-            background: var(--danger);
-            color: white;
-        }
-
-        .role-member {
-            background: var(--light-gray);
-            color: var(--text-dark);
+        .table tbody tr:hover {
+            background: var(--light-purple);
         }
 
         /* Tabs */
         .tabs {
             display: flex;
+            flex-wrap: wrap;
             border-bottom: 1px solid var(--medium-gray);
             margin-bottom: 1.5rem;
-            flex-wrap: wrap;
+            gap: 0.25rem;
         }
 
         .tab {
@@ -1394,7 +1153,7 @@ try {
             transition: var(--transition);
             border-bottom: 2px solid transparent;
             font-weight: 500;
-            white-space: nowrap;
+            font-size: 0.85rem;
         }
 
         .tab.active {
@@ -1406,12 +1165,172 @@ try {
             color: var(--primary-purple);
         }
 
-        /* Alert */
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Detail Sections */
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .detail-section {
+            background: var(--white);
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+        }
+
+        .detail-section h4 {
+            color: var(--primary-purple);
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--light-purple);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--light-gray);
+        }
+
+        .detail-item:last-child {
+            border-bottom: none;
+        }
+
+        .detail-item label {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.8rem;
+        }
+
+        .detail-item span {
+            color: var(--dark-gray);
+            font-size: 0.8rem;
+            text-align: right;
+        }
+
+        .tab-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .tab-header h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        /* Activities Grid */
+        .activities-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .activity-card {
+            background: var(--white);
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .activity-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .activity-header {
+            padding: 1rem;
+            background: var(--light-purple);
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .activity-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+        }
+
+        .activity-body {
+            padding: 1rem;
+        }
+
+        .activity-datetime, .activity-location {
+            font-size: 0.75rem;
+            color: var(--dark-gray);
+            margin-bottom: 0.5rem;
+        }
+
+        .activity-datetime i, .activity-location i {
+            width: 16px;
+            margin-right: 0.5rem;
+        }
+
+        .activity-description {
+            font-size: 0.8rem;
+            color: var(--text-dark);
+            margin: 0.75rem 0;
+        }
+
+        .activity-stats {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.75rem;
+        }
+
+        .activity-stat {
+            text-align: center;
+        }
+
+        .activity-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--medium-gray);
+            background: var(--light-gray);
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .settings-actions {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        /* Alerts */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1433,96 +1352,149 @@ try {
             border-left-color: var(--warning);
         }
 
-        /* Activity Timeline */
-        .activity-timeline {
-            list-style: none;
-        }
-
-        .activity-item {
-            display: flex;
-            gap: 1rem;
-            padding: 1rem 0;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .activity-item:last-child {
-            border-bottom: none;
-        }
-
-        .activity-icon {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--light-purple);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--primary-purple);
-            font-size: 0.8rem;
-            flex-shrink: 0;
-        }
-
-        .activity-content {
-            flex: 1;
-        }
-
-        .activity-title {
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-            color: var(--text-dark);
-        }
-
-        .activity-meta {
-            display: flex;
-            gap: 1rem;
-            font-size: 0.75rem;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
             color: var(--dark-gray);
-            margin-bottom: 0.5rem;
         }
 
-        .activity-description {
-            font-size: 0.8rem;
-            color: var(--text-dark);
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
             }
-            
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .associations-grid {
                 grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .associations-grid {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .associations-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .page-actions {
+                width: 100%;
+            }
+
             .tabs {
                 overflow-x: auto;
+                flex-wrap: nowrap;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .detail-item {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .detail-item span {
+                text-align: left;
+            }
+
+            .activities-grid {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -1530,42 +1502,69 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .association-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .form-actions {
                 flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
             }
-            
-            .page-actions {
+
+            .form-actions .btn {
                 width: 100%;
-                justify-content: space-between;
+                justify-content: center;
             }
-            
-            .association-actions {
+
+            .settings-actions {
                 flex-direction: column;
             }
-            
-            .association-actions .btn {
+
+            .settings-actions .btn {
                 width: 100%;
                 justify-content: center;
             }
         }
-        
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Associations Control Room</h1>
                 </div>
@@ -1575,14 +1574,17 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
@@ -1602,7 +1604,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1614,6 +1619,9 @@ try {
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1634,7 +1642,6 @@ try {
                         <span>Events</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="gallery.php">
                         <i class="fas fa-images"></i>
@@ -1647,8 +1654,8 @@ try {
                         <span>Associations</span>
                     </a>
                 </li>
-                                <li class="menu-item">
-                    <a href="committee_budget_requests.php" >
+                <li class="menu-item">
+                    <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1669,6 +1676,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1681,12 +1691,12 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div>
                     <h1 class="page-title">Associations Control Room</h1>
-                    <p style="color: var(--dark-gray); font-size: 0.9rem; margin-top: 0.25rem;">
+                    <p class="page-description">
                         Manage all student associations, members, and activities
                     </p>
                 </div>
@@ -1705,9 +1715,16 @@ try {
 
             <!-- Message Alert -->
             <?php if (!empty($message)): ?>
-                <div class="alert <?php echo strpos($message, 'Error') !== false ? 'alert-danger' : 'alert-success'; ?>">
-                    <i class="fas <?php echo strpos($message, 'Error') !== false ? 'fa-exclamation-triangle' : 'fa-check-circle'; ?>"></i>
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i>
                     <?php echo htmlspecialchars($message); ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if (!empty($error)): ?>
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <?php echo htmlspecialchars($error); ?>
                 </div>
             <?php endif; ?>
 
@@ -1718,7 +1735,7 @@ try {
                         <i class="fas fa-church"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $stats['total_associations']; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['total_associations']); ?></div>
                         <div class="stat-label">Total Associations</div>
                     </div>
                 </div>
@@ -1727,7 +1744,7 @@ try {
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $stats['total_members']; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['total_members']); ?></div>
                         <div class="stat-label">Total Members</div>
                     </div>
                 </div>
@@ -1736,7 +1753,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $stats['active_associations']; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['active_associations']); ?></div>
                         <div class="stat-label">Active Associations</div>
                     </div>
                 </div>
@@ -1745,7 +1762,7 @@ try {
                         <i class="fas fa-pray"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $stats['religious_associations']; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['religious_associations']); ?></div>
                         <div class="stat-label">Religious Groups</div>
                     </div>
                 </div>
@@ -1756,18 +1773,21 @@ try {
                 <!-- Associations Overview -->
                 <div class="card">
                     <div class="card-header">
-                        <h3>All Student Associations</h3>
+                        <h3><i class="fas fa-church"></i> All Student Associations</h3>
                         <div class="card-header-actions">
                             <span style="color: var(--dark-gray); font-size: 0.8rem;">
                                 <?php echo count($associations); ?> associations
                             </span>
+                            <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="card-body">
                         <?php if (empty($associations)): ?>
-                            <div style="text-align: center; padding: 3rem; color: var(--dark-gray);">
-                                <i class="fas fa-church" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                                                <p>No associations found.</p>
+                            <div class="empty-state">
+                                <i class="fas fa-church"></i>
+                                <p>No associations found.</p>
                                 <a href="?action=add_association" class="btn btn-primary" style="margin-top: 1rem;">
                                     <i class="fas fa-plus-circle"></i> Create First Association
                                 </a>
@@ -1778,11 +1798,9 @@ try {
                                     <div class="association-card">
                                         <div class="association-header">
                                             <div class="association-name"><?php echo htmlspecialchars($association['name']); ?></div>
-                                            <div class="association-type">
-                                                <span class="type-badge type-<?php echo $association['type']; ?>">
-                                                    <?php echo ucfirst($association['type']); ?>
-                                                </span>
-                                            </div>
+                                            <span class="type-badge type-<?php echo $association['type']; ?>">
+                                                <?php echo ucfirst($association['type']); ?>
+                                            </span>
                                         </div>
                                         <div class="association-body">
                                             <?php if (!empty($association['description'])): ?>
@@ -1806,7 +1824,6 @@ try {
                                                             <?php echo ucfirst($association['status']); ?>
                                                         </span>
                                                     </div>
-                                                    <div class="stat-label">Status</div>
                                                 </div>
                                             </div>
                                             <div class="association-actions">
@@ -1834,7 +1851,7 @@ try {
                 <!-- Association Details View -->
                 <div class="card">
                     <div class="card-header">
-                        <h3><?php echo htmlspecialchars($current_association['name']); ?></h3>
+                        <h3><i class="fas fa-church"></i> <?php echo htmlspecialchars($current_association['name']); ?></h3>
                         <div class="card-header-actions">
                             <span class="type-badge type-<?php echo $current_association['type']; ?>">
                                 <?php echo ucfirst($current_association['type']); ?>
@@ -1855,98 +1872,96 @@ try {
 
                         <!-- Overview Tab -->
                         <div id="overview" class="tab-content active">
-                            <div class="association-details">
-                                <div class="detail-grid">
-                                    <div class="detail-section">
-                                        <h4>Basic Information</h4>
+                            <div class="detail-grid">
+                                <div class="detail-section">
+                                    <h4><i class="fas fa-info-circle"></i> Basic Information</h4>
+                                    <div class="detail-item">
+                                        <label>Type:</label>
+                                        <span><?php echo ucfirst($current_association['type']); ?></span>
+                                    </div>
+                                    <?php if ($current_association['established_date']): ?>
                                         <div class="detail-item">
-                                            <label>Type:</label>
-                                            <span><?php echo ucfirst($current_association['type']); ?></span>
+                                            <label>Established:</label>
+                                            <span><?php echo date('F j, Y', strtotime($current_association['established_date'])); ?></span>
                                         </div>
-                                        <?php if ($current_association['established_date']): ?>
-                                            <div class="detail-item">
-                                                <label>Established:</label>
-                                                <span><?php echo date('F j, Y', strtotime($current_association['established_date'])); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                        <?php if ($current_association['meeting_schedule']): ?>
-                                            <div class="detail-item">
-                                                <label>Meeting Schedule:</label>
-                                                <span><?php echo htmlspecialchars($current_association['meeting_schedule']); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                        <?php if ($current_association['meeting_location']): ?>
-                                            <div class="detail-item">
-                                                <label>Meeting Location:</label>
-                                                <span><?php echo htmlspecialchars($current_association['meeting_location']); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                    </div>
-
-                                    <div class="detail-section">
-                                        <h4>Contact Information</h4>
-                                        <?php if ($current_association['contact_person']): ?>
-                                            <div class="detail-item">
-                                                <label>Contact Person:</label>
-                                                <span><?php echo htmlspecialchars($current_association['contact_person']); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                        <?php if ($current_association['contact_email']): ?>
-                                            <div class="detail-item">
-                                                <label>Email:</label>
-                                                <span><?php echo htmlspecialchars($current_association['contact_email']); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                        <?php if ($current_association['contact_phone']): ?>
-                                            <div class="detail-item">
-                                                <label>Phone:</label>
-                                                <span><?php echo htmlspecialchars($current_association['contact_phone']); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                        <?php if ($current_association['faculty_advisor']): ?>
-                                            <div class="detail-item">
-                                                <label>Faculty Advisor:</label>
-                                                <span><?php echo htmlspecialchars($current_association['faculty_advisor']); ?></span>
-                                            </div>
-                                        <?php endif; ?>
-                                    </div>
+                                    <?php endif; ?>
+                                    <?php if ($current_association['meeting_schedule']): ?>
+                                        <div class="detail-item">
+                                            <label>Meeting Schedule:</label>
+                                            <span><?php echo htmlspecialchars($current_association['meeting_schedule']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if ($current_association['meeting_location']): ?>
+                                        <div class="detail-item">
+                                            <label>Meeting Location:</label>
+                                            <span><?php echo htmlspecialchars($current_association['meeting_location']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
 
-                                <?php if ($current_association['description']): ?>
-                                    <div class="detail-section">
-                                        <h4>Description</h4>
-                                        <p><?php echo nl2br(htmlspecialchars($current_association['description'])); ?></p>
-                                    </div>
-                                <?php endif; ?>
-
-                                <?php if ($current_association['goals']): ?>
-                                    <div class="detail-section">
-                                        <h4>Goals & Objectives</h4>
-                                        <p><?php echo nl2br(htmlspecialchars($current_association['goals'])); ?></p>
-                                    </div>
-                                <?php endif; ?>
-
-                                <?php if ($current_association['achievements']): ?>
-                                    <div class="detail-section">
-                                        <h4>Key Achievements</h4>
-                                        <p><?php echo nl2br(htmlspecialchars($current_association['achievements'])); ?></p>
-                                    </div>
-                                <?php endif; ?>
+                                <div class="detail-section">
+                                    <h4><i class="fas fa-address-card"></i> Contact Information</h4>
+                                    <?php if ($current_association['contact_person']): ?>
+                                        <div class="detail-item">
+                                            <label>Contact Person:</label>
+                                            <span><?php echo htmlspecialchars($current_association['contact_person']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if ($current_association['contact_email']): ?>
+                                        <div class="detail-item">
+                                            <label>Email:</label>
+                                            <span><?php echo htmlspecialchars($current_association['contact_email']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if ($current_association['contact_phone']): ?>
+                                        <div class="detail-item">
+                                            <label>Phone:</label>
+                                            <span><?php echo htmlspecialchars($current_association['contact_phone']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                    <?php if ($current_association['faculty_advisor']): ?>
+                                        <div class="detail-item">
+                                            <label>Faculty Advisor:</label>
+                                            <span><?php echo htmlspecialchars($current_association['faculty_advisor']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
+                                </div>
                             </div>
+
+                            <?php if ($current_association['description']): ?>
+                                <div class="detail-section">
+                                    <h4><i class="fas fa-align-left"></i> Description</h4>
+                                    <p><?php echo nl2br(htmlspecialchars($current_association['description'])); ?></p>
+                                </div>
+                            <?php endif; ?>
+
+                            <?php if ($current_association['goals']): ?>
+                                <div class="detail-section">
+                                    <h4><i class="fas fa-bullseye"></i> Goals & Objectives</h4>
+                                    <p><?php echo nl2br(htmlspecialchars($current_association['goals'])); ?></p>
+                                </div>
+                            <?php endif; ?>
+
+                            <?php if ($current_association['achievements']): ?>
+                                <div class="detail-section">
+                                    <h4><i class="fas fa-trophy"></i> Key Achievements</h4>
+                                    <p><?php echo nl2br(htmlspecialchars($current_association['achievements'])); ?></p>
+                                </div>
+                            <?php endif; ?>
                         </div>
 
                         <!-- Members Tab -->
                         <div id="members" class="tab-content">
                             <div class="tab-header">
-                                <h4>Association Members</h4>
+                                <h4><i class="fas fa-users"></i> Association Members</h4>
                                 <a href="?action=add_member&association_id=<?php echo $association_id; ?>" class="btn btn-primary btn-sm">
                                     <i class="fas fa-user-plus"></i> Add Member
                                 </a>
                             </div>
                             
                             <?php if (empty($members)): ?>
-                                <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-users" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-users"></i>
                                     <p>No members found in this association.</p>
                                     <a href="?action=add_member&association_id=<?php echo $association_id; ?>" class="btn btn-primary">
                                         <i class="fas fa-user-plus"></i> Add First Member
@@ -2013,15 +2028,15 @@ try {
                         <!-- Activities Tab -->
                         <div id="activities" class="tab-content">
                             <div class="tab-header">
-                                <h4>Association Activities</h4>
+                                <h4><i class="fas fa-calendar-alt"></i> Association Activities</h4>
                                 <a href="?action=add_activity&association_id=<?php echo $association_id; ?>" class="btn btn-primary btn-sm">
                                     <i class="fas fa-calendar-plus"></i> Add Activity
                                 </a>
                             </div>
                             
                             <?php if (empty($activities)): ?>
-                                <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-calendar-alt" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-alt"></i>
                                     <p>No activities found for this association.</p>
                                     <a href="?action=add_activity&association_id=<?php echo $association_id; ?>" class="btn btn-primary">
                                         <i class="fas fa-calendar-plus"></i> Schedule First Activity
@@ -2033,11 +2048,9 @@ try {
                                         <div class="activity-card">
                                             <div class="activity-header">
                                                 <div class="activity-title"><?php echo htmlspecialchars($activity['title']); ?></div>
-                                                <div class="activity-type">
-                                                    <span class="type-badge type-<?php echo $activity['activity_type']; ?>">
-                                                        <?php echo ucfirst(str_replace('_', ' ', $activity['activity_type'])); ?>
-                                                    </span>
-                                                </div>
+                                                <span class="type-badge type-<?php echo $activity['activity_type']; ?>">
+                                                    <?php echo ucfirst(str_replace('_', ' ', $activity['activity_type'])); ?>
+                                                </span>
                                             </div>
                                             <div class="activity-body">
                                                 <div class="activity-datetime">
@@ -2098,7 +2111,7 @@ try {
                         <!-- Settings Tab -->
                         <div id="settings" class="tab-content">
                             <div class="tab-header">
-                                <h4>Association Settings</h4>
+                                <h4><i class="fas fa-cog"></i> Association Settings</h4>
                             </div>
                             <div class="settings-actions">
                                 <a href="?action=edit_association&association_id=<?php echo $association_id; ?>" class="btn btn-primary">
@@ -2118,19 +2131,21 @@ try {
                 <!-- Add/Edit Association Form -->
                 <div class="card">
                     <div class="card-header">
-                        <h3><?php echo $action === 'add_association' ? 'Create New Association' : 'Edit Association'; ?></h3>
+                        <h3><i class="fas <?php echo $action === 'add_association' ? 'fa-plus-circle' : 'fa-edit'; ?>"></i> 
+                            <?php echo $action === 'add_association' ? 'Create New Association' : 'Edit Association'; ?>
+                        </h3>
                     </div>
                     <div class="card-body">
                         <form method="POST" action="?action=<?php echo $action; ?><?php echo $association_id ? '&association_id=' . $association_id : ''; ?>">
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label class="form-label" for="name">Association Name *</label>
+                                    <label class="form-label" for="name">Association Name <span style="color: var(--danger);">*</span></label>
                                     <input type="text" class="form-control" id="name" name="name" 
                                            value="<?php echo isset($current_association) ? htmlspecialchars($current_association['name']) : ''; ?>" 
                                            required>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label" for="type">Association Type *</label>
+                                    <label class="form-label" for="type">Association Type <span style="color: var(--danger);">*</span></label>
                                     <select class="form-control" id="type" name="type" required>
                                         <option value="religious" <?php echo (isset($current_association) && $current_association['type'] === 'religious') ? 'selected' : ''; ?>>Religious</option>
                                         <option value="cultural" <?php echo (isset($current_association) && $current_association['type'] === 'cultural') ? 'selected' : ''; ?>>Cultural</option>
@@ -2241,19 +2256,22 @@ try {
                 <!-- Add/Edit Member Form -->
                 <div class="card">
                     <div class="card-header">
-                        <h3><?php echo $action === 'add_member' ? 'Add New Member' : 'Edit Member'; ?></h3>
+                        <h3><i class="fas <?php echo $action === 'add_member' ? 'fa-user-plus' : 'fa-user-edit'; ?>"></i> 
+                            <?php echo $action === 'add_member' ? 'Add New Member' : 'Edit Member'; ?>
+                        </h3>
                     </div>
                     <div class="card-body">
                         <form method="POST" action="?action=<?php echo $action; ?>&association_id=<?php echo $association_id; ?><?php echo $member_id ? '&member_id=' . $member_id : ''; ?>">
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label class="form-label" for="reg_number">Registration Number *</label>
+                                    <label class="form-label" for="reg_number">Registration Number <span style="color: var(--danger);">*</span></label>
                                     <input type="text" class="form-control" id="reg_number" name="reg_number" 
                                            value="<?php echo isset($current_member) ? htmlspecialchars($current_member['reg_number']) : ''; ?>" 
                                            required>
+                                    <div class="form-text">Format: 25RP01234</div>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label" for="name">Full Name *</label>
+                                    <label class="form-label" for="name">Full Name <span style="color: var(--danger);">*</span></label>
                                     <input type="text" class="form-control" id="name" name="name" 
                                            value="<?php echo isset($current_member) ? htmlspecialchars($current_member['name']) : ''; ?>" 
                                            required>
@@ -2313,7 +2331,7 @@ try {
                                     </select>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label" for="role">Role *</label>
+                                    <label class="form-label" for="role">Role <span style="color: var(--danger);">*</span></label>
                                     <select class="form-control" id="role" name="role" required>
                                         <option value="member" <?php echo (isset($current_member) && $current_member['role'] === 'member') ? 'selected' : ''; ?>>Member</option>
                                         <option value="president" <?php echo (isset($current_member) && $current_member['role'] === 'president') ? 'selected' : ''; ?>>President</option>
@@ -2327,7 +2345,7 @@ try {
 
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label class="form-label" for="join_date">Join Date *</label>
+                                    <label class="form-label" for="join_date">Join Date <span style="color: var(--danger);">*</span></label>
                                     <input type="date" class="form-control" id="join_date" name="join_date" 
                                            value="<?php echo isset($current_member) ? $current_member['join_date'] : date('Y-m-d'); ?>" 
                                            required>
@@ -2364,12 +2382,14 @@ try {
                 <!-- Add/Edit Activity Form -->
                 <div class="card">
                     <div class="card-header">
-                        <h3><?php echo $action === 'add_activity' ? 'Schedule New Activity' : 'Edit Activity'; ?></h3>
+                        <h3><i class="fas <?php echo $action === 'add_activity' ? 'fa-calendar-plus' : 'fa-edit'; ?>"></i> 
+                            <?php echo $action === 'add_activity' ? 'Schedule New Activity' : 'Edit Activity'; ?>
+                        </h3>
                     </div>
                     <div class="card-body">
                         <form method="POST" action="?action=<?php echo $action; ?>&association_id=<?php echo $association_id; ?><?php echo $activity_id ? '&activity_id=' . $activity_id : ''; ?>">
                             <div class="form-group">
-                                <label class="form-label" for="title">Activity Title *</label>
+                                <label class="form-label" for="title">Activity Title <span style="color: var(--danger);">*</span></label>
                                 <input type="text" class="form-control" id="title" name="title" 
                                        value="<?php echo isset($current_activity) ? htmlspecialchars($current_activity['title']) : ''; ?>" 
                                        required>
@@ -2382,7 +2402,7 @@ try {
 
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label class="form-label" for="activity_type">Activity Type *</label>
+                                    <label class="form-label" for="activity_type">Activity Type <span style="color: var(--danger);">*</span></label>
                                     <select class="form-control" id="activity_type" name="activity_type" required>
                                         <option value="meeting" <?php echo (isset($current_activity) && $current_activity['activity_type'] === 'meeting') ? 'selected' : ''; ?>>Meeting</option>
                                         <option value="workshop" <?php echo (isset($current_activity) && $current_activity['activity_type'] === 'workshop') ? 'selected' : ''; ?>>Workshop</option>
@@ -2405,7 +2425,7 @@ try {
 
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label class="form-label" for="activity_date">Activity Date *</label>
+                                    <label class="form-label" for="activity_date">Activity Date <span style="color: var(--danger);">*</span></label>
                                     <input type="date" class="form-control" id="activity_date" name="activity_date" 
                                            value="<?php echo isset($current_activity) ? $current_activity['activity_date'] : date('Y-m-d'); ?>" 
                                            required>
@@ -2441,7 +2461,7 @@ try {
                                     <label class="form-label" for="budget">Budget (RWF)</label>
                                     <input type="number" class="form-control" id="budget" name="budget" 
                                            value="<?php echo isset($current_activity) ? $current_activity['budget'] : '0'; ?>" 
-                                           min="0" step="0.01">
+                                           min="0" step="100">
                                 </div>
                             </div>
 
@@ -2471,7 +2491,6 @@ try {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -2485,48 +2504,93 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Tab functionality
         function showTab(tabName) {
-            // Hide all tab contents
             const tabContents = document.querySelectorAll('.tab-content');
             tabContents.forEach(tab => {
                 tab.classList.remove('active');
             });
 
-            // Remove active class from all tabs
             const tabs = document.querySelectorAll('.tab');
             tabs.forEach(tab => {
                 tab.classList.remove('active');
             });
 
-            // Show the selected tab content
             document.getElementById(tabName).classList.add('active');
-
-            // Add active class to the clicked tab
             event.target.classList.add('active');
         }
 
         // Auto-hide success messages after 5 seconds
         setTimeout(() => {
-            const alerts = document.querySelectorAll('.alert');
+            const alerts = document.querySelectorAll('.alert-success');
             alerts.forEach(alert => {
-                if (alert.classList.contains('alert-success')) {
-                    alert.style.display = 'none';
-                }
+                alert.style.display = 'none';
             });
         }, 5000);
 
-        // Form validation for member registration number
-        const regNumberInput = document.getElementById('reg_number');
-        if (regNumberInput) {
-            regNumberInput.addEventListener('blur', function() {
-                const regNumber = this.value.trim();
-                if (regNumber && !/^\d{2}RP\d{5}$/.test(regNumber)) {
-                    alert('Please enter a valid registration number (e.g., 25RP01234)');
-                    this.focus();
-                }
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
             });
-        }
+        });
     </script>
 </body>
 </html>

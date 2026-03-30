@@ -21,6 +21,20 @@ try {
     $user = [];
 }
 
+// Get unread messages count for badge
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Handle ticket actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -34,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         UPDATE tickets 
-                        SET status = ?, resolution_notes = ?, resolved_at = ?
+                        SET status = ?, resolution_notes = ?, resolved_at = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND assigned_to = ?
                     ");
                     
@@ -61,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_comments (ticket_id, user_id, comment, is_internal, created_at)
-                        VALUES (?, ?, ?, ?, NOW())
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$ticket_id, $user_id, $comment, $is_internal]);
                     
@@ -82,13 +96,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $current_assignee = $stmt->fetch(PDO::FETCH_ASSOC)['assigned_to'];
                     
                     // Update ticket assignment
-                    $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ? WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $stmt->execute([$escalate_to, $ticket_id]);
                     
                     // Log escalation
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_escalations (ticket_id, escalated_by, escalated_to, reason, escalated_at, previous_assignee)
-                        VALUES (?, ?, ?, ?, NOW(), ?)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                     ");
                     $stmt->execute([$ticket_id, $user_id, $escalate_to, $reason, $current_assignee]);
                     
@@ -145,7 +159,7 @@ if ($priority_filter !== 'all') {
 }
 
 if (!empty($search)) {
-    $query .= " AND (t.reg_number LIKE ? OR t.name LIKE ? OR t.subject LIKE ?)";
+    $query .= " AND (t.reg_number ILIKE ? OR t.name ILIKE ? OR t.subject ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -209,44 +223,46 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         $stmt->execute([$ticket_id]);
         $view_ticket = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Get ticket comments
-        $stmt = $pdo->prepare("
-            SELECT tc.*, u.full_name, u.role
-            FROM ticket_comments tc
-            JOIN users u ON tc.user_id = u.id
-            WHERE tc.ticket_id = ?
-            ORDER BY tc.created_at ASC
-        ");
-        $stmt->execute([$ticket_id]);
-        $ticket_comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // Get ticket assignment history
-        $stmt = $pdo->prepare("
-            SELECT ta.*, u_assigned.full_name as assigned_to_name, u_assigned_by.full_name as assigned_by_name
-            FROM ticket_assignments ta
-            JOIN users u_assigned ON ta.assigned_to = u_assigned.id
-            JOIN users u_assigned_by ON ta.assigned_by = u_assigned_by.id
-            WHERE ta.ticket_id = ?
-            ORDER BY ta.assigned_at DESC
-        ");
-        $stmt->execute([$ticket_id]);
-        $ticket_assignments = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // Get ticket escalations
-        $stmt = $pdo->prepare("
-            SELECT te.*, 
-                   u_escalated_by.full_name as escalated_by_name,
-                   u_escalated_to.full_name as escalated_to_name,
-                   u_previous.full_name as previous_assignee_name
-            FROM ticket_escalations te
-            JOIN users u_escalated_by ON te.escalated_by = u_escalated_by.id
-            JOIN users u_escalated_to ON te.escalated_to = u_escalated_to.id
-            LEFT JOIN users u_previous ON te.previous_assignee = u_previous.id
-            WHERE te.ticket_id = ?
-            ORDER BY te.escalated_at DESC
-        ");
-        $stmt->execute([$ticket_id]);
-        $ticket_escalations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if ($view_ticket) {
+            // Get ticket comments
+            $stmt = $pdo->prepare("
+                SELECT tc.*, u.full_name, u.role
+                FROM ticket_comments tc
+                JOIN users u ON tc.user_id = u.id
+                WHERE tc.ticket_id = ?
+                ORDER BY tc.created_at ASC
+            ");
+            $stmt->execute([$ticket_id]);
+            $ticket_comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Get ticket assignment history
+            $stmt = $pdo->prepare("
+                SELECT ta.*, u_assigned.full_name as assigned_to_name, u_assigned_by.full_name as assigned_by_name
+                FROM ticket_assignments ta
+                JOIN users u_assigned ON ta.assigned_to = u_assigned.id
+                JOIN users u_assigned_by ON ta.assigned_by = u_assigned_by.id
+                WHERE ta.ticket_id = ?
+                ORDER BY ta.assigned_at DESC
+            ");
+            $stmt->execute([$ticket_id]);
+            $ticket_assignments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Get ticket escalations
+            $stmt = $pdo->prepare("
+                SELECT te.*, 
+                       u_escalated_by.full_name as escalated_by_name,
+                       u_escalated_to.full_name as escalated_to_name,
+                       u_previous.full_name as previous_assignee_name
+                FROM ticket_escalations te
+                JOIN users u_escalated_by ON te.escalated_by = u_escalated_by.id
+                JOIN users u_escalated_to ON te.escalated_to = u_escalated_to.id
+                LEFT JOIN users u_previous ON te.previous_assignee = u_previous.id
+                WHERE te.ticket_id = ?
+                ORDER BY te.escalated_at DESC
+            ");
+            $stmt->execute([$ticket_id]);
+            $ticket_escalations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
         
     } catch (PDOException $e) {
         error_log("Ticket details error: " . $e->getMessage());
@@ -307,11 +323,11 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Student Tickets - Minister of Public Relations</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-blue: #3B82F6;
@@ -333,6 +349,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -371,14 +389,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -388,7 +403,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -397,38 +411,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -436,22 +456,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -460,41 +465,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -504,50 +500,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -577,9 +608,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -594,16 +623,24 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
             margin-bottom: 1.5rem;
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .welcome-section h1 {
@@ -620,7 +657,7 @@ try {
 
         .header-actions {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .btn {
@@ -671,7 +708,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -696,13 +733,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -717,7 +755,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -730,7 +768,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -738,7 +776,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -793,10 +831,7 @@ try {
 
         /* Tables */
         .table-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
+            overflow-x: auto;
         }
 
         .table {
@@ -818,8 +853,13 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -828,26 +868,26 @@ try {
 
         .status-open {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-in_progress {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-resolved {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-closed {
-            background: #e9ecef;
-            color: var(--dark-gray);
+            background: #e2e3e5;
+            color: #383d41;
         }
 
         .priority-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -855,17 +895,17 @@ try {
 
         .priority-high {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .action-btn {
@@ -898,6 +938,9 @@ try {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .ticket-header {
@@ -928,8 +971,10 @@ try {
             gap: 1.5rem;
         }
 
-        .ticket-description {
-            margin-bottom: 1.5rem;
+        .ticket-main {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
         }
 
         .ticket-description h3 {
@@ -946,21 +991,10 @@ try {
             line-height: 1.6;
         }
 
-        .comments-section {
-            margin-top: 1.5rem;
-        }
-
-        .comments-section h3 {
-            font-size: 1rem;
-            margin-bottom: 1rem;
-            color: var(--text-dark);
-        }
-
         .comment-form {
             background: var(--light-gray);
             padding: 1rem;
             border-radius: var(--border-radius);
-            margin-bottom: 1.5rem;
         }
 
         .form-textarea {
@@ -999,6 +1033,8 @@ try {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .comment-author {
@@ -1027,6 +1063,11 @@ try {
             border-left: 3px solid var(--warning);
         }
 
+        .dark-mode .comment-internal {
+            background: #2d2d2d;
+            border-left-color: var(--warning);
+        }
+
         .ticket-sidebar {
             background: var(--light-gray);
             padding: 1.25rem;
@@ -1053,6 +1094,8 @@ try {
             justify-content: space-between;
             margin-bottom: 0.5rem;
             font-size: 0.8rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .info-label {
@@ -1099,6 +1142,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1114,46 +1160,125 @@ try {
             border-left-color: var(--danger);
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .ticket-body {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
             .dashboard-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1161,31 +1286,62 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
             .table {
                 font-size: 0.7rem;
             }
-            
+
             .table th, .table td {
                 padding: 0.5rem;
+            }
+
+            .ticket-meta {
+                flex-direction: column;
+                gap: 0.25rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Public Relations & Associations</h1>
+                    <h1>Isonga - Student Tickets</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -1193,8 +1349,11 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1220,7 +1379,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1255,7 +1417,6 @@ try {
                         <span>Events</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="gallery.php">
                         <i class="fas fa-images"></i>
@@ -1268,8 +1429,8 @@ try {
                         <span>Associations</span>
                     </a>
                 </li>
-                                <li class="menu-item">
-                    <a href="committee_budget_requests.php" >
+                <li class="menu-item">
+                    <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1290,6 +1451,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1302,7 +1466,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Student Tickets Management</h1>
@@ -1318,14 +1482,14 @@ try {
             <!-- Alert Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1337,7 +1501,7 @@ try {
                         <i class="fas fa-ticket-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_tickets); ?></div>
                         <div class="stat-label">Total Tickets</div>
                     </div>
                 </div>
@@ -1346,7 +1510,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $open_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($open_tickets); ?></div>
                         <div class="stat-label">Open Tickets</div>
                     </div>
                 </div>
@@ -1355,7 +1519,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $resolved_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($resolved_tickets); ?></div>
                         <div class="stat-label">Resolved</div>
                     </div>
                 </div>
@@ -1364,7 +1528,7 @@ try {
                         <i class="fas fa-exclamation-triangle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $high_priority_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($high_priority_tickets); ?></div>
                         <div class="stat-label">High Priority</div>
                     </div>
                 </div>
@@ -1420,68 +1584,73 @@ try {
                 </div>
 
                 <!-- Tickets Table -->
-                <div class="table-container">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Ticket ID</th>
-                                <th>Student</th>
-                                <th>Subject</th>
-                                <th>Category</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Assigned To</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (empty($tickets)): ?>
-                                <tr>
-                                    <td colspan="9" style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                        <i class="fas fa-inbox" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                        <p>No tickets found</p>
-                                    </td>
-                                </tr>
-                            <?php else: ?>
-                                <?php foreach ($tickets as $ticket): ?>
-                                    <tr>
-                                        <td>#<?php echo $ticket['id']; ?></td>
-                                        <td>
-                                            <div><?php echo htmlspecialchars($ticket['name']); ?></div>
-                                            <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></small>
-                                        </td>
-                                        <td><?php echo htmlspecialchars($ticket['subject']); ?></td>
-                                        <td><?php echo htmlspecialchars($ticket['category_name']); ?></td>
-                                        <td>
-                                            <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
-                                                <?php echo ucfirst($ticket['priority']); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge status-<?php echo $ticket['status']; ?>">
-                                                <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <?php if ($ticket['assigned_to_name']): ?>
-                                                <div><?php echo htmlspecialchars($ticket['assigned_to_name']); ?></div>
-                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['assigned_to_role']); ?></small>
-                                            <?php else: ?>
-                                                <span style="color: var(--dark-gray);">Unassigned</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
-                                        <td>
-                                            <a href="?view=<?php echo $ticket['id']; ?>" class="action-btn view" title="View Ticket">
-                                                <i class="fas fa-eye"></i>
-                                            </a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fas fa-ticket-alt"></i> Tickets List</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php if (empty($tickets)): ?>
+                            <div class="empty-state">
+                                <i class="fas fa-inbox"></i>
+                                <p>No tickets found</p>
+                            </div>
+                        <?php else: ?>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Ticket ID</th>
+                                            <th>Student</th>
+                                            <th>Subject</th>
+                                            <th>Category</th>
+                                            <th>Priority</th>
+                                            <th>Status</th>
+                                            <th>Assigned To</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($tickets as $ticket): ?>
+                                            <tr>
+                                                <td>#<?php echo $ticket['id']; ?></td>
+                                                <td>
+                                                    <div><?php echo htmlspecialchars($ticket['name']); ?></div>
+                                                    <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></small>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($ticket['subject']); ?></td>
+                                                <td><?php echo htmlspecialchars($ticket['category_name']); ?></td>
+                                                <td>
+                                                    <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
+                                                        <?php echo ucfirst($ticket['priority']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span class="status-badge status-<?php echo $ticket['status']; ?>">
+                                                        <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <?php if ($ticket['assigned_to_name']): ?>
+                                                        <div><?php echo htmlspecialchars($ticket['assigned_to_name']); ?></div>
+                                                        <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['assigned_to_role']); ?></small>
+                                                    <?php else: ?>
+                                                        <span style="color: var(--dark-gray);">Unassigned</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
+                                                <td>
+                                                    <a href="?view=<?php echo $ticket['id']; ?>" class="action-btn view" title="View Ticket">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
+                    </div>
                 </div>
 
             <?php else: ?>
@@ -1555,7 +1724,7 @@ try {
                                         <textarea name="comment" class="form-textarea" placeholder="Type your comment here..." required></textarea>
                                     </div>
                                     
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                                         <label style="font-size: 0.8rem;">
                                             <input type="checkbox" name="is_internal" value="1" class="form-checkbox">
                                             Internal comment (not visible to student)
@@ -1569,7 +1738,8 @@ try {
                                 <!-- Comments List -->
                                 <div class="comments-list">
                                     <?php if (empty($ticket_comments)): ?>
-                                        <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
+                                        <div class="empty-state">
+                                            <i class="fas fa-comment-dots"></i>
                                             <p>No comments yet</p>
                                         </div>
                                     <?php else: ?>
@@ -1707,7 +1877,7 @@ try {
                                         <textarea name="escalation_reason" class="form-textarea" placeholder="Explain why you're escalating this ticket..." required style="min-height: 80px;"></textarea>
                                     </div>
                                     
-                                    <button type="submit" class="btn btn-warning" style="width: 100%;">
+                                    <button type="submit" class="btn btn-primary" style="width: 100%;">
                                         <i class="fas fa-level-up-alt"></i> Escalate Ticket
                                     </button>
                                 </form>
@@ -1718,7 +1888,7 @@ try {
                                 <h4>Ticket History</h4>
                                 <div class="history-list">
                                     <?php if (empty($ticket_assignments) && empty($ticket_escalations)): ?>
-                                        <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                        <div class="empty-state" style="padding: 0.5rem;">
                                             <p>No history available</p>
                                         </div>
                                     <?php else: ?>
@@ -1758,7 +1928,6 @@ try {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1772,12 +1941,60 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh tickets every 2 minutes
-        setInterval(() => {
-            if (!window.location.search.includes('view=')) {
-                window.location.reload();
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             }
-        }, 120000);
+        });
 
         // Confirm before escalating ticket
         document.addEventListener('DOMContentLoaded', function() {
@@ -1789,7 +2006,26 @@ try {
                     }
                 });
             }
+
+            // Add loading animations
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
+
+            const ticketDetails = document.querySelector('.ticket-details');
+            if (ticketDetails) {
+                ticketDetails.style.opacity = '1';
+            }
         });
+
+        // Auto-refresh tickets every 2 minutes (only when not viewing a specific ticket)
+        setInterval(() => {
+            if (!window.location.search.includes('view=')) {
+                window.location.reload();
+            }
+        }, 120000);
     </script>
 </body>
 </html>

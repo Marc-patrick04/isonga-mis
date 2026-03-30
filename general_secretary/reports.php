@@ -24,17 +24,17 @@ try {
 try {
     // Total tickets
     $stmt = $pdo->query("SELECT COUNT(*) as total_tickets FROM tickets");
-    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'];
+    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'] ?? 0;
     
     // Open tickets
     $stmt = $pdo->query("SELECT COUNT(*) as open_tickets FROM tickets WHERE status = 'open'");
-    $open_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'];
+    $open_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'] ?? 0;
     
     // Pending reports
     $pending_reports = 0;
     try {
         $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'");
-        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'];
+        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     } catch (Exception $e) {
         error_log("Reports table query error: " . $e->getMessage());
         $pending_reports = 0;
@@ -50,7 +50,7 @@ try {
             WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
         ");
         $stmt->execute([$user_id]);
-        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'];
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     } catch (Exception $e) {
         error_log("Messages query error: " . $e->getMessage());
         $unread_messages = 0;
@@ -60,15 +60,53 @@ try {
     $pending_docs = 0;
     try {
         $stmt = $pdo->query("SELECT COUNT(*) as pending_docs FROM documents WHERE status = 'draft'");
-        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'];
+        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'] ?? 0;
     } catch (Exception $e) {
         error_log("Documents table error: " . $e->getMessage());
         $pending_docs = 0;
     }
     
+    // New students count
+    $new_students = 0;
+    try {
+        $new_students_stmt = $pdo->prepare("
+            SELECT COUNT(*) as new_students 
+            FROM users 
+            WHERE role = 'student' 
+            AND status = 'active' 
+            AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        ");
+        $new_students_stmt->execute();
+        $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+    } catch (PDOException $e) {
+        $new_students = 0;
+    }
+    
+    // Upcoming meetings count
+    $upcoming_meetings = 0;
+    try {
+        $upcoming_meetings = $pdo->query("
+            SELECT COUNT(*) as count FROM meetings 
+            WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $upcoming_meetings = 0;
+    }
+    
+    // Pending minutes count
+    $pending_minutes = 0;
+    try {
+        $pending_minutes = $pdo->query("
+            SELECT COUNT(*) as count FROM meeting_minutes 
+            WHERE approval_status = 'submitted'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_minutes = 0;
+    }
+    
 } catch (PDOException $e) {
     error_log("Dashboard stats error: " . $e->getMessage());
-    $total_tickets = $open_tickets = $pending_reports = $unread_messages = $pending_docs = 0;
+    $total_tickets = $open_tickets = $pending_reports = $unread_messages = $pending_docs = $new_students = $upcoming_meetings = $pending_minutes = 0;
 }
 
 // Handle report export
@@ -245,7 +283,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $feedback = $_POST['feedback'] ?? '';
                 $new_status = $_POST['status'] ?? 'reviewed';
                 
-                // CORRECTED: team_reports doesn't have reviewed_by column
                 $stmt = $pdo->prepare("
                     UPDATE team_reports 
                     SET status = ?, feedback = ?, updated_at = NOW() 
@@ -268,7 +305,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Export functions
 function exportReportToPDF($report) {
     // In production, use a library like TCPDF or Dompdf
-    // This is a simplified example
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="report_' . $report['id'] . '.pdf"');
     
@@ -309,12 +345,11 @@ function exportReportToWord($report) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Committee Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
-
     <style>
         :root {
             --primary-blue: #0056b3;
@@ -329,12 +364,16 @@ function exportReportToWord($report) {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
             --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
             --border-radius: 8px;
+            --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -350,6 +389,8 @@ function exportReportToWord($report) {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
+            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
         }
 
         * {
@@ -359,25 +400,24 @@ function exportReportToWord($report) {
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: var(--light-gray);
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
             color: var(--text-dark);
+            background: var(--light-gray);
+            min-height: 100vh;
             font-size: 0.875rem;
             transition: var(--transition);
-            overflow-x: hidden;
         }
 
+        /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -387,7 +427,6 @@ function exportReportToWord($report) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -396,38 +435,44 @@ function exportReportToWord($report) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -435,22 +480,7 @@ function exportReportToWord($report) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -459,41 +489,32 @@ function exportReportToWord($report) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -503,54 +524,85 @@ function exportReportToWord($report) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
+        /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
-        }
-
+        /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -580,9 +632,7 @@ function exportReportToWord($report) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -595,16 +645,21 @@ function exportReportToWord($report) {
             margin-left: auto;
         }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
-            background: var(--white);
-            padding: 1.5rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
             margin-bottom: 1.5rem;
         }
 
@@ -617,53 +672,11 @@ function exportReportToWord($report) {
 
         .page-title p {
             color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
-        .filters-card {
-            background: var(--white);
-            padding: 1.5rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            margin-bottom: 1.5rem;
-        }
-
-        .filters-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-
-        .filter-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .filter-label {
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .filter-select {
-            padding: 0.5rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .filter-actions {
-            display: flex;
-            gap: 0.5rem;
-            justify-content: flex-end;
+            font-size: 0.85rem;
         }
 
         .btn {
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1.2rem;
             border: none;
             border-radius: var(--border-radius);
             font-size: 0.8rem;
@@ -681,10 +694,20 @@ function exportReportToWord($report) {
             color: white;
         }
 
-        .btn-secondary {
-            background: var(--light-gray);
-            color: var(--text-dark);
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-outline {
+            background: transparent;
             border: 1px solid var(--medium-gray);
+            color: var(--text-dark);
+        }
+
+        .btn-outline:hover {
+            border-color: var(--primary-blue);
+            color: var(--primary-blue);
         }
 
         .btn-success {
@@ -694,22 +717,28 @@ function exportReportToWord($report) {
 
         .btn-warning {
             background: var(--warning);
-            color: black;
+            color: var(--text-dark);
         }
 
-        .btn-info {
-            background: #17a2b8;
+        .btn-danger {
+            background: var(--danger);
             color: white;
         }
 
-        .btn:hover {
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+        .btn-info {
+            background: var(--info);
+            color: white;
         }
 
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.7rem;
+        }
+
+        /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
@@ -719,50 +748,171 @@ function exportReportToWord($report) {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            text-align: center;
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
-        .stat-card.warning { border-left-color: var(--warning); }
-        .stat-card.success { border-left-color: var(--success); }
-        .stat-card.danger { border-left-color: var(--danger); }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
+
+        .stat-card.danger {
+            border-left-color: var(--danger);
+        }
+
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .stat-card .stat-icon {
+            background: var(--light-blue);
+            color: var(--primary-blue);
+        }
+
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: var(--warning);
+        }
+
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
         .stat-label {
             color: var(--dark-gray);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        /* Filters Card */
+        .filters-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .filters-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+        }
+
+        .filter-select {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
             font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+        }
+
+        /* Reports Container */
+        .reports-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 992px) {
+            .reports-container {
+                grid-template-columns: 1fr;
+            }
         }
 
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            margin-bottom: 1.5rem;
             overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
         .card-header {
-            padding: 1.25rem 1.5rem;
+            padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
-            background: var(--light-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
-            margin: 0;
-            font-size: 1.2rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
         }
 
         .card-body {
-            padding: 1.5rem;
+            padding: 1.25rem;
+            max-height: 70vh;
+            overflow-y: auto;
         }
 
+        /* Report Card */
         .report-card {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -770,48 +920,69 @@ function exportReportToWord($report) {
             margin-bottom: 1rem;
             border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
+            overflow: hidden;
         }
 
         .report-card:hover {
             box-shadow: var(--shadow-md);
         }
 
-        .report-card.submitted { border-left-color: var(--warning); }
-        .report-card.reviewed { border-left-color: var(--success); }
-        .report-card.approved { border-left-color: var(--success); }
-        .report-card.rejected { border-left-color: var(--danger); }
+        .report-card.submitted {
+            border-left-color: var(--warning);
+        }
+
+        .report-card.reviewed {
+            border-left-color: var(--info);
+        }
+
+        .report-card.approved {
+            border-left-color: var(--success);
+        }
+
+        .report-card.rejected {
+            border-left-color: var(--danger);
+        }
 
         .report-header {
-            padding: 1rem 1.5rem;
+            padding: 1rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            background: var(--light-gray);
         }
 
-        .report-body {
-            padding: 1.5rem;
+        .report-title {
+            font-weight: 600;
+            color: var(--text-dark);
+            margin-bottom: 0.25rem;
         }
 
         .report-meta {
-            display: flex;
-            gap: 2rem;
-            margin-bottom: 1rem;
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
+        .report-body {
+            padding: 1rem;
+        }
+
         .report-content {
-            line-height: 1.6;
+            font-size: 0.75rem;
+            color: var(--dark-gray);
+            margin-bottom: 1rem;
+            line-height: 1.5;
         }
 
         .report-actions {
             display: flex;
             gap: 0.5rem;
-            margin-top: 1rem;
             flex-wrap: wrap;
         }
 
+        /* Badges */
         .badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -821,37 +992,57 @@ function exportReportToWord($report) {
         }
 
         .status-badge {
-            padding: 0.25rem 0.75rem;
+            padding: 0.25rem 0.6rem;
             border-radius: 20px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             text-transform: uppercase;
         }
 
-        .status-draft { background: #e2e3e5; color: var(--dark-gray); }
-        .status-submitted { background: #fff3cd; color: var(--warning); }
-        .status-reviewed { background: #cce7ff; color: var(--primary-blue); }
-        .status-approved { background: #d4edda; color: var(--success); }
-        .status-rejected { background: #f8d7da; color: var(--danger); }
+        .status-submitted {
+            background: #fff3cd;
+            color: #856404;
+        }
 
+        .status-reviewed {
+            background: #cce7ff;
+            color: #004085;
+        }
+
+        .status-approved {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-rejected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        /* Pagination */
         .pagination {
             display: flex;
             justify-content: center;
             align-items: center;
             gap: 0.5rem;
-            padding: 1rem;
-            background: var(--light-gray);
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
         }
 
         .page-btn {
             padding: 0.5rem 0.75rem;
             border: 1px solid var(--medium-gray);
-            background: var(--white);
-            color: var(--text-dark);
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.8rem;
+            border-radius: var(--border-radius);
             text-decoration: none;
+            color: var(--text-dark);
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .page-btn:hover {
+            background: var(--primary-blue);
+            color: white;
+            border-color: var(--primary-blue);
         }
 
         .page-btn.active {
@@ -860,105 +1051,102 @@ function exportReportToWord($report) {
             border-color: var(--primary-blue);
         }
 
-        .page-btn:hover:not(.active) {
-            background: var(--light-blue);
-        }
-
-        .reports-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.5rem;
-        }
-
-        /* Enhanced Modal Styles */
+        /* Modal */
         .modal {
             display: none;
             position: fixed;
-            z-index: 1000;
-            left: 0;
             top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.5);
-            animation: fadeIn 0.3s;
-            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
         }
 
         .modal-content {
-            background-color: var(--white);
-            margin: 2% auto;
-            padding: 0;
+            background: var(--white);
             border-radius: var(--border-radius);
-            width: 95%;
-            max-width: 1000px;
             box-shadow: var(--shadow-lg);
-            animation: slideIn 0.3s;
-            position: relative;
+            width: 90%;
+            max-width: 800px;
             max-height: 90vh;
-            display: flex;
-            flex-direction: column;
+            overflow-y: auto;
         }
 
         .modal-header {
-            padding: 1.5rem;
+            padding: 1rem 1.5rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
             position: sticky;
             top: 0;
-            background: var(--white);
             z-index: 10;
         }
 
         .modal-header h3 {
-            margin: 0;
-            color: var(--text-dark);
-            font-size: 1.2rem;
-        }
-
-        .close {
-            color: var(--dark-gray);
-            font-size: 1.5rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .close:hover {
-            color: var(--danger);
+            font-size: 1rem;
+            font-weight: 600;
         }
 
         .modal-body {
             padding: 1.5rem;
-            overflow-y: auto;
-            flex: 1;
         }
 
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            background: var(--white);
+            position: sticky;
+            bottom: 0;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            font-size: 1.25rem;
+            cursor: pointer;
+            color: var(--dark-gray);
+        }
+
+        /* Form */
         .form-group {
             margin-bottom: 1rem;
         }
 
-        .form-group label {
+        .form-label {
             display: block;
             margin-bottom: 0.5rem;
             font-weight: 600;
             color: var(--text-dark);
+            font-size: 0.75rem;
         }
 
-        .form-control {
+        .form-control, .form-select {
             width: 100%;
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            font-size: 0.9rem;
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.8rem;
             transition: var(--transition);
         }
 
-        .form-control:focus {
+        .form-control:focus, .form-select:focus {
             outline: none;
             border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgba(0, 86, 179, 0.1);
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
         }
 
         textarea.form-control {
@@ -966,136 +1154,148 @@ function exportReportToWord($report) {
             min-height: 100px;
         }
 
-        .modal-actions {
-            display: flex;
-            gap: 0.75rem;
-            justify-content: flex-end;
-            margin-top: 1.5rem;
-            position: sticky;
-            bottom: 0;
-            background: var(--white);
-            padding: 1rem 0 0;
-            border-top: 1px solid var(--medium-gray);
-        }
-
-        /* Report Details Styles */
-        .report-details {
-            line-height: 1.6;
-        }
-
-        .report-section {
-            margin-bottom: 2rem;
-            padding: 1.5rem;
-            background: var(--light-gray);
-            border-radius: var(--border-radius);
-            border-left: 4px solid var(--primary-blue);
-        }
-
-        .report-section h4 {
-            margin-bottom: 1rem;
-            color: var(--primary-blue);
-            border-bottom: 2px solid var(--primary-blue);
-            padding-bottom: 0.5rem;
-        }
-
-        .report-field {
-            margin-bottom: 1rem;
-        }
-
-        .report-field strong {
-            display: block;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-            font-size: 0.9rem;
-        }
-
-        .report-field-content {
-            background: var(--white);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            border: 1px solid var(--medium-gray);
-        }
-
-        .report-json-content {
-            white-space: pre-wrap;
-            font-family: 'Courier New', monospace;
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            border: 1px solid #e9ecef;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .export-options {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 1rem;
-        }
-
+        /* Alert */
         .alert {
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
-            font-weight: 500;
+            border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
-            background-color: #d4edda;
+            background: #d4edda;
             color: #155724;
-            border: 1px solid #c3e6cb;
+            border-left-color: var(--success);
         }
 
         .alert-danger {
-            background-color: #f8d7da;
+            background: #f8d7da;
             color: #721c24;
-            border: 1px solid #f5c6cb;
+            border-left-color: var(--danger);
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
         }
 
-        @keyframes slideIn {
-            from { transform: translateY(-50px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
         }
 
-        @media (max-width: 1024px) {
-            .reports-container {
-                grid-template-columns: 1fr;
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            .sidebar {
-                display: none;
-            }
-            .filters-grid {
-                grid-template-columns: 1fr;
-            }
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            .modal-content {
-                width: 98%;
-                margin: 1% auto;
+
+            .main-content {
+                padding: 1rem;
             }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filters-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-actions {
+                justify-content: stretch;
+            }
+
+            .filter-actions .btn {
+                flex: 1;
+                justify-content: center;
+            }
+
+            .report-header {
+                flex-direction: column;
+            }
+
             .report-actions {
                 flex-direction: column;
+            }
+
+            .modal-content {
+                width: 95%;
             }
         }
 
@@ -1103,20 +1303,51 @@ function exportReportToWord($report) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - General Secretary</h1>
                 </div>
@@ -1126,7 +1357,10 @@ function exportReportToWord($report) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1155,8 +1389,11 @@ function exportReportToWord($report) {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-        <!-- Sidebar - GENERAL SECRETARY VERSION -->
-        <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1168,21 +1405,6 @@ function exportReportToWord($report) {
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
-                        <?php
-                        // Get pending tickets count for badge
-                        try {
-                            $ticketStmt = $pdo->prepare("
-                                SELECT COUNT(*) as pending_tickets 
-                                FROM tickets 
-                                WHERE status IN ('open', 'in_progress') 
-                                AND (assigned_to = ? OR assigned_to IS NULL)
-                            ");
-                            $ticketStmt->execute([$user_id]);
-                            $pending_tickets = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'];
-                        } catch (PDOException $e) {
-                            $pending_tickets = 0;
-                        }
-                        ?>
                         <?php if ($pending_tickets > 0): ?>
                             <span class="menu-badge"><?php echo $pending_tickets; ?></span>
                         <?php endif; ?>
@@ -1192,22 +1414,6 @@ function exportReportToWord($report) {
                     <a href="students.php">
                         <i class="fas fa-user-graduate"></i>
                         <span>Student Management</span>
-                        <?php
-                        // Get new student registrations count (last 7 days)
-                        try {
-                            $new_students_stmt = $pdo->prepare("
-                                SELECT COUNT(*) as new_students 
-                                FROM users 
-                                WHERE role = 'student' 
-                                AND status = 'active' 
-                                AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                            ");
-                            $new_students_stmt->execute();
-                            $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'];
-                        } catch (PDOException $e) {
-                            $new_students = 0;
-                        }
-                        ?>
                         <?php if ($new_students > 0): ?>
                             <span class="menu-badge"><?php echo $new_students; ?> new</span>
                         <?php endif; ?>
@@ -1217,17 +1423,6 @@ function exportReportToWord($report) {
                     <a href="meetings.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Meetings & Attendance</span>
-                        <?php
-                        // Get upcoming meetings count
-                        try {
-                            $upcoming_meetings = $pdo->query("
-                                SELECT COUNT(*) as count FROM meetings 
-                                WHERE meeting_date >= CURDATE() AND status = 'scheduled'
-                            ")->fetch()['count'];
-                        } catch (PDOException $e) {
-                            $upcoming_meetings = 0;
-                        }
-                        ?>
                         <?php if ($upcoming_meetings > 0): ?>
                             <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
                         <?php endif; ?>
@@ -1237,24 +1432,11 @@ function exportReportToWord($report) {
                     <a href="meeting_minutes.php">
                         <i class="fas fa-clipboard-list"></i>
                         <span>Meeting Minutes</span>
-                        <?php
-                        // Count pending minutes (minutes that need to be written/approved)
-                        try {
-                            $pending_minutes = $pdo->query("
-                                SELECT COUNT(*) as count FROM meetings 
-                                WHERE status = 'completed' 
-                                AND id NOT IN (SELECT meeting_id FROM meeting_minutes WHERE status = 'approved')
-                            ")->fetch()['count'];
-                        } catch (PDOException $e) {
-                            $pending_minutes = 0;
-                        }
-                        ?>
                         <?php if ($pending_minutes > 0): ?>
                             <span class="menu-badge"><?php echo $pending_minutes; ?></span>
                         <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="committee.php">
                         <i class="fas fa-users"></i>
@@ -1288,35 +1470,46 @@ function exportReportToWord($report) {
             </ul>
         </nav>
 
-        <main class="main-content">
-            <div class="container">
-                <!-- Page Header -->
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1>Committee Reports</h1>
-                        <p>Review and manage all committee reports</p>
-                    </div>
+        <!-- Main Content -->
+        <main class="main-content" id="mainContent">
+            <div class="page-header">
+                <div class="page-title">
+                    <h1>Committee Reports 📊</h1>
+                    <p>Review and manage all committee reports</p>
                 </div>
+            </div>
 
-                <?php if (isset($_SESSION['success'])): ?>
-                    <div class="alert alert-success">
-                        <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
+            <!-- Success/Error Messages -->
+            <?php if (isset($_SESSION['success'])): ?>
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i>
+                    <span><?php echo $_SESSION['success']; unset($_SESSION['success']); ?></span>
+                </div>
+            <?php endif; ?>
+
+            <?php if (isset($_SESSION['error'])): ?>
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span><?php echo $_SESSION['error']; unset($_SESSION['error']); ?></span>
+                </div>
+            <?php endif; ?>
+
+            <!-- Statistics -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-file-alt"></i>
                     </div>
-                <?php endif; ?>
-
-                <?php if (isset($_SESSION['error'])): ?>
-                    <div class="alert alert-danger">
-                        <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
-                    </div>
-                <?php endif; ?>
-
-                <!-- Statistics -->
-                <div class="stats-grid">
-                    <div class="stat-card">
+                    <div class="stat-content">
                         <div class="stat-number"><?php echo $totalReports; ?></div>
                         <div class="stat-label">Total Reports</div>
                     </div>
-                    <div class="stat-card warning">
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-icon">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="stat-content">
                         <div class="stat-number">
                             <?php 
                             $submitted = array_filter($stats, function($s) { return $s['status'] === 'submitted'; });
@@ -1325,7 +1518,12 @@ function exportReportToWord($report) {
                         </div>
                         <div class="stat-label">Pending Review</div>
                     </div>
-                    <div class="stat-card success">
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-icon">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <div class="stat-content">
                         <div class="stat-number">
                             <?php 
                             $reviewed = array_filter($stats, function($s) { return $s['status'] === 'reviewed'; });
@@ -1334,205 +1532,211 @@ function exportReportToWord($report) {
                         </div>
                         <div class="stat-label">Reviewed</div>
                     </div>
-                    <div class="stat-card">
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <div class="stat-content">
                         <div class="stat-number"><?php echo count($teamReports); ?></div>
                         <div class="stat-label">Team Reports</div>
                     </div>
                 </div>
-
-                <!-- Filters -->
-                <div class="filters-card">
-                    <form method="GET" action="reports.php">
-                        <div class="filters-grid">
-                            <div class="filter-group">
-                                <label class="filter-label">Report Type</label>
-                                <select name="type" class="filter-select">
-                                    <option value="all" <?php echo $report_type === 'all' ? 'selected' : ''; ?>>All Types</option>
-                                    <option value="monthly" <?php echo $report_type === 'monthly' ? 'selected' : ''; ?>>Monthly</option>
-                                    <option value="activity" <?php echo $report_type === 'activity' ? 'selected' : ''; ?>>Activity</option>
-                                    <option value="team" <?php echo $report_type === 'team' ? 'selected' : ''; ?>>Team</option>
-                                    <option value="academic" <?php echo $report_type === 'academic' ? 'selected' : ''; ?>>Academic</option>
-                                </select>
-                            </div>
-                            <div class="filter-group">
-                                <label class="filter-label">Status</label>
-                                <select name="status" class="filter-select">
-                                    <option value="all" <?php echo $status === 'all' ? 'selected' : ''; ?>>All Status</option>
-                                    <option value="submitted" <?php echo $status === 'submitted' ? 'selected' : ''; ?>>Submitted</option>
-                                    <option value="reviewed" <?php echo $status === 'reviewed' ? 'selected' : ''; ?>>Reviewed</option>
-                                    <option value="approved" <?php echo $status === 'approved' ? 'selected' : ''; ?>>Approved</option>
-                                </select>
-                            </div>
-                            <div class="filter-group">
-                                <label class="filter-label">From Date</label>
-                                <input type="date" name="date_from" class="filter-select" value="<?php echo $date_from; ?>">
-                            </div>
-                            <div class="filter-group">
-                                <label class="filter-label">To Date</label>
-                                <input type="date" name="date_to" class="filter-select" value="<?php echo $date_to; ?>">
-                            </div>
-                        </div>
-                        <div class="filter-actions">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-filter"></i> Apply Filters
-                            </button>
-                            <a href="reports.php" class="btn btn-secondary">
-                                <i class="fas fa-times"></i> Clear
-                            </a>
-                        </div>
-                    </form>
-                </div>
-
-                <!-- Horizontal Layout for Better Workflow -->
-                <div class="reports-container">
-                    <!-- Individual Reports -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Individual Committee Reports</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($reports)): ?>
-                                <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-file-alt" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No reports found matching your criteria</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($reports as $report): ?>
-                                    <div class="report-card <?php echo $report['status']; ?>">
-                                        <div class="report-header">
-                                            <div>
-                                                <h4 style="margin: 0; color: var(--text-dark);"><?php echo htmlspecialchars($report['title']); ?></h4>
-                                                <div style="font-size: 0.8rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                    By <?php echo htmlspecialchars($report['full_name']); ?> • 
-                                                    <?php echo str_replace('_', ' ', $report['user_role']); ?> • 
-                                                    <?php echo ucfirst($report['report_type']); ?> Report
-                                                </div>
-                                            </div>
-                                            <div style="text-align: right;">
-                                                <span class="badge status-<?php echo $report['status']; ?>">
-                                                    <?php echo ucfirst($report['status']); ?>
-                                                </span>
-                                                <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                    <?php echo $report['submitted_at'] ? date('M j, Y g:i A', strtotime($report['submitted_at'])) : 'Not submitted'; ?>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="report-body">
-                                            <div class="report-meta">
-                                                <span><i class="fas fa-calendar"></i> 
-                                                    <?php echo $report['report_period'] ? date('F Y', strtotime($report['report_period'])) : 'N/A'; ?>
-                                                </span>
-                                                <span><i class="fas fa-file"></i> Template: <?php echo htmlspecialchars($report['template_name'] ?? 'Custom'); ?></span>
-                                            </div>
-                                            
-                                            <div class="report-actions">
-                                                <button class="btn btn-primary" onclick="viewReportDetails(<?php echo $report['id']; ?>)">
-                                                    <i class="fas fa-eye"></i> View Details
-                                                </button>
-                                                <?php if ($report['status'] === 'submitted'): ?>
-                                                    <button class="btn btn-warning" onclick="reviewReport(<?php echo $report['id']; ?>)">
-                                                        <i class="fas fa-check-circle"></i> Review
-                                                    </button>
-                                                <?php endif; ?>
-                                                <?php if ($report['feedback']): ?>
-                                                    <button class="btn btn-info" onclick="viewFeedback('<?php echo htmlspecialchars($report['feedback']); ?>')">
-                                                        <i class="fas fa-comment"></i> View Feedback
-                                                    </button>
-                                                <?php endif; ?>
-                                                <div class="export-options">
-                                                    <a href="reports.php?export=pdf&id=<?php echo $report['id']; ?>" class="btn btn-danger" target="_blank">
-                                                        <i class="fas fa-file-pdf"></i> PDF
-                                                    </a>
-                                                    <a href="reports.php?export=word&id=<?php echo $report['id']; ?>" class="btn btn-success" target="_blank">
-                                                        <i class="fas fa-file-word"></i> Word
-                                                    </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Team Reports -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Team Reports</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($teamReports)): ?>
-                                <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-users" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No team reports submitted yet</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($teamReports as $report): ?>
-                                    <div class="report-card <?php echo $report['status']; ?>">
-                                        <div class="report-header">
-                                            <div>
-                                                <h4 style="margin: 0; color: var(--text-dark);"><?php echo htmlspecialchars($report['title']); ?></h4>
-                                                <div style="font-size: 0.8rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                    Team Leader: <?php echo htmlspecialchars($report['team_leader_name']); ?>
-                                                </div>
-                                            </div>
-                                            <div style="text-align: right;">
-                                                <span class="badge status-<?php echo $report['status']; ?>">
-                                                    <?php echo ucfirst($report['status']); ?>
-                                                </span>
-                                                <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                    <?php echo $report['submitted_at'] ? date('M j, Y', strtotime($report['submitted_at'])) : 'Not submitted'; ?>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="report-body">
-                                            <div class="report-content">
-                                                <p><strong>Overall Summary:</strong></p>
-                                                <p><?php echo nl2br(htmlspecialchars($report['overall_summary'])); ?></p>
-                                            </div>
-                                            
-                                            <div class="report-actions">
-                                                <button class="btn btn-primary" onclick="viewTeamReportDetails(<?php echo $report['id']; ?>)">
-                                                    <i class="fas fa-eye"></i> View Team Report
-                                                </button>
-                                                <?php if ($report['status'] === 'submitted'): ?>
-                                                    <button class="btn btn-warning" onclick="reviewTeamReport(<?php echo $report['id']; ?>)">
-                                                        <i class="fas fa-check-circle"></i> Review Team Report
-                                                    </button>
-                                                <?php endif; ?>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Pagination -->
-                <?php if ($totalPages > 1): ?>
-                    <div class="pagination">
-                        <?php if ($page > 1): ?>
-                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>" class="page-btn">
-                                <i class="fas fa-chevron-left"></i>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" 
-                               class="page-btn <?php echo $i == $page ? 'active' : ''; ?>">
-                                <?php echo $i; ?>
-                            </a>
-                        <?php endfor; ?>
-
-                        <?php if ($page < $totalPages): ?>
-                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" class="page-btn">
-                                <i class="fas fa-chevron-right"></i>
-                            </a>
-                        <?php endif; ?>
-                    </div>
-                <?php endif; ?>
             </div>
+
+            <!-- Filters -->
+            <div class="filters-card">
+                <form method="GET" action="reports.php">
+                    <div class="filters-grid">
+                        <div class="filter-group">
+                            <label class="filter-label">Report Type</label>
+                            <select name="type" class="filter-select">
+                                <option value="all" <?php echo $report_type === 'all' ? 'selected' : ''; ?>>All Types</option>
+                                <option value="monthly" <?php echo $report_type === 'monthly' ? 'selected' : ''; ?>>Monthly</option>
+                                <option value="activity" <?php echo $report_type === 'activity' ? 'selected' : ''; ?>>Activity</option>
+                                <option value="team" <?php echo $report_type === 'team' ? 'selected' : ''; ?>>Team</option>
+                                <option value="academic" <?php echo $report_type === 'academic' ? 'selected' : ''; ?>>Academic</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">Status</label>
+                            <select name="status" class="filter-select">
+                                <option value="all" <?php echo $status === 'all' ? 'selected' : ''; ?>>All Status</option>
+                                <option value="submitted" <?php echo $status === 'submitted' ? 'selected' : ''; ?>>Submitted</option>
+                                <option value="reviewed" <?php echo $status === 'reviewed' ? 'selected' : ''; ?>>Reviewed</option>
+                                <option value="approved" <?php echo $status === 'approved' ? 'selected' : ''; ?>>Approved</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">From Date</label>
+                            <input type="date" name="date_from" class="filter-select" value="<?php echo htmlspecialchars($date_from); ?>">
+                        </div>
+                        <div class="filter-group">
+                            <label class="filter-label">To Date</label>
+                            <input type="date" name="date_to" class="filter-select" value="<?php echo htmlspecialchars($date_to); ?>">
+                        </div>
+                    </div>
+                    <div class="filter-actions">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-filter"></i> Apply Filters
+                        </button>
+                        <a href="reports.php" class="btn btn-outline">
+                            <i class="fas fa-times"></i> Clear
+                        </a>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Reports Container -->
+            <div class="reports-container">
+                <!-- Individual Reports -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fas fa-user"></i> Individual Committee Reports</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php if (empty($reports)): ?>
+                            <div class="empty-state">
+                                <i class="fas fa-file-alt"></i>
+                                <p>No reports found matching your criteria</p>
+                            </div>
+                        <?php else: ?>
+                            <?php foreach ($reports as $report): ?>
+                                <div class="report-card <?php echo $report['status']; ?>">
+                                    <div class="report-header">
+                                        <div>
+                                            <div class="report-title"><?php echo htmlspecialchars($report['title']); ?></div>
+                                            <div class="report-meta">
+                                                By <?php echo htmlspecialchars($report['full_name']); ?> • 
+                                                <?php echo ucfirst($report['report_type']); ?> Report
+                                            </div>
+                                        </div>
+                                        <div style="text-align: right;">
+                                            <span class="status-badge status-<?php echo $report['status']; ?>">
+                                                <?php echo ucfirst($report['status']); ?>
+                                            </span>
+                                            <div class="report-meta" style="margin-top: 0.25rem;">
+                                                <?php echo $report['submitted_at'] ? date('M j, Y', strtotime($report['submitted_at'])) : 'Not submitted'; ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="report-body">
+                                        <div class="report-content">
+                                            <?php 
+                                            $content_preview = json_decode($report['content'], true);
+                                            if (is_array($content_preview)) {
+                                                $preview = implode(' ', array_slice($content_preview, 0, 2));
+                                                echo htmlspecialchars(substr($preview, 0, 100)) . (strlen($preview) > 100 ? '...' : '');
+                                            } else {
+                                                echo htmlspecialchars(substr($report['content'], 0, 100)) . (strlen($report['content']) > 100 ? '...' : '');
+                                            }
+                                            ?>
+                                        </div>
+                                        <div class="report-actions">
+                                            <button class="btn btn-primary btn-sm" onclick="viewReportDetails(<?php echo $report['id']; ?>)">
+                                                <i class="fas fa-eye"></i> View Details
+                                            </button>
+                                            <?php if ($report['status'] === 'submitted'): ?>
+                                                <button class="btn btn-warning btn-sm" onclick="reviewReport(<?php echo $report['id']; ?>)">
+                                                    <i class="fas fa-check-circle"></i> Review
+                                                </button>
+                                            <?php endif; ?>
+                                            <?php if ($report['feedback']): ?>
+                                                <button class="btn btn-info btn-sm" onclick="viewFeedback('<?php echo htmlspecialchars($report['feedback']); ?>')">
+                                                    <i class="fas fa-comment"></i> View Feedback
+                                                </button>
+                                            <?php endif; ?>
+                                            <div class="export-options" style="display: flex; gap: 0.25rem;">
+                                                <a href="reports.php?export=pdf&id=<?php echo $report['id']; ?>" class="btn btn-danger btn-sm" target="_blank">
+                                                    <i class="fas fa-file-pdf"></i>
+                                                </a>
+                                                <a href="reports.php?export=word&id=<?php echo $report['id']; ?>" class="btn btn-success btn-sm" target="_blank">
+                                                    <i class="fas fa-file-word"></i>
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <!-- Team Reports -->
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fas fa-users"></i> Team Reports</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php if (empty($teamReports)): ?>
+                            <div class="empty-state">
+                                <i class="fas fa-users"></i>
+                                <p>No team reports submitted yet</p>
+                            </div>
+                        <?php else: ?>
+                            <?php foreach ($teamReports as $report): ?>
+                                <div class="report-card <?php echo $report['status']; ?>">
+                                    <div class="report-header">
+                                        <div>
+                                            <div class="report-title"><?php echo htmlspecialchars($report['title']); ?></div>
+                                            <div class="report-meta">
+                                                Team Leader: <?php echo htmlspecialchars($report['team_leader_name']); ?>
+                                            </div>
+                                        </div>
+                                        <div style="text-align: right;">
+                                            <span class="status-badge status-<?php echo $report['status']; ?>">
+                                                <?php echo ucfirst($report['status']); ?>
+                                            </span>
+                                            <div class="report-meta" style="margin-top: 0.25rem;">
+                                                <?php echo $report['submitted_at'] ? date('M j, Y', strtotime($report['submitted_at'])) : 'Not submitted'; ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="report-body">
+                                        <div class="report-content">
+                                            <?php echo htmlspecialchars(substr($report['overall_summary'] ?? '', 0, 120)) . (strlen($report['overall_summary'] ?? '') > 120 ? '...' : ''); ?>
+                                        </div>
+                                        <div class="report-actions">
+                                            <button class="btn btn-primary btn-sm" onclick="viewTeamReportDetails(<?php echo $report['id']; ?>)">
+                                                <i class="fas fa-eye"></i> View Team Report
+                                            </button>
+                                            <?php if ($report['status'] === 'submitted'): ?>
+                                                <button class="btn btn-warning btn-sm" onclick="reviewTeamReport(<?php echo $report['id']; ?>)">
+                                                    <i class="fas fa-check-circle"></i> Review Team Report
+                                                </button>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pagination -->
+            <?php if ($totalPages > 1): ?>
+                <div class="pagination">
+                    <?php if ($page > 1): ?>
+                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>" class="page-btn">
+                            <i class="fas fa-chevron-left"></i> Previous
+                        </a>
+                    <?php endif; ?>
+
+                    <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" 
+                           class="page-btn <?php echo $i == $page ? 'active' : ''; ?>">
+                            <?php echo $i; ?>
+                        </a>
+                    <?php endfor; ?>
+
+                    <?php if ($page < $totalPages): ?>
+                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" class="page-btn">
+                            Next <i class="fas fa-chevron-right"></i>
+                        </a>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
         </main>
     </div>
 
@@ -1541,16 +1745,17 @@ function exportReportToWord($report) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Report Details</h3>
-                <span class="close">&times;</span>
+                <button class="close-modal" onclick="closeModal('viewReportModal')">&times;</button>
             </div>
             <div class="modal-body" id="reportDetails">
-                <!-- Report details will be loaded here via AJAX -->
-            </div>
-            <div class="modal-actions">
-                <div class="export-options">
-
-                    <button class="btn btn-secondary close-modal">Close</button>
+                <!-- Report details will be loaded here -->
+                <div style="text-align: center; padding: 2rem;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem;"></i>
+                    <p>Loading report details...</p>
                 </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('viewReportModal')">Close</button>
             </div>
         </div>
     </div>
@@ -1560,7 +1765,7 @@ function exportReportToWord($report) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Review Report</h3>
-                <span class="close">&times;</span>
+                <button class="close-modal" onclick="closeModal('reviewReportModal')">&times;</button>
             </div>
             <div class="modal-body">
                 <form id="reviewReportForm" method="POST">
@@ -1568,8 +1773,8 @@ function exportReportToWord($report) {
                     <input type="hidden" name="action" value="review_report">
                     
                     <div class="form-group">
-                        <label for="review_status">Status:</label>
-                        <select name="status" id="review_status" class="form-control" required>
+                        <label class="form-label">Status:</label>
+                        <select name="status" id="review_status" class="form-select" required>
                             <option value="reviewed">Mark as Reviewed</option>
                             <option value="approved">Approve Report</option>
                             <option value="rejected">Reject Report</option>
@@ -1577,14 +1782,14 @@ function exportReportToWord($report) {
                     </div>
                     
                     <div class="form-group">
-                        <label for="review_feedback">Feedback & Comments:</label>
+                        <label class="form-label">Feedback & Comments:</label>
                         <textarea name="feedback" id="review_feedback" class="form-control" rows="6" 
                                   placeholder="Provide your feedback, comments, and any follow-up actions required..." required></textarea>
                     </div>
                     
-                    <div class="modal-actions">
+                    <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem;">
                         <button type="submit" class="btn btn-primary">Submit Review</button>
-                        <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+                        <button type="button" class="btn btn-outline" onclick="closeModal('reviewReportModal')">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -1596,13 +1801,16 @@ function exportReportToWord($report) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Team Report Details</h3>
-                <span class="close">&times;</span>
+                <button class="close-modal" onclick="closeModal('viewTeamReportModal')">&times;</button>
             </div>
             <div class="modal-body" id="teamReportDetails">
-                <!-- Team report details will be loaded here via AJAX -->
+                <div style="text-align: center; padding: 2rem;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem;"></i>
+                    <p>Loading team report details...</p>
+                </div>
             </div>
-            <div class="modal-actions">
-                <button type="button" class="btn btn-secondary close-modal">Close</button>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('viewTeamReportModal')">Close</button>
             </div>
         </div>
     </div>
@@ -1612,7 +1820,7 @@ function exportReportToWord($report) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Review Team Report</h3>
-                <span class="close">&times;</span>
+                <button class="close-modal" onclick="closeModal('reviewTeamReportModal')">&times;</button>
             </div>
             <div class="modal-body">
                 <form id="reviewTeamReportForm" method="POST">
@@ -1620,22 +1828,22 @@ function exportReportToWord($report) {
                     <input type="hidden" name="action" value="review_team_report">
                     
                     <div class="form-group">
-                        <label for="team_review_status">Status:</label>
-                        <select name="status" id="team_review_status" class="form-control" required>
+                        <label class="form-label">Status:</label>
+                        <select name="status" id="team_review_status" class="form-select" required>
                             <option value="reviewed">Mark as Reviewed</option>
                             <option value="approved">Approve Team Report</option>
                         </select>
                     </div>
                     
                     <div class="form-group">
-                        <label for="team_review_feedback">Feedback & Comments:</label>
+                        <label class="form-label">Feedback & Comments:</label>
                         <textarea name="feedback" id="team_review_feedback" class="form-control" rows="6" 
                                   placeholder="Provide your feedback on the team report and any recommendations..." required></textarea>
                     </div>
                     
-                    <div class="modal-actions">
+                    <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem;">
                         <button type="submit" class="btn btn-primary">Submit Review</button>
-                        <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+                        <button type="button" class="btn btn-outline" onclick="closeModal('reviewTeamReportModal')">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -1647,83 +1855,117 @@ function exportReportToWord($report) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Review Feedback</h3>
-                <span class="close">&times;</span>
+                <button class="close-modal" onclick="closeModal('viewFeedbackModal')">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="feedback-content">
-                    <p id="feedbackText"></p>
+                    <p id="feedbackText" style="white-space: pre-wrap;"></p>
                 </div>
-                <div class="modal-actions">
-                    <button type="button" class="btn btn-secondary close-modal">Close</button>
-                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeModal('viewFeedbackModal')">Close</button>
             </div>
         </div>
     </div>
 
     <script>
-        let currentReportId = null;
+        // Dark Mode Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const body = document.body;
 
-        document.addEventListener('DOMContentLoaded', function() {
-            // Modal elements
-            const viewModal = document.getElementById('viewReportModal');
-            const reviewModal = document.getElementById('reviewReportModal');
-            const viewTeamModal = document.getElementById('viewTeamReportModal');
-            const reviewTeamModal = document.getElementById('reviewTeamReportModal');
-            const viewFeedbackModal = document.getElementById('viewFeedbackModal');
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        if (savedTheme === 'dark') {
+            body.classList.add('dark-mode');
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        }
 
-            // Close modals when clicking X or outside
-            const closeButtons = document.querySelectorAll('.close, .close-modal');
-            closeButtons.forEach(btn => {
-                btn.addEventListener('click', closeAllModals);
-            });
-
-            window.addEventListener('click', function(event) {
-                if (event.target.classList.contains('modal')) {
-                    closeAllModals();
-                }
-            });
-
-            // Dark mode toggle
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            if (savedTheme === 'dark') {
-                body.classList.add('dark-mode');
-                themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-            }
-
-            themeToggle.addEventListener('click', () => {
-                body.classList.toggle('dark-mode');
-                const isDark = body.classList.contains('dark-mode');
-                localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-            });
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Global functions for button clicks
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars</i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
+        // Modal functions
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        // Report functions
         function viewReportDetails(reportId) {
-            currentReportId = reportId;
+            openModal('viewReportModal');
             
-            // Show loading state
-            document.getElementById('reportDetails').innerHTML = `
-                <div style="text-align: center; padding: 2rem;">
-                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary-blue);"></i>
-                    <p>Loading report details...</p>
-                </div>
-            `;
-            
-            // Fetch report details via AJAX
             fetch(`get_report_details.php?id=${reportId}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.text();
-                })
+                .then(response => response.text())
                 .then(data => {
                     document.getElementById('reportDetails').innerHTML = data;
-                    document.getElementById('viewReportModal').style.display = 'block';
                 })
                 .catch(error => {
                     console.error('Error loading report details:', error);
@@ -1733,22 +1975,21 @@ function exportReportToWord($report) {
                             Error loading report details. Please try again.
                         </div>
                     `;
-                    document.getElementById('viewReportModal').style.display = 'block';
                 });
         }
 
         function reviewReport(reportId) {
             document.getElementById('review_report_id').value = reportId;
-            document.getElementById('reviewReportModal').style.display = 'block';
+            openModal('reviewReportModal');
         }
 
         function viewTeamReportDetails(reportId) {
-            // Fetch team report details via AJAX
+            openModal('viewTeamReportModal');
+            
             fetch(`get_team_report_details.php?id=${reportId}`)
                 .then(response => response.text())
                 .then(data => {
                     document.getElementById('teamReportDetails').innerHTML = data;
-                    document.getElementById('viewTeamReportModal').style.display = 'block';
                 })
                 .catch(error => {
                     console.error('Error loading team report details:', error);
@@ -1758,49 +1999,29 @@ function exportReportToWord($report) {
                             Error loading team report details. Please try again.
                         </div>
                     `;
-                    document.getElementById('viewTeamReportModal').style.display = 'block';
                 });
         }
 
         function reviewTeamReport(reportId) {
             document.getElementById('review_team_report_id').value = reportId;
-            document.getElementById('reviewTeamReportModal').style.display = 'block';
+            openModal('reviewTeamReportModal');
         }
 
         function viewFeedback(feedback) {
             document.getElementById('feedbackText').textContent = feedback;
-            document.getElementById('viewFeedbackModal').style.display = 'block';
+            openModal('viewFeedbackModal');
         }
 
-        function exportReport(format) {
-            if (currentReportId) {
-                window.open(`reports.php?export=${format}&id=${currentReportId}`, '_blank');
-            }
-        }
-
-        function closeAllModals() {
-            document.getElementById('viewReportModal').style.display = 'none';
-            document.getElementById('reviewReportModal').style.display = 'none';
-            document.getElementById('viewTeamReportModal').style.display = 'none';
-            document.getElementById('reviewTeamReportModal').style.display = 'none';
-            document.getElementById('viewFeedbackModal').style.display = 'none';
-        }
-
-        // Enhanced export functionality
-        function printReport() {
-            window.print();
-        }
-
-        function downloadReport(format) {
-            if (currentReportId) {
-                const link = document.createElement('a');
-                link.href = `reports.php?export=${format}&id=${currentReportId}`;
-                link.download = `report_${currentReportId}.${format}`;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-            }
-        }
+        // Close modal when clicking outside
+        window.addEventListener('click', function(event) {
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                if (event.target === modal) {
+                    modal.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+            });
+        });
     </script>
 </body>
 </html>

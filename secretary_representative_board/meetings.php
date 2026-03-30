@@ -25,7 +25,7 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
-// Get committee member ID for the current user
+// Get committee member ID for the current user (PostgreSQL compatible)
 try {
     $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'secretary_representative_board' AND status = 'active'");
     $stmt->execute([$user_id]);
@@ -46,7 +46,7 @@ $page = max(1, intval($_GET['page'] ?? 1));
 $limit = 10;
 $offset = ($page - 1) * $limit;
 
-// Build query for meetings list - Secretary of Representative Board can see all meetings
+// Build query for meetings list - Secretary of Representative Board can see all meetings (PostgreSQL compatible)
 $query = "
     SELECT m.*, cm.name as chairperson_name,
            (SELECT COUNT(*) FROM meeting_attendance ma WHERE ma.meeting_id = m.id) as total_attendees,
@@ -61,8 +61,8 @@ $params = [];
 $count_params = [];
 
 if ($search) {
-    $query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
-    $count_query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
+    $query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
+    $count_query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
     $search_term = "%$search%";
     $params = array_merge($params, [$search_term, $search_term, $search_term]);
     $count_params = array_merge($count_params, [$search_term, $search_term, $search_term]);
@@ -113,7 +113,7 @@ try {
     // Get user's attendance for each meeting
     if ($committee_member_id && !empty($meetings)) {
         $meeting_ids = array_column($meetings, 'id');
-        $placeholders = str_repeat('?,', count($meeting_ids) - 1) . '?';
+        $placeholders = implode(',', array_fill(0, count($meeting_ids), '?'));
         
         $attendance_stmt = $pdo->prepare("
             SELECT meeting_id, attendance_status, check_in_time, notes 
@@ -152,21 +152,25 @@ try {
     $total_pages = 1;
 }
 
-// Get statistics for dashboard cards
+// Get statistics for dashboard cards (PostgreSQL compatible)
 try {
     // Total meetings
-    $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings");
+    $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // Upcoming meetings
-    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    // Upcoming meetings (PostgreSQL uses CURRENT_DATE)
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+    $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Today's meetings
-    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURDATE() AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURRENT_DATE AND status IN ('scheduled', 'ongoing')");
+    $todays_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Representative Board meetings
-    $rep_board_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE is_committee_meeting = 1 AND committee_role LIKE '%representative%'")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE is_committee_meeting = true AND committee_role ILIKE '%representative%'");
+    $rep_board_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // User's attendance statistics
+    // User's attendance statistics (PostgreSQL uses INTERVAL)
     if ($committee_member_id) {
         $attendance_stmt = $pdo->prepare("
             SELECT 
@@ -176,7 +180,7 @@ try {
                 SUM(CASE WHEN ma.attendance_status = 'excused' THEN 1 ELSE 0 END) as excused
             FROM meeting_attendance ma
             JOIN meetings m ON ma.meeting_id = m.id
-            WHERE ma.committee_member_id = ? AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            WHERE ma.committee_member_id = ? AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         ");
         $attendance_stmt->execute([$committee_member_id]);
         $attendance_stats = $attendance_stmt->fetch(PDO::FETCH_ASSOC);
@@ -198,9 +202,9 @@ try {
         SELECT m.*, cm.name as chairperson_name
         FROM meetings m
         LEFT JOIN committee_members cm ON m.chairperson_id = cm.user_id
-        WHERE m.meeting_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.meeting_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
         AND m.status = 'scheduled'
-        AND (m.is_committee_meeting = 1 AND m.committee_role LIKE '%representative%')
+        AND (m.is_committee_meeting = true AND m.committee_role ILIKE '%representative%')
         ORDER BY m.meeting_date ASC, m.start_time ASC
         LIMIT 5
     ");
@@ -240,10 +244,58 @@ try {
         LEFT JOIN meetings m ON ma.meeting_id = m.id
         WHERE cm.role = 'class_representative' 
         AND cm.status = 'active'
-        AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)
+        AND m.meeting_date >= CURRENT_DATE - INTERVAL '1 month'
     ");
     $stmt->execute();
     $reps_attendance_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    // Get sidebar statistics (PostgreSQL compatible)
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
+    $total_reps = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
+    $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
+    
+    // Check for pending minutes
+    $stmt = $pdo->query("
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_name = 'meeting_minutes'
+        ) as table_exists
+    ");
+    $meeting_minutes_exists = $stmt->fetch(PDO::FETCH_ASSOC)['table_exists'] ?? false;
+    
+    $pending_minutes = 0;
+    if ($meeting_minutes_exists) {
+        $stmt = $pdo->prepare("SELECT COUNT(*) as pending_minutes FROM meeting_minutes WHERE approval_status = 'draft' AND prepared_by = ?");
+        $stmt->execute([$user_id]);
+        $pending_minutes = $stmt->fetch(PDO::FETCH_ASSOC)['pending_minutes'] ?? 0;
+    }
+    
+    // Check for rep_meetings table
+    $stmt = $pdo->query("
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_name = 'rep_meetings'
+        ) as rep_meetings_exists
+    ");
+    $rep_meetings_exists = $stmt->fetch(PDO::FETCH_ASSOC)['rep_meetings_exists'] ?? false;
+    
+    $upcoming_rep_meetings = 0;
+    if ($rep_meetings_exists) {
+        $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+        $upcoming_rep_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
+    }
+    
+    // Unread messages
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_count 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
     
 } catch (PDOException $e) {
     error_log("Statistics error: " . $e->getMessage());
@@ -254,19 +306,19 @@ try {
     $upcoming_important = [];
     $user_attendance_history = [];
     $reps_attendance_stats = ['total_reps' => 0, 'reps_with_attendance' => 0, 'avg_attendance_rate' => 0];
+    $total_reps = $pending_reports = $pending_minutes = $upcoming_rep_meetings = $unread_messages = 0;
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Meetings - Secretary of Representative Board - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* EXACT SAME CSS AS SECRETARY'S DASHBOARD */
         :root {
             --primary-blue: #007bff;
             --secondary-blue: #0056b3;
@@ -292,6 +344,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -331,18 +385,15 @@ try {
             transition: var(--transition);
         }
 
-        /* Header - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -352,7 +403,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -373,26 +423,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -400,22 +462,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -424,12 +471,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -440,25 +486,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -468,50 +513,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
-        /* Dashboard Container - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 260px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
-        /* Sidebar - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -541,9 +621,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -564,20 +642,27 @@ try {
 
         .menu-section {
             padding: 0.75rem 1.5rem;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             color: var(--dark-gray);
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
 
-        /* Main Content - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -594,7 +679,7 @@ try {
             font-size: 0.9rem;
         }
 
-        /* Stats Grid - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Stats Grid */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -607,7 +692,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -648,13 +733,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -669,7 +755,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -702,7 +788,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -710,15 +796,21 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        /* Content Grid - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Content Grid */
         .content-grid {
             display: grid;
             grid-template-columns: 2fr 1fr;
             gap: 1.5rem;
+        }
+
+        @media (max-width: 992px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         .card {
@@ -726,6 +818,7 @@ try {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
         .card-header {
@@ -734,6 +827,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -766,7 +860,11 @@ try {
             padding: 1.25rem;
         }
 
-        /* Tables - EXACT SAME AS SECRETARY'S DASHBOARD */
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -786,6 +884,10 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -794,42 +896,157 @@ try {
             text-transform: uppercase;
         }
 
-        .status-open {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-in_progress {
+        .status-scheduled {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
-        .status-resolved {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-closed {
-            background: #f8f9fa;
-            color: var(--dark-gray);
-        }
-
-        .status-submitted {
+        .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
-        .status-approved {
+        .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
-        .status-rejected {
+        .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
-        /* Activity List - EXACT SAME AS SECRETARY'S DASHBOARD */
+        .attendance-present {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .attendance-absent {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .attendance-excused {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Filters */
+        .filters {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+        }
+
+        .filter-select, .filter-input {
+            padding: 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.8rem;
+        }
+
+        .filter-select:focus, .filter-input:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+        }
+
+        .filter-btn {
+            background: var(--primary-blue);
+            color: white;
+            border: none;
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            transition: var(--transition);
+        }
+
+        .filter-btn:hover {
+            background: var(--secondary-blue);
+            transform: translateY(-1px);
+        }
+
+        .reset-btn {
+            display: inline-block;
+            padding: 0.75rem 1rem;
+            background: var(--light-gray);
+            color: var(--text-dark);
+            text-decoration: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-align: center;
+            transition: var(--transition);
+        }
+
+        .reset-btn:hover {
+            background: var(--medium-gray);
+            transform: translateY(-1px);
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .pagination-btn {
+            padding: 0.5rem 0.75rem;
+            background: var(--white);
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            color: var(--text-dark);
+            text-decoration: none;
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .pagination-btn:hover {
+            background: var(--light-gray);
+        }
+
+        .pagination-btn.active {
+            background: var(--primary-blue);
+            color: white;
+            border-color: var(--primary-blue);
+        }
+
+        .pagination-btn.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* Activity List */
         .activity-list {
             list-style: none;
         }
@@ -875,289 +1092,7 @@ try {
             color: var(--dark-gray);
         }
 
-        /* Quick Actions - EXACT SAME AS SECRETARY'S DASHBOARD */
-        .quick-actions {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 0.75rem;
-            margin-top: 1.5rem;
-        }
-
-        .action-btn {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            background: var(--white);
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            color: var(--text-dark);
-            transition: var(--transition);
-            text-align: center;
-        }
-
-        .action-btn:hover {
-            border-color: var(--primary-blue);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
-        }
-
-        .action-btn i {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
-            color: var(--primary-blue);
-        }
-
-        .action-label {
-            font-weight: 600;
-            font-size: 0.75rem;
-        }
-
-        /* Alert - EXACT SAME AS SECRETARY'S DASHBOARD */
-        .alert {
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-            font-size: 0.8rem;
-        }
-
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
-        }
-
-        .alert-info {
-            background: #cce7ff;
-            color: #004085;
-            border-left-color: var(--info);
-        }
-
-        .alert a {
-            color: inherit;
-            font-weight: 600;
-            text-decoration: none;
-        }
-
-        .alert a:hover {
-            text-decoration: underline;
-        }
-
-        /* Committee Member Info - EXACT SAME AS SECRETARY'S DASHBOARD */
-        .member-info {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem;
-            border-radius: var(--border-radius);
-            background: var(--light-gray);
-            margin-bottom: 0.5rem;
-        }
-
-        .member-avatar {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: var(--gradient-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 0.7rem;
-        }
-
-        .member-details {
-            flex: 1;
-        }
-
-        .member-name {
-            font-weight: 600;
-            font-size: 0.8rem;
-        }
-
-        .member-role {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-        }
-
-        /* Chart Container - EXACT SAME AS SECRETARY'S DASHBOARD */
-        .chart-container {
-            height: 200px;
-            margin-top: 1rem;
-            position: relative;
-        }
-
-        /* Department Stats - EXACT SAME AS SECRETARY'S DASHBOARD */
-        .department-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-
-        .department-stat {
-            background: var(--light-gray);
-            padding: 0.75rem;
-            border-radius: var(--border-radius);
-            text-align: center;
-        }
-
-        .department-name {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-            margin-bottom: 0.25rem;
-        }
-
-        .department-count {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary-blue);
-        }
-
-        /* Filters for Meetings */
-        .filters {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .filter-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 1rem;
-            align-items: end;
-        }
-
-        .filter-group {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .filter-label {
-            font-size: 0.75rem;
-            font-weight: 500;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-        }
-
-        .filter-select, .filter-input {
-            padding: 0.5rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .filter-btn {
-            background: var(--primary-blue);
-            color: white;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: var(--border-radius);
-            cursor: pointer;
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .filter-btn:hover {
-            background: var(--accent-blue);
-        }
-
-        .reset-btn {
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            background: var(--light-gray);
-            color: var(--text-dark);
-            text-decoration: none;
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
-            text-align: center;
-            transition: var(--transition);
-        }
-
-        .reset-btn:hover {
-            background: var(--medium-gray);
-        }
-
-        /* Pagination */
-        .pagination {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 0.5rem;
-            margin-top: 1.5rem;
-        }
-
-        .pagination-btn {
-            padding: 0.5rem 0.75rem;
-            background: var(--white);
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            color: var(--text-dark);
-            text-decoration: none;
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .pagination-btn:hover {
-            background: var(--light-gray);
-        }
-
-        .pagination-btn.active {
-            background: var(--primary-blue);
-            color: white;
-            border-color: var(--primary-blue);
-        }
-
-        .pagination-btn.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        /* Status Badges for Meetings */
-        .status-scheduled {
-            background: #cce7ff;
-            color: var(--primary-blue);
-        }
-
-        .status-ongoing {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-completed {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-cancelled {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .attendance-present {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .attendance-absent {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .attendance-excused {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        /* Progress Bars */
+        /* Progress Bar */
         .attendance-progress {
             margin-top: 1rem;
         }
@@ -1183,42 +1118,102 @@ try {
             justify-content: space-between;
         }
 
-        /* Responsive - EXACT SAME AS SECRETARY'S DASHBOARD */
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
             .filter-row {
                 grid-template-columns: 1fr;
             }
@@ -1228,18 +1223,50 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
-    <!-- Header - EXACT SAME AS SECRETARY'S DASHBOARD -->
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
+    <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1252,8 +1279,14 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1276,13 +1309,16 @@ try {
         </div>
     </header>
 
-    <!-- Dashboard Container - EXACT SAME AS SECRETARY'S DASHBOARD -->
+    <!-- Dashboard Container -->
     <div class="dashboard-container">
-              <!-- Sidebar -->
-        <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1291,6 +1327,9 @@ try {
                     <a href="class_reps.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Management</span>
+                        <?php if ($total_reps > 0): ?>
+                            <span class="menu-badge"><?php echo $total_reps; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1299,22 +1338,28 @@ try {
                         <span>Class Rep Meetings</span>
                     </a>
                 </li>
-                                <li class="menu-item">
+                <li class="menu-item">
                     <a href="meeting_minutes.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Meeting Minutes</span>
+                        <?php if ($pending_minutes > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_minutes; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="class_rep_reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Class Rep Reports</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="class_rep_performance.php">
                         <i class="fas fa-chart-line"></i>
-                        <span>Class Rep <br>Performance</span>
+                        <span>Class Rep Performance</span>
                     </a>
                 </li>
                 
@@ -1331,25 +1376,31 @@ try {
                     <a href="meetings.php" class="active">
                         <i class="fas fa-handshake"></i>
                         <span>Meetings</span>
+                        <?php if ($upcoming_rep_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_rep_meetings; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
-                        <span>Profile</span>
+                        <span>Profile & Settings</span>
                     </a>
                 </li>
             </ul>
         </nav>
 
-        <!-- Main Content - EXACT SAME AS SECRETARY'S DASHBOARD -->
-        <main class="main-content">
+        <!-- Main Content -->
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Welcome, Secretary <?php echo htmlspecialchars($secretary_name); ?>! 📝</h1>
@@ -1364,14 +1415,14 @@ try {
                 </div>
             <?php endif; ?>
 
-            <!-- Statistics Grid - EXACT SAME AS SECRETARY'S DASHBOARD -->
+            <!-- Statistics Grid -->
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-calendar"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_meetings); ?></div>
                         <div class="stat-label">Total Meetings</div>
                     </div>
                 </div>
@@ -1380,7 +1431,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_meetings); ?></div>
                         <div class="stat-label">Upcoming Meetings</div>
                     </div>
                 </div>
@@ -1389,7 +1440,7 @@ try {
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $rep_board_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($rep_board_meetings); ?></div>
                         <div class="stat-label">Board Meetings</div>
                     </div>
                 </div>
@@ -1411,7 +1462,7 @@ try {
                         <i class="fas fa-calendar-day"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $todays_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($todays_meetings); ?></div>
                         <div class="stat-label">Today's Meetings</div>
                     </div>
                 </div>
@@ -1420,7 +1471,7 @@ try {
                         <i class="fas fa-user-friends"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $reps_attendance_stats['total_reps']; ?></div>
+                        <div class="stat-number"><?php echo number_format($reps_attendance_stats['total_reps']); ?></div>
                         <div class="stat-label">Class Representatives</div>
                     </div>
                 </div>
@@ -1438,7 +1489,7 @@ try {
                         <i class="fas fa-eye"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $reps_attendance_stats['reps_with_attendance']; ?></div>
+                        <div class="stat-number"><?php echo number_format($reps_attendance_stats['reps_with_attendance']); ?></div>
                         <div class="stat-label">Active Reps</div>
                     </div>
                 </div>
@@ -1484,14 +1535,14 @@ try {
                         </div>
                         <div class="filter-group">
                             <a href="meetings.php" class="reset-btn">
-                                <i class="fas fa-times"></i> Reset
+                                <i class="fas fa-sync-alt"></i> Reset
                             </a>
                         </div>
                     </div>
                 </form>
             </div>
 
-            <!-- Content Grid - EXACT SAME AS SECRETARY'S DASHBOARD -->
+            <!-- Content Grid -->
             <div class="content-grid">
                 <!-- Left Column -->
                 <div class="left-column">
@@ -1506,113 +1557,115 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
-                            <?php if (empty($meetings)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No meetings found matching your criteria</p>
-                                </div>
-                            <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Meeting Title</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Type</th>
-                                            <th>Chairperson</th>
-                                            <th>Status</th>
-                                            <th>Your Attendance</th>
-                                            <th>Attendance Rate</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($meetings as $meeting): ?>
-                                            <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                    <?php if ($meeting['description']): ?>
-                                                        <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
-                                                    <?php if ($meeting['end_time']): ?>
-                                                        - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
-                                                    <?php endif; ?>
-                                                    </small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($meeting['location']); ?></td>
-                                                <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
-                                                <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $meeting['status']; ?>">
-                                                        <?php echo ucfirst($meeting['status']); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <?php if ($meeting['attendance_status']): ?>
-                                                        <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
-                                                            <?php echo ucfirst($meeting['attendance_status']); ?>
-                                                        </span>
-                                                        <?php if ($meeting['check_in_time']): ?>
-                                                            <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
-                                                        <?php endif; ?>
-                                                    <?php else: ?>
-                                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td>
-                                                    <?php if ($meeting['total_attendees'] > 0): ?>
-                                                        <?php 
-                                                        $meeting_attendance_rate = round(($meeting['present_count'] / $meeting['total_attendees']) * 100);
-                                                        $attendance_class = $meeting_attendance_rate >= 80 ? 'success' : ($meeting_attendance_rate >= 60 ? 'warning' : 'danger');
-                                                        ?>
-                                                        <span class="status-badge status-<?php echo $attendance_class; ?>">
-                                                            <?php echo $meeting_attendance_rate; ?>%
-                                                        </span>
-                                                        <br><small><?php echo $meeting['present_count']; ?>/<?php echo $meeting['total_attendees']; ?> present</small>
-                                                    <?php else: ?>
-                                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">No data</span>
-                                                    <?php endif; ?>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-
-                                <!-- Pagination -->
-                                <?php if ($total_pages > 1): ?>
-                                    <div class="pagination">
-                                        <?php if ($page > 1): ?>
-                                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>" class="pagination-btn">
-                                                <i class="fas fa-chevron-left"></i> Previous
-                                            </a>
-                                        <?php else: ?>
-                                            <span class="pagination-btn disabled">
-                                                <i class="fas fa-chevron-left"></i> Previous
-                                            </span>
-                                        <?php endif; ?>
-
-                                        <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" 
-                                               class="pagination-btn <?php echo $i == $page ? 'active' : ''; ?>">
-                                                <?php echo $i; ?>
-                                            </a>
-                                        <?php endfor; ?>
-
-                                        <?php if ($page < $total_pages): ?>
-                                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" class="pagination-btn">
-                                                Next <i class="fas fa-chevron-right"></i>
-                                            </a>
-                                        <?php else: ?>
-                                            <span class="pagination-btn disabled">
-                                                Next <i class="fas fa-chevron-right"></i>
-                                            </span>
-                                        <?php endif; ?>
+                            <div class="table-container">
+                                <?php if (empty($meetings)): ?>
+                                    <div class="empty-state">
+                                        <i class="fas fa-calendar-times"></i>
+                                        <p>No meetings found matching your criteria</p>
                                     </div>
+                                <?php else: ?>
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Meeting Title</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
+                                                <th>Type</th>
+                                                <th>Chairperson</th>
+                                                <th>Status</th>
+                                                <th>Your Attendance</th>
+                                                <th>Attendance Rate</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($meetings as $meeting): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
+                                                        <?php if ($meeting['description']): ?>
+                                                            <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
+                                                        <?php if ($meeting['end_time']): ?>
+                                                            - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
+                                                        <?php endif; ?>
+                                                        </small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($meeting['location']); ?></td>
+                                                    <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
+                                                    <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $meeting['status']; ?>">
+                                                            <?php echo ucfirst($meeting['status']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($meeting['attendance_status']): ?>
+                                                            <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
+                                                                <?php echo ucfirst($meeting['attendance_status']); ?>
+                                                            </span>
+                                                            <?php if ($meeting['check_in_time']): ?>
+                                                                <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
+                                                            <?php endif; ?>
+                                                        <?php else: ?>
+                                                            <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($meeting['total_attendees'] > 0): ?>
+                                                            <?php 
+                                                            $meeting_attendance_rate = round(($meeting['present_count'] / $meeting['total_attendees']) * 100);
+                                                            $attendance_class = $meeting_attendance_rate >= 80 ? 'success' : ($meeting_attendance_rate >= 60 ? 'warning' : 'danger');
+                                                            ?>
+                                                            <span class="status-badge status-<?php echo $attendance_class; ?>">
+                                                                <?php echo $meeting_attendance_rate; ?>%
+                                                            </span>
+                                                            <br><small><?php echo $meeting['present_count']; ?>/<?php echo $meeting['total_attendees']; ?> present</small>
+                                                        <?php else: ?>
+                                                            <span style="color: var(--dark-gray); font-size: 0.8rem;">No data</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+
+                                    <!-- Pagination -->
+                                    <?php if ($total_pages > 1): ?>
+                                        <div class="pagination">
+                                            <?php if ($page > 1): ?>
+                                                <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>" class="pagination-btn">
+                                                    <i class="fas fa-chevron-left"></i> Previous
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="pagination-btn disabled">
+                                                    <i class="fas fa-chevron-left"></i> Previous
+                                                </span>
+                                            <?php endif; ?>
+
+                                            <?php for ($i = 1; $i <= min($total_pages, 10); $i++): ?>
+                                                <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" 
+                                                   class="pagination-btn <?php echo $i == $page ? 'active' : ''; ?>">
+                                                    <?php echo $i; ?>
+                                                </a>
+                                            <?php endfor; ?>
+
+                                            <?php if ($page < $total_pages): ?>
+                                                <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" class="pagination-btn">
+                                                    Next <i class="fas fa-chevron-right"></i>
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="pagination-btn disabled">
+                                                    Next <i class="fas fa-chevron-right"></i>
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endif; ?>
                                 <?php endif; ?>
-                            <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1633,20 +1686,20 @@ try {
                             </div>
                             
                             <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Meetings Attended</span>
+                                <div class="overview-item">
+                                    <span class="overview-label">Meetings Attended</span>
                                     <strong style="color: var(--success);"><?php echo $attendance_stats['attended']; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Absent</span>
+                                <div class="overview-item">
+                                    <span class="overview-label">Absent</span>
                                     <strong style="color: var(--danger);"><?php echo $attendance_stats['absent']; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Excused</span>
+                                <div class="overview-item">
+                                    <span class="overview-label">Excused</span>
                                     <strong style="color: var(--warning);"><?php echo $attendance_stats['excused']; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Invited</span>
+                                <div class="overview-item">
+                                    <span class="overview-label">Total Invited</span>
                                     <strong style="color: var(--text-dark);"><?php echo $attendance_stats['total_invited']; ?></strong>
                                 </div>
                             </div>
@@ -1670,7 +1723,8 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($upcoming_important)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-check"></i>
                                     <p>No upcoming representative board meetings</p>
                                 </div>
                             <?php else: ?>
@@ -1704,7 +1758,8 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($user_attendance_history)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-history"></i>
                                     <p>No attendance records found</p>
                                 </div>
                             <?php else: ?>
@@ -1736,16 +1791,30 @@ try {
                             <?php endif; ?>
                         </div>
                     </div>
-
-                    <!-- Class Representatives Attendance Overview -->
-
                 </div>
             </div>
         </main>
     </div>
 
+    <style>
+        .overview-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+        .overview-item:last-child {
+            border-bottom: none;
+        }
+        .overview-label {
+            color: var(--dark-gray);
+            font-size: 0.75rem;
+        }
+    </style>
+
     <script>
-        // Dark Mode Toggle - EXACT SAME AS SECRETARY'S DASHBOARD
+        // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
@@ -1762,11 +1831,97 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh dashboard every 5 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Meetings page auto-refresh triggered');
-        }, 300000);
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
+        });
     </script>
 </body>
 </html>

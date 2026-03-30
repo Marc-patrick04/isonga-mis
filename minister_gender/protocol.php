@@ -20,6 +20,20 @@ try {
     $user = [];
 }
 
+// Get unread messages count for badge
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -31,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $visit_date = $_POST['visit_date'];
                 $visit_time = $_POST['visit_time'];
                 $expected_duration = $_POST['expected_duration'] ?? 60;
-                $contact_person_id = $_POST['contact_person_id'] ?? null;
+                $contact_person_id = !empty($_POST['contact_person_id']) ? $_POST['contact_person_id'] : null;
                 $meeting_location = $_POST['meeting_location'] ?? '';
                 $special_requirements = $_POST['special_requirements'] ?? '';
                 
@@ -41,8 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $pdo->prepare("
                         INSERT INTO protocol_visitors 
                         (visitor_name, organization, purpose, visit_date, visit_time, expected_duration, 
-                         contact_person_id, meeting_location, special_requirements, created_by) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         contact_person_id, meeting_location, special_requirements, created_by, created_at, updated_at) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $result = $stmt->execute([
                         $visitor_name, $organization, $purpose, $visit_date, $visit_time, 
@@ -68,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $status = $_POST['status'];
                 
                 try {
-                    $stmt = $pdo->prepare("UPDATE protocol_visitors SET status = ? WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE protocol_visitors SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $stmt->execute([$status, $visitor_id]);
                     
                     $_SESSION['success_message'] = "Visitor status updated successfully!";
@@ -82,11 +96,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $event_type = $_POST['event_type'];
                 $event_date = $_POST['event_date'];
                 $start_time = $_POST['start_time'];
-                $end_time = $_POST['end_time'] ?? null;
+                $end_time = !empty($_POST['end_time']) ? $_POST['end_time'] : null;
                 $location = $_POST['location'];
                 $organizer = $_POST['organizer'] ?? '';
                 $guest_of_honor = $_POST['guest_of_honor'] ?? '';
-                $expected_attendees = $_POST['expected_attendees'] ?? null;
+                $expected_attendees = !empty($_POST['expected_attendees']) ? $_POST['expected_attendees'] : null;
                 $budget = $_POST['budget'] ?? 0;
                 $protocol_requirements = $_POST['protocol_requirements'] ?? '';
                 $security_level = $_POST['security_level'] ?? 'medium';
@@ -95,8 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $pdo->prepare("
                         INSERT INTO protocol_events 
                         (event_name, event_type, event_date, start_time, end_time, location, organizer,
-                         guest_of_honor, expected_attendees, budget, protocol_requirements, security_level, created_by) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         guest_of_honor, expected_attendees, budget, protocol_requirements, security_level, created_by, created_at, updated_at) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([
                         $event_name, $event_type, $event_date, $start_time, $end_time, $location,
@@ -127,8 +141,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         $stmt = $pdo->prepare("
                             INSERT INTO protocol_team 
-                            (user_id, role, specialization, phone, email) 
-                            VALUES (?, ?, ?, ?, ?)
+                            (user_id, role, specialization, phone, email, created_at, updated_at) 
+                            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ");
                         $stmt->execute([$user_id_team, $role, $specialization, $phone, $email]);
                         
@@ -155,8 +169,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         $stmt = $pdo->prepare("
                             INSERT INTO event_team_assignments 
-                            (event_id, team_member_id, assigned_role, responsibilities, assigned_by) 
-                            VALUES (?, ?, ?, ?, ?)
+                            (event_id, team_member_id, assigned_role, responsibilities, assigned_by, assigned_at, created_at) 
+                            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ");
                         $stmt->execute([$event_id, $team_member_id, $assigned_role, $responsibilities, $user_id]);
                         
@@ -176,12 +190,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Get statistics
 try {
     // Today's visitors
-    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM protocol_visitors WHERE visit_date = CURDATE()");
+    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM protocol_visitors WHERE visit_date = CURRENT_DATE");
     $stmt->execute();
     $today_visitors = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Upcoming events
-    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM protocol_events WHERE event_date >= CURDATE() AND status != 'completed'");
+    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM protocol_events WHERE event_date >= CURRENT_DATE AND status != 'completed'");
     $stmt->execute();
     $upcoming_events = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
@@ -191,7 +205,11 @@ try {
     $pending_clearances = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Total visitors this month
-    $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM protocol_visitors WHERE MONTH(visit_date) = MONTH(CURDATE()) AND YEAR(visit_date) = YEAR(CURDATE())");
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as count FROM protocol_visitors 
+        WHERE EXTRACT(MONTH FROM visit_date) = EXTRACT(MONTH FROM CURRENT_DATE) 
+        AND EXTRACT(YEAR FROM visit_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+    ");
     $stmt->execute();
     $month_visitors = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
@@ -205,7 +223,7 @@ try {
         SELECT pv.*, u.full_name as contact_person_name 
         FROM protocol_visitors pv 
         LEFT JOIN users u ON pv.contact_person_id = u.id 
-        WHERE pv.visit_date = CURDATE() 
+        WHERE pv.visit_date = CURRENT_DATE 
         ORDER BY pv.visit_time ASC
     ");
     $stmt->execute();
@@ -214,7 +232,7 @@ try {
     // Get upcoming events
     $stmt = $pdo->prepare("
         SELECT * FROM protocol_events 
-        WHERE event_date >= CURDATE() AND status != 'completed'
+        WHERE event_date >= CURRENT_DATE AND status != 'completed'
         ORDER BY event_date ASC, start_time ASC 
         LIMIT 5
     ");
@@ -289,11 +307,11 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Protocol & Visitor Management - Minister of Gender & Protocol</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-        <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-purple: #8B5CF6;
@@ -315,6 +333,8 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -353,14 +373,11 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -370,7 +387,6 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -379,38 +395,44 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -418,22 +440,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -442,41 +449,32 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -486,50 +484,85 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -559,9 +592,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -576,9 +607,15 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .page-header {
@@ -586,6 +623,8 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -612,7 +651,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-purple);
+            border-left: 4px solid var(--primary-purple);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -637,13 +676,14 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -658,7 +698,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -671,7 +711,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -679,7 +719,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -690,29 +730,31 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             margin-bottom: 1.5rem;
-            overflow: hidden;
+            overflow-x: auto;
+            flex-wrap: wrap;
         }
 
         .tab {
-            flex: 1;
-            padding: 1rem 1.5rem;
-            text-align: center;
+            padding: 0.75rem 1.25rem;
             background: none;
             border: none;
-            color: var(--text-dark);
+            color: var(--dark-gray);
             font-weight: 600;
             cursor: pointer;
             transition: var(--transition);
             font-size: 0.85rem;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .tab:hover {
+            background: var(--light-purple);
+            color: var(--text-dark);
         }
 
         .tab.active {
             background: var(--primary-purple);
             color: white;
-        }
-
-        .tab:hover:not(.active) {
-            background: var(--light-purple);
         }
 
         .tab-content {
@@ -730,6 +772,8 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -738,6 +782,9 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-purple);
         }
 
         .card-header h3 {
@@ -751,6 +798,10 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -770,8 +821,13 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-purple);
+        }
+
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -785,46 +841,47 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
         .status-arrived {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-in_meeting {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-completed {
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .security-pending {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .security-approved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .security-rejected {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .action-buttons {
             display: flex;
             gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         .btn {
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1rem;
             border: none;
             border-radius: var(--border-radius);
             font-weight: 600;
@@ -857,7 +914,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         }
 
         .btn-sm {
-            padding: 0.25rem 0.5rem;
+            padding: 0.3rem 0.6rem;
             font-size: 0.7rem;
         }
 
@@ -881,7 +938,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
         }
 
         .form-select, .form-input, .form-textarea {
-            padding: 0.5rem 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
@@ -907,6 +964,10 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.8rem;
         }
 
         .alert-success {
@@ -935,6 +996,8 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             background: var(--light-gray);
             border-radius: var(--border-radius);
             border-left: 3px solid var(--primary-purple);
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .visitor-info h4 {
@@ -947,62 +1010,12 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             color: var(--dark-gray);
         }
 
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .tabs {
-                flex-direction: column;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
-            
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-            
-            .action-buttons {
-                flex-direction: column;
-            }
-        }
-
+        /* Team Grid */
         .team-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 1rem;
-            margin-top: 1rem;
+            margin-top: 0;
         }
 
         .team-member-card {
@@ -1021,9 +1034,11 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
         .team-member-header {
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: flex-start;
             margin-bottom: 1rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .team-member-name {
@@ -1070,82 +1085,253 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             color: var(--danger);
         }
 
-        /* Modal Styles - Fixed Version */
-.modal {
-    display: none;
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 1000;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-}
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
 
-.modal-content {
-    background: var(--white);
-    border-radius: var(--border-radius);
-    box-shadow: var(--shadow-lg);
-    width: 90%;
-    max-width: 600px;
-    max-height: 90vh;
-    overflow-y: auto;
-    position: relative;
-}
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
 
-.modal-header {
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--medium-gray);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    position: sticky;
-    top: 0;
-    background: var(--white);
-    z-index: 1;
-}
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
 
-.modal-header h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-dark);
-    margin: 0;
-}
+        .modal-content {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 700px;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
 
-.modal-close {
-    background: none;
-    border: none;
-    font-size: 1.25rem;
-    color: var(--dark-gray);
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    transition: var(--transition);
-}
+        .modal-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: var(--white);
+            z-index: 1;
+            background: var(--light-purple);
+        }
 
-.modal-close:hover {
-    background: var(--light-gray);
-    color: var(--danger);
-}
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            margin: 0;
+        }
 
-.modal-body {
-    padding: 1.25rem;
-}
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.25rem;
+            color: var(--dark-gray);
+            cursor: pointer;
+            padding: 0.25rem;
+            border-radius: 4px;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            background: var(--light-gray);
+            color: var(--danger);
+        }
+
+        .modal-body {
+            padding: 1.25rem;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-purple);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .tabs {
+                flex-direction: column;
+            }
+
+            .tab {
+                text-align: left;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .visitor-item {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .team-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                width: 95%;
+            }
+        }
     </style>
 </head>
 <body>
-    <!-- Header - Same as your original -->
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
+    <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Minister of Gender & Protocol</h1>
+                    <h1>Isonga - Protocol & Visitor Management</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -1153,8 +1339,11 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1179,82 +1368,80 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-        <!-- Sidebar - Same as your original -->
-                <!-- Sidebar -->
-               <!-- Sidebar -->
-      <nav class="sidebar">
-    <ul class="sidebar-menu">
-        <li class="menu-item">
-            <a href="dashboard.php">
-                <i class="fas fa-tachometer-alt"></i>
-                <span>Dashboard</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="tickets.php" >
-                <i class="fas fa-ticket-alt"></i>
-                <span>Gender Issues</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="protocol.php" class="active">
-                <i class="fas fa-handshake"></i>
-                <span>Protocol & Visitors</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="clubs.php" >
-                <i class="fas fa-users"></i>
-                <span>Gender Clubs</span>
-            </a>
-        </li>
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <ul class="sidebar-menu">
+                <li class="menu-item">
+                    <a href="dashboard.php">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Gender Issues</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="protocol.php" class="active">
+                        <i class="fas fa-handshake"></i>
+                        <span>Protocol & Visitors</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="clubs.php">
+                        <i class="fas fa-users"></i>
+                        <span>Gender Clubs</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="hostel-management.php">
+                        <i class="fas fa-building"></i>
+                        <span>Hostel Management</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="action-funding.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Reports & Analytics</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
 
-        <li class="menu-item">
-            <a href="hostel-management.php">
-                <i class="fas fa-building"></i>
-                <span>Hostel Management</span>
-            </a>
-        </li>
-        
-        <!-- Added Action Funding -->
-        <li class="menu-item">
-            <a href="action-funding.php">
-                <i class="fas fa-money-bill-wave"></i>
-                <span>Action Funding</span>
-            </a>
-        </li>
-        
-        <li class="menu-item">
-            <a href="reports.php">
-                <i class="fas fa-file-alt"></i>
-                <span>Reports & Analytics</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="meetings.php">
-                <i class="fas fa-calendar-alt"></i>
-                <span>Meetings</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="messages.php">
-                <i class="fas fa-comments"></i>
-                <span>Messages</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="profile.php">
-                <i class="fas fa-user-cog"></i>
-                <span>Profile & Settings</span>
-            </a>
-        </li>
-    </ul>
-</nav>
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div class="page-title">
                     <h1>Protocol & Visitor Management</h1>
@@ -1273,28 +1460,16 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             <!-- Alert Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
-            <?php endif; ?>
-
-            <!-- Debug Information (remove in production) -->
-            <?php if (isset($_GET['debug'])): ?>
-            <div class="alert alert-error">
-                <h4>Debug Information:</h4>
-                <p>User ID: <?php echo $user_id; ?></p>
-                <p>Today Visitors Count: <?php echo $today_visitors; ?></p>
-                <p>Available Users: <?php echo count($available_users); ?></p>
-                <p>Protocol Team: <?php echo count($protocol_team); ?></p>
-                <p>Committee Members: <?php echo count($committee_members); ?></p>
-            </div>
             <?php endif; ?>
 
             <!-- Statistics Grid -->
@@ -1304,7 +1479,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $today_visitors; ?></div>
+                        <div class="stat-number"><?php echo number_format($today_visitors); ?></div>
                         <div class="stat-label">Today's Visitors</div>
                     </div>
                 </div>
@@ -1313,7 +1488,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                         <i class="fas fa-calendar-check"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_events; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_events); ?></div>
                         <div class="stat-label">Upcoming Events</div>
                     </div>
                 </div>
@@ -1322,7 +1497,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                         <i class="fas fa-shield-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $pending_clearances; ?></div>
+                        <div class="stat-number"><?php echo number_format($pending_clearances); ?></div>
                         <div class="stat-label">Pending Clearances</div>
                     </div>
                 </div>
@@ -1331,7 +1506,7 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                         <i class="fas fa-user-friends"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $team_members_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($team_members_count); ?></div>
                         <div class="stat-label">Protocol Team</div>
                     </div>
                 </div>
@@ -1339,10 +1514,10 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
 
             <!-- Tabs -->
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('visitors')">Visitors</button>
-                <button class="tab" onclick="switchTab('events')">Events</button>
-                <button class="tab" onclick="switchTab('team')">Protocol Team</button>
-                <button class="tab" onclick="switchTab('today')">Today's Schedule</button>
+                <button class="tab active" data-tab="visitors">Visitors</button>
+                <button class="tab" data-tab="events">Events</button>
+                <button class="tab" data-tab="team">Protocol Team</button>
+                <button class="tab" data-tab="today">Today's Schedule</button>
             </div>
 
             <!-- Visitors Tab -->
@@ -1350,18 +1525,18 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                 <div class="card">
                     <div class="card-header">
                         <h3>All Visitors</h3>
-                        <button class="btn btn-primary" onclick="openModal('addVisitorModal')">
+                        <button class="btn btn-primary btn-sm" onclick="openModal('addVisitorModal')">
                             <i class="fas fa-user-plus"></i> Add Visitor
                         </button>
                     </div>
                     <div class="card-body">
                         <?php if (empty($all_visitors)): ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-users" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-users"></i>
                                 <p>No visitors scheduled yet.</p>
                             </div>
                         <?php else: ?>
-                            <div style="overflow-x: auto;">
+                            <div class="table-container">
                                 <table class="table">
                                     <thead>
                                         <tr>
@@ -1425,18 +1600,18 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                 <div class="card">
                     <div class="card-header">
                         <h3>Protocol Events</h3>
-                        <button class="btn btn-primary" onclick="openModal('addEventModal')">
+                        <button class="btn btn-primary btn-sm" onclick="openModal('addEventModal')">
                             <i class="fas fa-calendar-plus"></i> Add Event
                         </button>
                     </div>
                     <div class="card-body">
                         <?php if (empty($all_events)): ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-calendar" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-calendar"></i>
                                 <p>No events scheduled yet.</p>
                             </div>
                         <?php else: ?>
-                            <div style="overflow-x: auto;">
+                            <div class="table-container">
                                 <table class="table">
                                     <thead>
                                         <tr>
@@ -1474,9 +1649,6 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                                                         <button class="btn btn-secondary btn-sm" onclick="viewEvent(<?php echo $event['id']; ?>)">
                                                             <i class="fas fa-eye"></i> View
                                                         </button>
-                                                        <button class="btn btn-primary btn-sm" onclick="assignTeamToEvent(<?php echo $event['id']; ?>)">
-                                                            <i class="fas fa-user-plus"></i> Assign Team
-                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1494,14 +1666,14 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                 <div class="card">
                     <div class="card-header">
                         <h3>Protocol Team Management</h3>
-                        <button class="btn btn-primary" onclick="openModal('addTeamMemberModal')">
+                        <button class="btn btn-primary btn-sm" onclick="openModal('addTeamMemberModal')">
                             <i class="fas fa-user-plus"></i> Add Team Member
                         </button>
                     </div>
                     <div class="card-body">
                         <?php if (empty($protocol_team)): ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-user-friends" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-user-friends"></i>
                                 <p>No team members added yet.</p>
                                 <p>Start by adding members to your protocol team.</p>
                                 <button class="btn btn-primary" onclick="openModal('addTeamMemberModal')" style="margin-top: 1rem;">
@@ -1549,8 +1721,8 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                     </div>
                     <div class="card-body">
                         <?php if (empty($today_visitors_list)): ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-calendar-day" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-calendar-day"></i>
                                 <p>No visitors scheduled for today.</p>
                             </div>
                         <?php else: ?>
@@ -1591,7 +1763,8 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
                     </div>
                     <div class="card-body">
                         <?php if (empty($upcoming_events_list)): ?>
-                            <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
+                            <div class="empty-state">
+                                <i class="fas fa-calendar-alt"></i>
                                 <p>No upcoming events.</p>
                             </div>
                         <?php else: ?>
@@ -1626,265 +1799,264 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
     </div>
 
     <!-- Add Visitor Modal -->
-<div id="addVisitorModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Schedule New Visitor</h3>
-            <button class="modal-close" onclick="closeModal('addVisitorModal')">&times;</button>
+    <div id="addVisitorModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Schedule New Visitor</h3>
+                <button class="modal-close" onclick="closeModal('addVisitorModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form method="POST">
+                    <input type="hidden" name="action" value="add_visitor">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Visitor Name *</label>
+                            <input type="text" name="visitor_name" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Organization *</label>
+                            <input type="text" name="organization" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Visit Date *</label>
+                            <input type="date" name="visit_date" class="form-input" required id="visit_date">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Visit Time *</label>
+                            <input type="time" name="visit_time" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Expected Duration (minutes)</label>
+                            <input type="number" name="expected_duration" class="form-input" min="15" max="480" value="60">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Contact Person</label>
+                            <select name="contact_person_id" class="form-select">
+                                <option value="">Select Contact Person</option>
+                                <?php if (!empty($protocol_team)): ?>
+                                    <?php foreach ($protocol_team as $member): ?>
+                                        <option value="<?php echo $member['user_id']; ?>">
+                                            <?php echo htmlspecialchars($member['full_name']); ?> - <?php echo ucfirst($member['role']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <?php foreach ($committee_members as $member): ?>
+                                        <option value="<?php echo $member['id']; ?>">
+                                            <?php echo htmlspecialchars($member['full_name']); ?> - <?php echo htmlspecialchars(str_replace('_', ' ', $member['role'])); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </select>
+                        </div>
+                        <div class="form-group" style="grid-column: 1 / -1;">
+                            <label class="form-label">Purpose of Visit *</label>
+                            <textarea name="purpose" class="form-textarea" required placeholder="Brief description of the visit purpose..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Meeting Location</label>
+                            <input type="text" name="meeting_location" class="form-input" placeholder="e.g., Guild Council Office, Conference Room">
+                        </div>
+                        <div class="form-group" style="grid-column: 1 / -1;">
+                            <label class="form-label">Special Requirements</label>
+                            <textarea name="special_requirements" class="form-textarea" placeholder="Any special arrangements needed..."></textarea>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Schedule Visitor
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('addVisitorModal')">
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
-        <div class="modal-body">
-            <form method="POST">
-                <input type="hidden" name="action" value="add_visitor">
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label class="form-label">Visitor Name *</label>
-                        <input type="text" name="visitor_name" class="form-input" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Organization *</label>
-                        <input type="text" name="organization" class="form-input" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Visit Date *</label>
-                        <input type="date" name="visit_date" class="form-input" required id="visit_date">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Visit Time *</label>
-                        <input type="time" name="visit_time" class="form-input" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Expected Duration (minutes)</label>
-                        <input type="number" name="expected_duration" class="form-input" min="15" max="480" value="60">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Contact Person</label>
-                        <select name="contact_person_id" class="form-select">
-                            <option value="">Select Contact Person</option>
-                            <?php if (!empty($protocol_team)): ?>
-                                <?php foreach ($protocol_team as $member): ?>
-                                    <option value="<?php echo $member['user_id']; ?>">
-                                        <?php echo htmlspecialchars($member['full_name']); ?> - <?php echo ucfirst($member['role']); ?>
+    </div>
+
+    <!-- Add Team Member Modal -->
+    <div id="addTeamMemberModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Add Protocol Team Member</h3>
+                <button class="modal-close" onclick="closeModal('addTeamMemberModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form method="POST">
+                    <input type="hidden" name="action" value="add_team_member">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Select User *</label>
+                            <select name="user_id" class="form-select" required>
+                                <option value="">Select User</option>
+                                <?php foreach ($available_users as $user_avail): ?>
+                                    <option value="<?php echo $user_avail['id']; ?>">
+                                        <?php echo htmlspecialchars($user_avail['full_name']); ?> - <?php echo htmlspecialchars($user_avail['email']); ?>
                                     </option>
                                 <?php endforeach; ?>
-                            <?php else: ?>
-                                <?php foreach ($committee_members as $member): ?>
-                                    <option value="<?php echo $member['id']; ?>">
-                                        <?php echo htmlspecialchars($member['full_name']); ?> - <?php echo htmlspecialchars(str_replace('_', ' ', $member['role'])); ?>
-                                    </option>
-                                <?php endforeach; ?>
+                            </select>
+                            <?php if (empty($available_users)): ?>
+                                <small style="color: var(--danger); margin-top: 0.5rem;">
+                                    No available users to add. All active users might already be in the protocol team.
+                                </small>
                             <?php endif; ?>
-                        </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Role *</label>
+                            <select name="role" class="form-select" required>
+                                <option value="coordinator">Coordinator</option>
+                                <option value="logistics">Logistics</option>
+                                <option value="security">Security</option>
+                                <option value="hospitality">Hospitality</option>
+                                <option value="transportation">Transportation</option>
+                                <option value="technical">Technical</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Specialization</label>
+                            <input type="text" name="specialization" class="form-input" placeholder="e.g., Audio-Visual, Catering, Security">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Phone</label>
+                            <input type="tel" name="phone" class="form-input" placeholder="Phone number">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Email</label>
+                            <input type="email" name="email" class="form-input" placeholder="Email address">
+                        </div>
                     </div>
-                    <div class="form-group" style="grid-column: 1 / -1;">
-                        <label class="form-label">Purpose of Visit *</label>
-                        <textarea name="purpose" class="form-textarea" required placeholder="Brief description of the visit purpose..."></textarea>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
+                        <button type="submit" class="btn btn-primary" <?php echo empty($available_users) ? 'disabled' : ''; ?>>
+                            <i class="fas fa-save"></i> Add Team Member
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('addTeamMemberModal')">
+                            Cancel
+                        </button>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Meeting Location</label>
-                        <input type="text" name="meeting_location" class="form-input" placeholder="e.g., Guild Council Office, Conference Room">
-                    </div>
-                    <div class="form-group" style="grid-column: 1 / -1;">
-                        <label class="form-label">Special Requirements</label>
-                        <textarea name="special_requirements" class="form-textarea" placeholder="Any special arrangements needed..."></textarea>
-                    </div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save"></i> Schedule Visitor
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('addVisitorModal')">
-                        Cancel
-                    </button>
-                </div>
-            </form>
+                </form>
+            </div>
         </div>
     </div>
-</div>
 
-<!-- Add Team Member Modal -->
-<div id="addTeamMemberModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
-        <div class="modal-header">
-            <h3>Add Protocol Team Member</h3>
-            <button class="modal-close" onclick="closeModal('addTeamMemberModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form method="POST">
-                <input type="hidden" name="action" value="add_team_member">
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label class="form-label">Select User *</label>
-                        <select name="user_id" class="form-select" required>
-                            <option value="">Select User</option>
-                            <?php foreach ($available_users as $user): ?>
-                                <option value="<?php echo $user['id']; ?>">
-                                    <?php echo htmlspecialchars($user['full_name']); ?> - <?php echo htmlspecialchars($user['email']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                        <?php if (empty($available_users)): ?>
-                            <small style="color: var(--danger); margin-top: 0.5rem;">
-                                No available users to add. All active users might already be in the protocol team.
-                            </small>
-                        <?php endif; ?>
+    <!-- Add Event Modal -->
+    <div id="addEventModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3>Create New Protocol Event</h3>
+                <button class="modal-close" onclick="closeModal('addEventModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form method="POST">
+                    <input type="hidden" name="action" value="add_event">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Event Name *</label>
+                            <input type="text" name="event_name" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Event Type *</label>
+                            <select name="event_type" class="form-select" required>
+                                <option value="ceremony">Ceremony</option>
+                                <option value="meeting">Meeting</option>
+                                <option value="reception">Reception</option>
+                                <option value="official_visit">Official Visit</option>
+                                <option value="workshop">Workshop</option>
+                                <option value="conference">Conference</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Event Date *</label>
+                            <input type="date" name="event_date" class="form-input" required id="event_date">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Start Time *</label>
+                            <input type="time" name="start_time" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">End Time</label>
+                            <input type="time" name="end_time" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Location *</label>
+                            <input type="text" name="location" class="form-input" required>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Organizer</label>
+                            <input type="text" name="organizer" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Guest of Honor</label>
+                            <input type="text" name="guest_of_honor" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Expected Attendees</label>
+                            <input type="number" name="expected_attendees" class="form-input" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Budget (RWF)</label>
+                            <input type="number" name="budget" class="form-input" min="0" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Security Level</label>
+                            <select name="security_level" class="form-select">
+                                <option value="low">Low</option>
+                                <option value="medium" selected>Medium</option>
+                                <option value="high">High</option>
+                                <option value="maximum">Maximum</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="grid-column: 1 / -1;">
+                            <label class="form-label">Protocol Requirements</label>
+                            <textarea name="protocol_requirements" class="form-textarea" placeholder="Special protocol arrangements, seating plans, etc..."></textarea>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Role *</label>
-                        <select name="role" class="form-select" required>
-                            <option value="coordinator">Coordinator</option>
-                            <option value="logistics">Logistics</option>
-                            <option value="security">Security</option>
-                            <option value="hospitality">Hospitality</option>
-                            <option value="transportation">Transportation</option>
-                            <option value="technical">Technical</option>
-                        </select>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Create Event
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('addEventModal')">
+                            Cancel
+                        </button>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Specialization</label>
-                        <input type="text" name="specialization" class="form-input" placeholder="e.g., Audio-Visual, Catering, Security">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Phone</label>
-                        <input type="tel" name="phone" class="form-input" placeholder="Phone number">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Email</label>
-                        <input type="email" name="email" class="form-input" placeholder="Email address">
-                    </div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
-                    <button type="submit" class="btn btn-primary" <?php echo empty($available_users) ? 'disabled' : ''; ?>>
-                        <i class="fas fa-save"></i> Add Team Member
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('addTeamMemberModal')">
-                        Cancel
-                    </button>
-                </div>
-            </form>
+                </form>
+            </div>
         </div>
     </div>
-</div>
 
-<!-- Add Event Modal -->
-<div id="addEventModal" class="modal">
-    <div class="modal-content" style="max-width: 700px;">
-        <div class="modal-header">
-            <h3>Create New Protocol Event</h3>
-            <button class="modal-close" onclick="closeModal('addEventModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form method="POST">
-                <input type="hidden" name="action" value="add_event">
-                <div class="form-grid">
+    <!-- Update Visitor Status Modal -->
+    <div id="updateStatusModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Update Visitor Status</h3>
+                <button class="modal-close" onclick="closeModal('updateStatusModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form method="POST">
+                    <input type="hidden" name="action" value="update_visitor_status">
+                    <input type="hidden" name="visitor_id" id="status_visitor_id">
                     <div class="form-group">
-                        <label class="form-label">Event Name *</label>
-                        <input type="text" name="event_name" class="form-input" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Event Type *</label>
-                        <select name="event_type" class="form-select" required>
-                            <option value="ceremony">Ceremony</option>
-                            <option value="meeting">Meeting</option>
-                            <option value="reception">Reception</option>
-                            <option value="official_visit">Official Visit</option>
-                            <option value="workshop">Workshop</option>
-                            <option value="conference">Conference</option>
-                            <option value="other">Other</option>
+                        <label class="form-label">Status</label>
+                        <select name="status" id="status_select" class="form-select" required>
+                            <option value="scheduled">Scheduled</option>
+                            <option value="arrived">Arrived</option>
+                            <option value="in_meeting">In Meeting</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Event Date *</label>
-                        <input type="date" name="event_date" class="form-input" required id="event_date">
+                    <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Update Status
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal('updateStatusModal')">
+                            Cancel
+                        </button>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Start Time *</label>
-                        <input type="time" name="start_time" class="form-input" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">End Time</label>
-                        <input type="time" name="end_time" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Location *</label>
-                        <input type="text" name="location" class="form-input" required>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Organizer</label>
-                        <input type="text" name="organizer" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Guest of Honor</label>
-                        <input type="text" name="guest_of_honor" class="form-input">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Expected Attendees</label>
-                        <input type="number" name="expected_attendees" class="form-input" min="1">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Budget (RWF)</label>
-                        <input type="number" name="budget" class="form-input" min="0" step="0.01">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Security Level</label>
-                        <select name="security_level" class="form-select">
-                            <option value="low">Low</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="high">High</option>
-                            <option value="maximum">Maximum</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="grid-column: 1 / -1;">
-                        <label class="form-label">Protocol Requirements</label>
-                        <textarea name="protocol_requirements" class="form-textarea" placeholder="Special protocol arrangements, seating plans, etc..."></textarea>
-                    </div>
-                </div>
-                <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save"></i> Create Event
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('addEventModal')">
-                        Cancel
-                    </button>
-                </div>
-            </form>
+                </form>
+            </div>
         </div>
     </div>
-</div>
-
-<!-- Update Visitor Status Modal -->
-<div id="updateStatusModal" class="modal">
-    <div class="modal-content" style="max-width: 500px;">
-        <div class="modal-header">
-            <h3>Update Visitor Status</h3>
-            <button class="modal-close" onclick="closeModal('updateStatusModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form method="POST">
-                <input type="hidden" name="action" value="update_visitor_status">
-                <input type="hidden" name="visitor_id" id="status_visitor_id">
-                <div class="form-group">
-                    <label class="form-label">Status</label>
-                    <select name="status" id="status_select" class="form-select" required>
-                        <option value="scheduled">Scheduled</option>
-                        <option value="arrived">Arrived</option>
-                        <option value="in_meeting">In Meeting</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                    </select>
-                </div>
-                <div style="display: flex; gap: 0.5rem; margin-top: 1.5rem;">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save"></i> Update Status
-                    </button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('updateStatusModal')">
-                        Cancel
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
 
     <script>
         // Dark Mode Toggle
@@ -1904,6 +2076,61 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Tab Switching
         function switchTab(tabName) {
             // Hide all tab contents
@@ -1919,48 +2146,70 @@ error_log("DEBUG: Today visitors: $today_visitors, Upcoming events: $upcoming_ev
             // Show selected tab content
             document.getElementById(tabName).classList.add('active');
             
-            // Activate selected tab
-            event.target.classList.add('active');
-        }
-
-// Modal Functions
-function openModal(modalId) {
-    document.getElementById(modalId).style.display = 'flex';
-    document.body.style.overflow = 'hidden'; // Prevent background scrolling
-}
-
-function closeModal(modalId) {
-    document.getElementById(modalId).style.display = 'none';
-    document.body.style.overflow = 'auto'; // Restore scrolling
-}
-
-function updateVisitorStatus(visitorId, currentStatus) {
-    document.getElementById('status_visitor_id').value = visitorId;
-    document.getElementById('status_select').value = currentStatus;
-    openModal('updateStatusModal');
-}
-
-// Close modal when clicking outside
-window.onclick = function(event) {
-    const modals = document.getElementsByClassName('modal');
-    for (let modal of modals) {
-        if (event.target === modal) {
-            closeModal(modal.id);
-        }
-    }
-}
-
-// Close modal with Escape key
-document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') {
-        const modals = document.getElementsByClassName('modal');
-        for (let modal of modals) {
-            if (modal.style.display === 'flex') {
-                closeModal(modal.id);
+            // Activate selected tab button
+            const tabs = document.querySelectorAll('.tab');
+            const tabMap = {
+                'visitors': 0,
+                'events': 1,
+                'team': 2,
+                'today': 3
+            };
+            const index = tabMap[tabName];
+            if (tabs[index]) {
+                tabs[index].classList.add('active');
             }
         }
-    }
-});
+
+        // Make tabs work with click events
+        document.querySelectorAll('.tab').forEach((tab, index) => {
+            tab.addEventListener('click', function(e) {
+                const tabNames = ['visitors', 'events', 'team', 'today'];
+                switchTab(tabNames[index]);
+            });
+        });
+
+        // Modal Functions
+        function openModal(modalId) {
+            document.getElementById(modalId).style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+            document.body.style.overflow = '';
+        }
+
+        function updateVisitorStatus(visitorId, currentStatus) {
+            document.getElementById('status_visitor_id').value = visitorId;
+            document.getElementById('status_select').value = currentStatus;
+            openModal('updateStatusModal');
+        }
+
+        function viewEvent(eventId) {
+            alert('View Event details - Event ID: ' + eventId);
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const modals = document.getElementsByClassName('modal');
+            for (let modal of modals) {
+                if (event.target === modal) {
+                    closeModal(modal.id);
+                }
+            }
+        }
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const modals = document.getElementsByClassName('modal');
+                for (let modal of modals) {
+                    if (modal.style.display === 'flex') {
+                        closeModal(modal.id);
+                    }
+                }
+            }
+        });
 
         // Set minimum date for visit date to today
         document.addEventListener('DOMContentLoaded', function() {
@@ -1974,7 +2223,25 @@ document.addEventListener('keydown', function(event) {
             if (eventDateInput) {
                 eventDateInput.min = today;
             }
+
+            // Add loading animations
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
         });
+
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
+            });
+        }, 5000);
     </script>
 </body>
 </html>

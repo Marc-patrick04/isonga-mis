@@ -168,7 +168,7 @@ function getStatusText($status) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Student Financial Aid - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -784,88 +784,194 @@ function getStatusText($status) {
             border-left-color: var(--danger);
         }
 
-        /* Responsive */
+        /* ── Responsive ── */
+
+        /* ── Tablet/desktop sidebar collapse boundary ── */
         @media (max-width: 992px) {
             .sidebar {
                 transform: translateX(-100%);
                 position: fixed;
+                top: 0;
+                height: 100vh;
                 z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
             .sidebar.mobile-open {
                 transform: translateX(0);
             }
-            
+
+            /* Hide the desktop collapse toggle on mobile */
+            .sidebar-toggle {
+                display: none;
+            }
+
             .main-content {
-                margin-left: 0;
+                margin-left: 0 !important;
             }
-            
+
             .main-content.sidebar-collapsed {
-                margin-left: 0;
+                margin-left: 0 !important;
             }
-            
+
             .mobile-menu-toggle {
-                display: block;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                font-size: 1.2rem;
+                line-height: 1;
+                transition: var(--transition);
             }
-            
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
             .overlay {
                 display: none;
                 position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(2px);
                 z-index: 999;
             }
-            
+
             .overlay.active {
                 display: block;
             }
+
+            /* Hide the sidebar-toggle collapse button on mobile */
+            #sidebarToggleBtn {
+                display: none;
+            }
         }
 
+        /* ── Tablet ── */
         @media (max-width: 768px) {
-            .dashboard-container {
-                flex-direction: column;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .stats-grid {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
-            
+
             .filters {
                 flex-direction: column;
                 align-items: stretch;
             }
-            
+
             .filter-group {
                 min-width: auto;
+                width: 100%;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            /* Card body horizontal scroll for table */
+            .card-body {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
             }
-            
-            .user-details {
-                display: none;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
-            
+
             .table {
-                font-size: 0.7rem;
+                font-size: 0.75rem;
+                white-space: nowrap;
             }
-            
-            .table th, .table td {
-                padding: 0.5rem;
+
+            .table th,
+            .table td {
+                padding: 0.6rem 0.5rem;
+            }
+
+            /* Stat numbers shrink a bit */
+            .stat-number {
+                font-size: 1.2rem;
+            }
+
+            .stat-icon {
+                width: 42px;
+                height: 42px;
+                font-size: 1.1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.25rem;
+            }
+
+            /* Action buttons in table wrap tightly */
+            .btn-sm {
+                padding: 0.2rem 0.4rem;
+                font-size: 0.65rem;
             }
         }
 
+        /* ── Small phones ── */
         @media (max-width: 480px) {
             .stats-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.1rem;
+            }
+
+            .card-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.25rem;
+            }
+
+            .card-body {
+                padding: 0.75rem;
+            }
+
+            /* Stack filter label + reset button full width */
+            .filter-group .btn {
+                width: 100%;
+                justify-content: center;
             }
         }
     </style>
@@ -1213,8 +1319,12 @@ function getStatusText($status) {
         
         if (mobileMenuToggle) {
             mobileMenuToggle.addEventListener('click', () => {
-                sidebar.classList.toggle('mobile-open');
-                mobileOverlay.classList.toggle('active');
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
             });
         }
         
@@ -1222,8 +1332,20 @@ function getStatusText($status) {
             mobileOverlay.addEventListener('click', () => {
                 sidebar.classList.remove('mobile-open');
                 mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             });
         }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
 
         // Filter functionality
         function applyFilters() {

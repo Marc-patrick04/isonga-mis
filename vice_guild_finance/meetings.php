@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/academic_year.php';
 
 // Check if user is logged in and is Vice Guild Finance
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'vice_guild_finance') {
@@ -36,7 +37,7 @@ $status_filter = $_GET['status'] ?? 'upcoming';
 $type_filter = $_GET['type'] ?? 'all';
 $month_filter = $_GET['month'] ?? '';
 
-// Build query for meetings
+// Build query for meetings (PostgreSQL compatible)
 $query = "
     SELECT 
         m.*,
@@ -56,9 +57,9 @@ $params = [$committee_member_id];
 
 // Apply status filter
 if ($status_filter === 'upcoming') {
-    $query .= " AND m.meeting_date >= CURDATE() AND m.status IN ('scheduled', 'ongoing')";
+    $query .= " AND m.meeting_date >= CURRENT_DATE AND m.status IN ('scheduled', 'ongoing')";
 } elseif ($status_filter === 'past') {
-    $query .= " AND (m.meeting_date < CURDATE() OR m.status IN ('completed', 'cancelled', 'postponed'))";
+    $query .= " AND (m.meeting_date < CURRENT_DATE OR m.status IN ('completed', 'cancelled', 'postponed'))";
 } elseif ($status_filter !== 'all') {
     $query .= " AND m.status = ?";
     $params[] = $status_filter;
@@ -70,9 +71,9 @@ if ($type_filter !== 'all') {
     $params[] = $type_filter;
 }
 
-// Apply month filter
+// Apply month filter (PostgreSQL compatible)
 if (!empty($month_filter)) {
-    $query .= " AND DATE_FORMAT(m.meeting_date, '%Y-%m') = ?";
+    $query .= " AND TO_CHAR(m.meeting_date, 'YYYY-MM') = ?";
     $params[] = $month_filter;
 }
 
@@ -103,7 +104,7 @@ try {
     $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
 
     // Upcoming meetings
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming FROM meetings WHERE meeting_date >= CURDATE() AND status IN ('scheduled', 'ongoing')");
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming FROM meetings WHERE meeting_date >= CURRENT_DATE AND status IN ('scheduled', 'ongoing')");
     $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming'] ?? 0;
 
     // Attendance statistics
@@ -123,11 +124,11 @@ try {
         $attendance_stats = ['total_attended' => 0, 'present_count' => 0, 'absent_count' => 0, 'excused_count' => 0];
     }
 
-    // Meetings by type
+    // Meetings by type (PostgreSQL compatible)
     $stmt = $pdo->query("
         SELECT meeting_type, COUNT(*) as count 
         FROM meetings 
-        WHERE meeting_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        WHERE meeting_date >= CURRENT_DATE - INTERVAL '6 months'
         GROUP BY meeting_type
     ");
     $meetings_by_type = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -139,10 +140,10 @@ try {
     error_log("Meetings statistics error: " . $e->getMessage());
 }
 
-// Get available months for filter
+// Get available months for filter (PostgreSQL compatible)
 try {
     $stmt = $pdo->query("
-        SELECT DISTINCT DATE_FORMAT(meeting_date, '%Y-%m') as month 
+        SELECT DISTINCT TO_CHAR(meeting_date, 'YYYY-MM') as month 
         FROM meetings 
         ORDER BY month DESC
     ");
@@ -151,20 +152,56 @@ try {
     $available_months = [];
     error_log("Available months error: " . $e->getMessage());
 }
-?>
 
+// Helper functions
+function formatMeetingTime($time) {
+    if (empty($time)) return 'TBD';
+    return date('g:i A', strtotime($time));
+}
+
+function getMeetingStatusClass($status) {
+    $classes = [
+        'scheduled' => 'status-scheduled',
+        'ongoing' => 'status-ongoing',
+        'completed' => 'status-completed',
+        'cancelled' => 'status-cancelled',
+        'postponed' => 'status-postponed'
+    ];
+    return $classes[$status] ?? 'status-scheduled';
+}
+
+function getMeetingTypeClass($type) {
+    $classes = [
+        'general' => 'type-general',
+        'executive' => 'type-executive',
+        'committee' => 'type-committee',
+        'emergency' => 'type-emergency',
+        'planning' => 'type-planning'
+    ];
+    return $classes[$type] ?? 'type-general';
+}
+
+function getAttendanceClass($status) {
+    if (!$status) return 'attendance-pending';
+    $classes = [
+        'present' => 'attendance-present',
+        'absent' => 'attendance-absent',
+        'excused' => 'attendance-excused'
+    ];
+    return $classes[$status] ?? 'attendance-pending';
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Meetings - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Reuse all the CSS from dashboard.php */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -178,6 +215,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --finance-primary: #1976D2;
             --finance-secondary: #2196F3;
             --finance-accent: #0D47A1;
@@ -189,6 +227,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -204,11 +244,11 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --finance-primary: #2196F3;
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
         }
 
         * {
@@ -231,14 +271,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -248,7 +285,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -257,38 +293,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -296,22 +338,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -320,41 +347,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -364,57 +382,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -444,9 +490,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -459,6 +503,20 @@ try {
             margin-left: auto;
         }
 
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -478,14 +536,14 @@ try {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--finance-primary);
@@ -513,13 +571,13 @@ try {
         }
 
         .stat-icon {
-            width: 50px;
-            height: 50px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             flex-shrink: 0;
         }
 
@@ -548,7 +606,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -556,7 +614,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -564,7 +622,7 @@ try {
             display: flex;
             align-items: center;
             gap: 0.25rem;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             margin-top: 0.25rem;
         }
@@ -577,57 +635,70 @@ try {
             color: var(--danger);
         }
 
-        /* Content Grid */
-        .content-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
-        }
-
-        .card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
-        }
-
-        .card-header {
-            padding: 1rem 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
+        /* Filters */
+        .filters {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: var(--finance-light);
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
         }
 
-        .card-header h3 {
-            font-size: 1rem;
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .filter-label {
+            font-size: 0.75rem;
             font-weight: 600;
             color: var(--text-dark);
         }
 
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
+        .form-control, .form-select {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.8rem;
             transition: var(--transition);
         }
 
-        .card-header-btn:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
+        .form-control:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--finance-primary);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
         }
 
-        .card-body {
-            padding: 1.25rem;
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--finance-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--finance-accent);
+            transform: translateY(-1px);
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.7rem;
         }
 
         /* Meeting Cards */
@@ -640,9 +711,10 @@ try {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 4px solid var(--finance-primary);
-            transition: var(--transition);
             overflow: hidden;
+            transition: var(--transition);
+            cursor: pointer;
+            border-left: 4px solid var(--finance-primary);
         }
 
         .meeting-card:hover {
@@ -672,58 +744,80 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
+            flex-wrap: wrap;
+            gap: 1rem;
             background: var(--finance-light);
+        }
+
+        .meeting-title-section {
+            flex: 1;
         }
 
         .meeting-title {
             font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
         }
 
-        .meeting-meta {
+        .meeting-badges {
             display: flex;
-            gap: 1rem;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .meeting-date-section {
+            text-align: right;
+        }
+
+        .meeting-date {
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .meeting-time {
             font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
         .meeting-body {
-            padding: 1.25rem;
+            padding: 1rem 1.25rem;
         }
 
         .meeting-details {
-            display: grid;
-            gap: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
         }
 
         .detail-row {
             display: flex;
-            justify-content: space-between;
-            align-items: start;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--medium-gray);
+            align-items: flex-start;
+            gap: 1rem;
+            flex-wrap: wrap;
         }
 
         .detail-label {
             font-weight: 600;
             color: var(--text-dark);
-            min-width: 120px;
+            min-width: 100px;
+            font-size: 0.8rem;
         }
 
         .detail-value {
             flex: 1;
             color: var(--dark-gray);
+            font-size: 0.8rem;
         }
 
-        /* Status badges */
-        .status-badge {
-            padding: 0.25rem 0.5rem;
+        /* Badges */
+        .status-badge, .type-badge, .attendance-badge {
+            padding: 0.25rem 0.6rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
             text-transform: uppercase;
+            display: inline-block;
         }
 
         .status-scheduled {
@@ -738,7 +832,7 @@ try {
 
         .status-completed {
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
         }
 
         .status-cancelled {
@@ -749,44 +843,6 @@ try {
         .status-postponed {
             background: #fff3cd;
             color: #856404;
-        }
-
-        /* Attendance badges */
-        .attendance-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .attendance-present {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .attendance-absent {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .attendance-excused {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .attendance-pending {
-            background: #e2e3e5;
-            color: var(--dark-gray);
-        }
-
-        /* Type badges */
-        .type-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
         }
 
         .type-general {
@@ -814,64 +870,74 @@ try {
             color: #0c5460;
         }
 
-        /* Filters */
-        .filters {
-            display: flex;
-            gap: 1rem;
+        .attendance-present {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .attendance-absent {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .attendance-excused {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .attendance-pending {
+            background: #e2e3e5;
+            color: #6c757d;
+        }
+
+        /* Charts Grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
             margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-            align-items: center;
         }
 
-        .filter-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .filter-label {
-            font-size: 0.8rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
+        .chart-card {
             background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
             border-radius: var(--border-radius);
-            font-size: 0.8rem;
+            box-shadow: var(--shadow-sm);
+            padding: 1rem;
+        }
+
+        .chart-header {
+            margin-bottom: 1rem;
+        }
+
+        .chart-header h3 {
+            font-size: 0.9rem;
             font-weight: 600;
-            cursor: pointer;
-            transition: var(--transition);
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
+            color: var(--text-dark);
         }
 
-        .btn-primary {
-            background: var(--finance-primary);
-            color: white;
+        .chart-container {
+            position: relative;
+            height: 200px;
         }
 
-        .btn-primary:hover {
-            background: var(--finance-accent);
-            transform: translateY(-1px);
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--dark-gray);
+            background: var(--white);
+            border-radius: var(--border-radius);
         }
 
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.75rem;
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
         }
 
         /* Modal */
@@ -908,6 +974,12 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--finance-light);
+        }
+
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
         }
 
         .modal-body {
@@ -919,7 +991,6 @@ try {
             border-top: 1px solid var(--medium-gray);
             display: flex;
             justify-content: flex-end;
-            gap: 0.5rem;
         }
 
         .close {
@@ -930,66 +1001,122 @@ try {
             color: var(--dark-gray);
         }
 
-        /* Charts */
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.5rem;
-        }
-
-        .chart-container {
-            position: relative;
-            height: 200px;
-        }
-
-        /* Empty state */
-        .empty-state {
-            text-align: center;
-            padding: 3rem;
-            color: var(--dark-gray);
-        }
-
-        .empty-state i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            color: var(--medium-gray);
-        }
-
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
+            }
+
             .charts-grid {
                 grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .filters {
                 flex-direction: column;
                 align-items: stretch;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .filter-group {
+                width: 100%;
             }
-            
-            .user-details {
-                display: none;
+
+            .filter-group select, .filter-group input {
+                width: 100%;
+            }
+
+            .meeting-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .meeting-date-section {
+                text-align: left;
+            }
+
+            .detail-row {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .detail-label {
+                min-width: auto;
             }
         }
 
@@ -997,26 +1124,55 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .meeting-header {
-                flex-direction: column;
-                gap: 1rem;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
+            .meeting-title {
+                font-size: 0.9rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Meetings</h1>
                 </div>
@@ -1026,7 +1182,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
@@ -1053,7 +1212,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1140,7 +1302,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Meetings & Attendance 📅</h1>
@@ -1207,6 +1369,20 @@ try {
                 </div>
             </div>
 
+            <!-- Meetings by Type Chart -->
+            <?php if (!empty($meetings_by_type)): ?>
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>Meetings by Type (Last 6 Months)</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="meetingsByTypeChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <!-- Filters -->
             <div class="filters">
                 <div class="filter-group">
@@ -1218,6 +1394,8 @@ try {
                         <option value="scheduled" <?php echo $status_filter === 'scheduled' ? 'selected' : ''; ?>>Scheduled</option>
                         <option value="ongoing" <?php echo $status_filter === 'ongoing' ? 'selected' : ''; ?>>Ongoing</option>
                         <option value="completed" <?php echo $status_filter === 'completed' ? 'selected' : ''; ?>>Completed</option>
+                        <option value="cancelled" <?php echo $status_filter === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+                        <option value="postponed" <?php echo $status_filter === 'postponed' ? 'selected' : ''; ?>>Postponed</option>
                     </select>
                 </div>
                 <div class="filter-group">
@@ -1263,35 +1441,35 @@ try {
                     </div>
                 <?php else: ?>
                     <?php foreach ($meetings as $meeting): ?>
-                        <div class="meeting-card <?php echo $meeting['status']; ?>">
+                        <div class="meeting-card <?php echo $meeting['status']; ?>" data-meeting-id="<?php echo $meeting['id']; ?>" onclick="viewMeetingDetails(<?php echo $meeting['id']; ?>)">
                             <div class="meeting-header">
-                                <div>
+                                <div class="meeting-title-section">
                                     <div class="meeting-title"><?php echo htmlspecialchars($meeting['title']); ?></div>
-                                    <div class="meeting-meta">
-                                        <span class="type-badge type-<?php echo $meeting['meeting_type']; ?>">
-                                            <?php echo ucfirst($meeting['meeting_type']); ?> Meeting
+                                    <div class="meeting-badges">
+                                        <span class="type-badge <?php echo getMeetingTypeClass($meeting['meeting_type']); ?>">
+                                            <?php echo ucfirst($meeting['meeting_type']); ?>
                                         </span>
-                                        <span class="status-badge status-<?php echo $meeting['status']; ?>">
+                                        <span class="status-badge <?php echo getMeetingStatusClass($meeting['status']); ?>">
                                             <?php echo ucfirst($meeting['status']); ?>
                                         </span>
                                         <?php if ($meeting['attendance_status']): ?>
-                                            <span class="attendance-badge attendance-<?php echo $meeting['attendance_status']; ?>">
+                                            <span class="attendance-badge <?php echo getAttendanceClass($meeting['attendance_status']); ?>">
                                                 <?php echo ucfirst($meeting['attendance_status']); ?>
                                             </span>
                                         <?php else: ?>
                                             <span class="attendance-badge attendance-pending">
-                                                Attendance Pending
+                                                Pending
                                             </span>
                                         <?php endif; ?>
                                     </div>
                                 </div>
-                                <div style="text-align: right;">
-                                    <div style="font-weight: 600; color: var(--text-dark);">
+                                <div class="meeting-date-section">
+                                    <div class="meeting-date">
                                         <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?>
                                     </div>
-                                    <div style="font-size: 0.8rem; color: var(--dark-gray);">
-                                        <?php echo date('g:i A', strtotime($meeting['start_time'])); ?> - 
-                                        <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
+                                    <div class="meeting-time">
+                                        <?php echo formatMeetingTime($meeting['start_time']); ?> - 
+                                        <?php echo formatMeetingTime($meeting['end_time']); ?>
                                     </div>
                                 </div>
                             </div>
@@ -1305,34 +1483,16 @@ try {
                                         <div class="detail-label">Chairperson:</div>
                                         <div class="detail-value"><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'TBD'); ?></div>
                                     </div>
-                                    <div class="detail-row">
-                                        <div class="detail-label">Created By:</div>
-                                        <div class="detail-value"><?php echo htmlspecialchars($meeting['created_by_name']); ?></div>
-                                    </div>
                                     <?php if (!empty($meeting['agenda'])): ?>
                                         <div class="detail-row">
                                             <div class="detail-label">Agenda:</div>
-                                            <div class="detail-value"><?php echo htmlspecialchars($meeting['agenda']); ?></div>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if (!empty($meeting['minutes'])): ?>
-                                        <div class="detail-row">
-                                            <div class="detail-label">Minutes:</div>
-                                            <div class="detail-value"><?php echo htmlspecialchars($meeting['minutes']); ?></div>
+                                            <div class="detail-value"><?php echo htmlspecialchars(substr($meeting['agenda'], 0, 150)) . (strlen($meeting['agenda']) > 150 ? '...' : ''); ?></div>
                                         </div>
                                     <?php endif; ?>
                                     <?php if ($meeting['attendance_status'] && $meeting['check_in_time']): ?>
                                         <div class="detail-row">
                                             <div class="detail-label">Check-in Time:</div>
-                                            <div class="detail-value">
-                                                <?php echo date('M j, Y g:i A', strtotime($meeting['check_in_time'])); ?>
-                                            </div>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if ($meeting['attendance_status'] && !empty($meeting['attendance_notes'])): ?>
-                                        <div class="detail-row">
-                                            <div class="detail-label">Attendance Notes:</div>
-                                            <div class="detail-value"><?php echo htmlspecialchars($meeting['attendance_notes']); ?></div>
+                                            <div class="detail-value"><?php echo date('M j, Y g:i A', strtotime($meeting['check_in_time'])); ?></div>
                                         </div>
                                     <?php endif; ?>
                                 </div>
@@ -1357,12 +1517,15 @@ try {
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn" onclick="closeModal('meetingDetailsModal')">Close</button>
+                <button type="button" class="btn btn-primary" onclick="closeModal('meetingDetailsModal')">Close</button>
             </div>
         </div>
     </div>
 
     <script>
+        // Pass meetings data to JavaScript
+        const meetingsData = <?php echo json_encode($meetings); ?>;
+        
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
@@ -1380,6 +1543,67 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Filter functionality
         function applyFilters() {
             const status = document.getElementById('statusFilter').value;
@@ -1389,9 +1613,9 @@ try {
             let url = 'meetings.php?';
             const params = [];
             
-            if (status) params.push(`status=${status}`);
-            if (type !== 'all') params.push(`type=${type}`);
-            if (month) params.push(`month=${month}`);
+            if (status) params.push(`status=${encodeURIComponent(status)}`);
+            if (type !== 'all') params.push(`type=${encodeURIComponent(type)}`);
+            if (month) params.push(`month=${encodeURIComponent(month)}`);
             
             window.location.href = url + params.join('&');
         }
@@ -1403,17 +1627,17 @@ try {
         // Modal functionality
         function openModal(modalId) {
             document.getElementById(modalId).classList.add('active');
+            document.body.style.overflow = 'hidden';
         }
 
         function closeModal(modalId) {
             document.getElementById(modalId).classList.remove('active');
+            document.body.style.overflow = '';
         }
 
         // View meeting details
         function viewMeetingDetails(meetingId) {
-            // In a real application, you would fetch this data via AJAX
-            // For now, we'll use the existing data
-            const meeting = <?php echo json_encode($meetings); ?>.find(m => m.id == meetingId);
+            const meeting = meetingsData.find(m => m.id == meetingId);
             
             if (meeting) {
                 document.getElementById('modalMeetingTitle').textContent = meeting.title;
@@ -1423,15 +1647,15 @@ try {
                         <div class="detail-row">
                             <div class="detail-label">Meeting Type:</div>
                             <div class="detail-value">
-                                <span class="type-badge type-${meeting.meeting_type}">
-                                    ${meeting.meeting_type.charAt(0).toUpperCase() + meeting.meeting_type.slice(1)} Meeting
+                                <span class="type-badge ${getTypeClass(meeting.meeting_type)}">
+                                    ${meeting.meeting_type.charAt(0).toUpperCase() + meeting.meeting_type.slice(1)}
                                 </span>
                             </div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Status:</div>
                             <div class="detail-value">
-                                <span class="status-badge status-${meeting.status}">
+                                <span class="status-badge ${getStatusClass(meeting.status)}">
                                     ${meeting.status.charAt(0).toUpperCase() + meeting.status.slice(1)}
                                 </span>
                             </div>
@@ -1440,42 +1664,41 @@ try {
                             <div class="detail-label">Date & Time:</div>
                             <div class="detail-value">
                                 ${new Date(meeting.meeting_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<br>
-                                ${new Date('1970-01-01T' + meeting.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - 
-                                ${new Date('1970-01-01T' + meeting.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                ${formatTime(meeting.start_time)} - ${formatTime(meeting.end_time)}
                             </div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Location:</div>
-                            <div class="detail-value">${meeting.location}</div>
+                            <div class="detail-value">${escapeHtml(meeting.location)}</div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Chairperson:</div>
-                            <div class="detail-value">${meeting.chairperson_name || 'TBD'}</div>
+                            <div class="detail-value">${escapeHtml(meeting.chairperson_name || 'TBD')}</div>
                         </div>
                         <div class="detail-row">
                             <div class="detail-label">Created By:</div>
-                            <div class="detail-value">${meeting.created_by_name}</div>
+                            <div class="detail-value">${escapeHtml(meeting.created_by_name)}</div>
                         </div>
                         ${meeting.agenda ? `
                         <div class="detail-row">
                             <div class="detail-label">Agenda:</div>
-                            <div class="detail-value">${meeting.agenda}</div>
+                            <div class="detail-value">${escapeHtml(meeting.agenda)}</div>
                         </div>
                         ` : ''}
                         ${meeting.minutes ? `
                         <div class="detail-row">
                             <div class="detail-label">Minutes:</div>
-                            <div class="detail-value">${meeting.minutes}</div>
+                            <div class="detail-value">${escapeHtml(meeting.minutes)}</div>
                         </div>
                         ` : ''}
                         <div class="detail-row">
                             <div class="detail-label">Your Attendance:</div>
                             <div class="detail-value">
                                 ${meeting.attendance_status ? `
-                                    <span class="attendance-badge attendance-${meeting.attendance_status}">
+                                    <span class="attendance-badge ${getAttendanceClass(meeting.attendance_status)}">
                                         ${meeting.attendance_status.charAt(0).toUpperCase() + meeting.attendance_status.slice(1)}
                                     </span>
-                                    ${meeting.check_in_time ? `<br><small>Checked in at ${new Date(meeting.check_in_time).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small>` : ''}
+                                    ${meeting.check_in_time ? `<br><small>Checked in at ${new Date(meeting.check_in_time).toLocaleString()}</small>` : ''}
                                 ` : `
                                     <span class="attendance-badge attendance-pending">
                                         Attendance Pending
@@ -1486,7 +1709,7 @@ try {
                         ${meeting.attendance_notes ? `
                         <div class="detail-row">
                             <div class="detail-label">Attendance Notes:</div>
-                            <div class="detail-value">${meeting.attendance_notes}</div>
+                            <div class="detail-value">${escapeHtml(meeting.attendance_notes)}</div>
                         </div>
                         ` : ''}
                     </div>
@@ -1497,40 +1720,92 @@ try {
             }
         }
 
+        // Helper functions for JavaScript
+        function formatTime(time) {
+            if (!time) return 'TBD';
+            return new Date('1970-01-01T' + time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function getStatusClass(status) {
+            const classes = {
+                'scheduled': 'status-scheduled',
+                'ongoing': 'status-ongoing',
+                'completed': 'status-completed',
+                'cancelled': 'status-cancelled',
+                'postponed': 'status-postponed'
+            };
+            return classes[status] || 'status-scheduled';
+        }
+
+        function getTypeClass(type) {
+            const classes = {
+                'general': 'type-general',
+                'executive': 'type-executive',
+                'committee': 'type-committee',
+                'emergency': 'type-emergency',
+                'planning': 'type-planning'
+            };
+            return classes[type] || 'type-general';
+        }
+
+        function getAttendanceClass(status) {
+            if (!status) return 'attendance-pending';
+            const classes = {
+                'present': 'attendance-present',
+                'absent': 'attendance-absent',
+                'excused': 'attendance-excused'
+            };
+            return classes[status] || 'attendance-pending';
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // Close modal on outside click
         window.addEventListener('click', function(event) {
-            const modals = document.querySelectorAll('.modal');
-            modals.forEach(modal => {
-                if (event.target === modal) {
-                    modal.classList.remove('active');
-                }
-            });
+            const modal = document.getElementById('meetingDetailsModal');
+            if (event.target === modal) {
+                modal.classList.remove('active');
+                document.body.style.overflow = '';
+            }
         });
 
-        // Make meeting cards clickable to view details
+        // Initialize Chart
         document.addEventListener('DOMContentLoaded', function() {
-            const meetingCards = document.querySelectorAll('.meeting-card');
-            meetingCards.forEach(card => {
-                card.style.cursor = 'pointer';
-                card.addEventListener('click', function() {
-                    const meetingId = this.getAttribute('data-meeting-id');
-                    if (meetingId) {
-                        viewMeetingDetails(meetingId);
-                    }
-                });
-            });
-        });
-
-        // Add meeting IDs to cards for click functionality
-        document.addEventListener('DOMContentLoaded', function() {
-            const meetingCards = document.querySelectorAll('.meeting-card');
-            const meetings = <?php echo json_encode($meetings); ?>;
-            
-            meetingCards.forEach((card, index) => {
-                if (meetings[index]) {
-                    card.setAttribute('data-meeting-id', meetings[index].id);
+            const meetingsByType = <?php echo json_encode($meetings_by_type); ?>;
+            if (meetingsByType && meetingsByType.length > 0) {
+                const ctx = document.getElementById('meetingsByTypeChart');
+                if (ctx) {
+                    new Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: meetingsByType.map(m => m.meeting_type.charAt(0).toUpperCase() + m.meeting_type.slice(1)),
+                            datasets: [{
+                                data: meetingsByType.map(m => m.count),
+                                backgroundColor: ['#1976D2', '#2196F3', '#64B5F6', '#90CAF9', '#BBDEFB'],
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: {
+                                        boxWidth: 10,
+                                        font: { size: 10 }
+                                    }
+                                }
+                            }
+                        }
+                    });
                 }
-            });
+            }
         });
     </script>
 </body>

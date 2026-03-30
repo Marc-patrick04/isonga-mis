@@ -26,7 +26,7 @@ try {
     exit();
 }
 
-// Get dashboard statistics for sidebar
+// Get dashboard statistics for sidebar (PostgreSQL compatible)
 try {
     // Total arbitration cases
     $stmt = $pdo->query("SELECT COUNT(*) as total_cases FROM arbitration_cases");
@@ -36,41 +36,80 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as pending_cases FROM arbitration_cases WHERE status IN ('filed', 'under_review')");
     $pending_cases = $stmt->fetch(PDO::FETCH_ASSOC)['pending_cases'] ?? 0;
     
-    // Upcoming hearings
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_hearings FROM arbitration_hearings WHERE hearing_date >= CURDATE() AND status = 'scheduled'");
+    // Upcoming hearings (PostgreSQL uses CURRENT_DATE)
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_hearings FROM arbitration_hearings WHERE hearing_date >= CURRENT_DATE AND status = 'scheduled'");
     $upcoming_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_hearings'] ?? 0;
     
     // Active elections
     $stmt = $pdo->query("SELECT COUNT(*) as active_elections FROM elections WHERE status IN ('nomination', 'campaign', 'voting')");
     $active_elections = $stmt->fetch(PDO::FETCH_ASSOC)['active_elections'] ?? 0;
     
-    // Recent case notes count
-    $stmt = $pdo->query("SELECT COUNT(*) as recent_notes FROM case_notes WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    // Recent case notes count (PostgreSQL uses INTERVAL)
+    $stmt = $pdo->query("SELECT COUNT(*) as recent_notes FROM case_notes WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'");
     $recent_notes = $stmt->fetch(PDO::FETCH_ASSOC)['recent_notes'] ?? 0;
     
     // Recent documents count
-    $stmt = $pdo->query("SELECT COUNT(*) as recent_docs FROM case_documents WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    $stmt = $pdo->query("SELECT COUNT(*) as recent_docs FROM case_documents WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'");
     $recent_docs = $stmt->fetch(PDO::FETCH_ASSOC)['recent_docs'] ?? 0;
     
     // Get unread messages count
     $stmt = $pdo->prepare("
-        SELECT COUNT(*) as unread_messages 
+        SELECT COUNT(*) as unread_count 
         FROM conversation_messages cm
         JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
         WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
     ");
     $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'];
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+    
+    // Get sidebar additional stats
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
+    $total_reps = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
+    $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
+    
+    // Check for meeting_minutes table
+    $stmt = $pdo->query("
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_name = 'meeting_minutes'
+        ) as table_exists
+    ");
+    $meeting_minutes_exists = $stmt->fetch(PDO::FETCH_ASSOC)['table_exists'] ?? false;
+    
+    $pending_minutes = 0;
+    if ($meeting_minutes_exists) {
+        $stmt = $pdo->prepare("SELECT COUNT(*) as pending_minutes FROM meeting_minutes WHERE approval_status = 'draft' AND prepared_by = ?");
+        $stmt->execute([$user_id]);
+        $pending_minutes = $stmt->fetch(PDO::FETCH_ASSOC)['pending_minutes'] ?? 0;
+    }
+    
+    // Check for rep_meetings table
+    $stmt = $pdo->query("
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_name = 'rep_meetings'
+        ) as rep_meetings_exists
+    ");
+    $rep_meetings_exists = $stmt->fetch(PDO::FETCH_ASSOC)['rep_meetings_exists'] ?? false;
+    
+    $upcoming_rep_meetings = 0;
+    if ($rep_meetings_exists) {
+        $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+        $upcoming_rep_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
+    }
     
 } catch (PDOException $e) {
-    $total_cases = $pending_cases = $upcoming_hearings = $active_elections = $unread_messages = $recent_notes = $recent_docs = 0;
     error_log("Dashboard stats error: " . $e->getMessage());
+    $total_cases = $pending_cases = $upcoming_hearings = $active_elections = $unread_messages = $recent_notes = $recent_docs = 0;
+    $total_reps = $pending_reports = $pending_minutes = $upcoming_rep_meetings = 0;
 }
 
 // Get active tab from URL
 $active_tab = $_GET['tab'] ?? 'profile';
 
-// Handle form submissions
+// Handle form submissions (PostgreSQL uses CURRENT_TIMESTAMP)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     
@@ -110,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE users 
                     SET full_name = ?, email = ?, phone = ?, date_of_birth = ?, gender = ?, 
                         bio = ?, address = ?, emergency_contact_name = ?, emergency_contact_phone = ?,
-                        updated_at = NOW()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([
@@ -159,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Update password
                 $stmt = $pdo->prepare("
                     UPDATE users 
-                    SET password = ?, last_password_change = NOW(), updated_at = NOW()
+                    SET password = ?, last_password_change = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$new_password, $user_id]);
@@ -168,15 +207,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
                 
             case 'update_preferences':
-                $email_notifications = isset($_POST['email_notifications']) ? 1 : 0;
-                $sms_notifications = isset($_POST['sms_notifications']) ? 1 : 0;
+                $email_notifications = isset($_POST['email_notifications']) ? true : false;
+                $sms_notifications = isset($_POST['sms_notifications']) ? true : false;
                 $preferred_language = $_POST['preferred_language'] ?? 'en';
                 $theme_preference = $_POST['theme_preference'] ?? 'auto';
                 
                 $stmt = $pdo->prepare("
                     UPDATE users 
                     SET email_notifications = ?, sms_notifications = ?, 
-                        preferred_language = ?, theme_preference = ?, updated_at = NOW()
+                        preferred_language = ?, theme_preference = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$email_notifications, $sms_notifications, $preferred_language, $theme_preference, $user_id]);
@@ -218,7 +257,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (move_uploaded_file($avatar['tmp_name'], $file_path)) {
                         // Update database with relative path
                         $avatar_url = 'assets/uploads/avatars/' . $filename;
-                        $stmt = $pdo->prepare("UPDATE users SET avatar_url = ?, updated_at = NOW() WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE users SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([$avatar_url, $user_id]);
                         
                         $_SESSION['success'] = "Profile picture updated successfully";
@@ -234,13 +273,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
             case 'enable_2fa':
                 // In a real implementation, this would set up 2FA
-                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = TRUE, updated_at = NOW() WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                 $stmt->execute([$user_id]);
                 $_SESSION['success'] = "Two-factor authentication enabled successfully";
                 break;
                 
             case 'disable_2fa':
-                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = FALSE, updated_at = NOW() WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                 $stmt->execute([$user_id]);
                 $_SESSION['success'] = "Two-factor authentication disabled successfully";
                 break;
@@ -256,6 +295,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
     } catch (PDOException $e) {
         $_SESSION['error'] = "Action failed: " . $e->getMessage();
+        error_log("Profile action error: " . $e->getMessage());
     }
 }
 
@@ -278,10 +318,10 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Profile & Settings - Arbitration Secretary - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
@@ -298,6 +338,10 @@ try {
             --warning: #ffc107;
             --danger: #dc3545;
             --info: #17a2b8;
+            --purple: #6f42c1;
+            --teal: #20c997;
+            --indigo: #6610f2;
+            --orange: #fd7e14;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -305,6 +349,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -321,6 +367,10 @@ try {
             --warning: #ffb74d;
             --danger: #f44336;
             --info: #29b6f6;
+            --purple: #9c27b0;
+            --teal: #009688;
+            --indigo: #3f51b5;
+            --orange: #ff9800;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
         }
 
@@ -344,14 +394,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -361,7 +408,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -382,26 +428,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -409,22 +467,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -433,12 +476,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -449,25 +491,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -477,50 +518,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -550,9 +626,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -573,7 +647,7 @@ try {
 
         .menu-section {
             padding: 0.75rem 1.5rem;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             color: var(--dark-gray);
             text-transform: uppercase;
@@ -582,9 +656,15 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .container {
@@ -597,7 +677,7 @@ try {
         }
 
         .page-title h1 {
-            font-size: 1.75rem;
+            font-size: 1.5rem;
             font-weight: 700;
             color: var(--text-dark);
             margin-bottom: 0.5rem;
@@ -614,6 +694,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1.5rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -734,7 +817,7 @@ try {
         }
 
         .stat-label {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -747,6 +830,7 @@ try {
             display: flex;
             border-bottom: 1px solid var(--medium-gray);
             margin-bottom: 2rem;
+            flex-wrap: wrap;
         }
 
         .profile-tab {
@@ -758,7 +842,7 @@ try {
             transition: var(--transition);
             border-bottom: 2px solid transparent;
             font-size: 0.9rem;
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
         }
@@ -790,7 +874,7 @@ try {
         }
 
         .form-section h4 {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
             margin-bottom: 1rem;
@@ -830,7 +914,7 @@ try {
         .form-control:focus {
             outline: none;
             border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
         }
 
         textarea.form-control {
@@ -846,12 +930,18 @@ try {
 
         .checkbox-group input[type="checkbox"] {
             width: auto;
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            margin-bottom: 0;
+            cursor: pointer;
         }
 
         .form-hint {
             display: block;
             margin-top: 0.25rem;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -906,6 +996,7 @@ try {
 
         .btn-secondary:hover {
             background: var(--medium-gray);
+            transform: translateY(-1px);
         }
 
         .modal-actions {
@@ -948,7 +1039,7 @@ try {
         }
 
         .session-meta {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -998,7 +1089,7 @@ try {
         }
 
         .modal-header h3 {
-            font-size: 1.25rem;
+            font-size: 1.2rem;
             font-weight: 600;
             color: var(--text-dark);
         }
@@ -1058,48 +1149,120 @@ try {
             margin-bottom: 0.5rem;
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
             .profile-container {
                 grid-template-columns: 1fr;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
             .profile-tabs {
                 flex-wrap: wrap;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
             }
         }
 
         @media (max-width: 480px) {
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
             .profile-stats {
                 grid-template-columns: 1fr;
             }
@@ -1107,10 +1270,16 @@ try {
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1123,7 +1292,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1153,7 +1325,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-                      <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1165,24 +1340,36 @@ try {
                     <a href="cases.php">
                         <i class="fas fa-balance-scale"></i>
                         <span>All Cases</span>
+                        <?php if ($pending_cases > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_cases; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="case-notes.php">
                         <i class="fas fa-sticky-note"></i>
                         <span>Case Notes</span>
+                        <?php if ($recent_notes > 0): ?>
+                            <span class="menu-badge"><?php echo $recent_notes; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="documents.php">
                         <i class="fas fa-file-contract"></i>
                         <span>Documents</span>
+                        <?php if ($recent_docs > 0): ?>
+                            <span class="menu-badge"><?php echo $recent_docs; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="elections.php">
                         <i class="fas fa-vote-yea"></i>
                         <span>Elections</span>
+                        <?php if ($active_elections > 0): ?>
+                            <span class="menu-badge"><?php echo $active_elections; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1201,6 +1388,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1212,7 +1402,7 @@ try {
             </ul>
         </nav>
 
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="container">
                 <!-- Page Header -->
                 <div class="page-header">
@@ -1224,13 +1414,13 @@ try {
 
                 <?php if (isset($_SESSION['success'])): ?>
                     <div class="alert alert-success">
-                        <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
+                        <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
                     </div>
                 <?php endif; ?>
 
                 <?php if (isset($_SESSION['error'])): ?>
                     <div class="alert alert-danger">
-                        <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
+                        <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
                     </div>
                 <?php endif; ?>
 
@@ -1255,11 +1445,11 @@ try {
                         
                         <div class="profile-stats">
                             <div class="stat-item">
-                                <div class="stat-number"><?php echo $total_cases; ?></div>
+                                <div class="stat-number"><?php echo number_format($total_cases); ?></div>
                                 <div class="stat-label">Total Cases</div>
                             </div>
                             <div class="stat-item">
-                                <div class="stat-number"><?php echo $pending_cases; ?></div>
+                                <div class="stat-number"><?php echo number_format($pending_cases); ?></div>
                                 <div class="stat-label">Pending Cases</div>
                             </div>
                         </div>
@@ -1457,7 +1647,7 @@ try {
                                         <div class="form-group">
                                             <div class="checkbox-group">
                                                 <input type="checkbox" id="email_notifications" name="email_notifications" value="1" 
-                                                       <?php echo ($user['email_notifications'] ?? 1) ? 'checked' : ''; ?>>
+                                                       <?php echo ($user['email_notifications'] ?? true) ? 'checked' : ''; ?>>
                                                 <label for="email_notifications">Email Notifications</label>
                                             </div>
                                             <small class="form-hint">Receive case updates, hearing notifications, and document alerts via email</small>
@@ -1466,7 +1656,7 @@ try {
                                         <div class="form-group">
                                             <div class="checkbox-group">
                                                 <input type="checkbox" id="sms_notifications" name="sms_notifications" value="1" 
-                                                       <?php echo ($user['sms_notifications'] ?? 1) ? 'checked' : ''; ?>>
+                                                       <?php echo ($user['sms_notifications'] ?? true) ? 'checked' : ''; ?>>
                                                 <label for="sms_notifications">SMS Notifications</label>
                                             </div>
                                             <small class="form-hint">Receive urgent arbitration alerts and hearing reminders via SMS</small>
@@ -1510,8 +1700,8 @@ try {
                                 <div class="form-section">
                                     <h4>Recent Login Activity</h4>
                                     <?php if (empty($login_history)): ?>
-                                        <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                            <i class="fas fa-history" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                        <div class="empty-state">
+                                            <i class="fas fa-history"></i>
                                             <p>No login history available</p>
                                         </div>
                                     <?php else: ?>
@@ -1525,7 +1715,7 @@ try {
                                                         <?php echo htmlspecialchars($session['ip_address']); ?>
                                                     </div>
                                                     <div class="session-meta">
-                                                        <?php echo htmlspecialchars($session['user_agent']); ?> • 
+                                                        <?php echo htmlspecialchars(substr($session['user_agent'] ?? '', 0, 50)); ?> • 
                                                         <?php echo date('F j, Y g:i A', strtotime($session['login_time'])); ?>
                                                     </div>
                                                 </div>
@@ -1541,7 +1731,7 @@ try {
                                     <h4>Current Session</h4>
                                     <div style="padding: 1rem; background: var(--light-blue); border-radius: var(--border-radius);">
                                         <p><strong>IP Address:</strong> <?php echo $_SERVER['REMOTE_ADDR']; ?></p>
-                                        <p><strong>User Agent:</strong> <?php echo htmlspecialchars($_SERVER['HTTP_USER_AGENT']); ?></p>
+                                        <p><strong>User Agent:</strong> <?php echo htmlspecialchars(substr($_SERVER['HTTP_USER_AGENT'], 0, 100)); ?></p>
                                         <p><strong>Session Started:</strong> <?php echo date('F j, Y g:i A'); ?></p>
                                     </div>
                                 </div>
@@ -1591,10 +1781,86 @@ try {
     </div>
 
     <script>
+        // Dark Mode Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const body = document.body;
+
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        if (savedTheme === 'dark') {
+            body.classList.add('dark-mode');
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        }
+
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Profile Management JavaScript
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded - initializing profile scripts');
-            
             // Modal elements
             const avatarModal = document.getElementById('avatarModal');
             const avatarUploadBtn = document.getElementById('avatarUploadBtn');
@@ -1604,45 +1870,32 @@ try {
             const uploadBtn = document.getElementById('uploadBtn');
             const uploadError = document.getElementById('uploadError');
 
-            // Debug logging
-            console.log('Avatar Modal:', avatarModal);
-            console.log('Avatar Upload Button:', avatarUploadBtn);
-            console.log('Avatar Form:', avatarForm);
-            console.log('Avatar Input:', avatarInput);
-
             // Close modals
             closeButtons.forEach(btn => {
                 btn.addEventListener('click', function() {
-                    console.log('Close button clicked');
                     closeAllModals();
                 });
             });
 
             window.addEventListener('click', function(event) {
-                if (event.target.classList.contains('modal')) {
-                    console.log('Modal background clicked');
+                if (event.target === avatarModal) {
                     closeAllModals();
                 }
             });
 
-            // Avatar upload trigger - FIXED
+            // Avatar upload trigger
             if (avatarUploadBtn) {
                 avatarUploadBtn.addEventListener('click', function(e) {
-                    console.log('Avatar upload button clicked');
                     e.preventDefault();
                     e.stopPropagation();
-                    avatarModal.style.display = 'block';
-                    document.body.style.overflow = 'hidden'; // Prevent background scrolling
+                    if (avatarModal) avatarModal.style.display = 'block';
+                    document.body.style.overflow = 'hidden';
                 });
-            } else {
-                console.error('Avatar upload button not found!');
             }
 
             // Avatar form validation
             if (avatarForm) {
                 avatarForm.addEventListener('submit', function(e) {
-                    console.log('Avatar form submitted');
-                    
                     if (!avatarInput.files.length) {
                         e.preventDefault();
                         showUploadError('Please select a file to upload');
@@ -1650,7 +1903,7 @@ try {
                     }
 
                     const file = avatarInput.files[0];
-                    const maxSize = 2 * 1024 * 1024; // 2MB
+                    const maxSize = 2 * 1024 * 1024;
 
                     if (file.size > maxSize) {
                         e.preventDefault();
@@ -1658,41 +1911,26 @@ try {
                         return false;
                     }
 
-                    // Show loading state
-                    uploadBtn.disabled = true;
-                    uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-                    
-                    console.log('Form submission proceeding...');
+                    if (uploadBtn) {
+                        uploadBtn.disabled = true;
+                        uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+                    }
                 });
             }
 
             // File input change handler
             if (avatarInput) {
                 avatarInput.addEventListener('change', function(e) {
-                    console.log('File input changed');
                     hideUploadError();
                     const file = e.target.files[0];
                     
                     if (file) {
-                        console.log('File selected:', file.name, file.type, file.size);
-                        
-                        // Validate file type
                         const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/jpg'];
                         if (!allowedTypes.includes(file.type)) {
                             showUploadError('Please select a valid image file (JPG, PNG, GIF)');
                             avatarInput.value = '';
                             return;
                         }
-
-                        // Validate file size
-                        const maxSize = 2 * 1024 * 1024;
-                        if (file.size > maxSize) {
-                            showUploadError('File size must be less than 2MB');
-                            avatarInput.value = '';
-                            return;
-                        }
-
-                        previewAvatar(this);
                     }
                 });
             }
@@ -1701,7 +1939,6 @@ try {
             const fileUploadLabel = document.querySelector('.file-upload');
             if (fileUploadLabel) {
                 fileUploadLabel.addEventListener('click', function(e) {
-                    console.log('File upload label clicked');
                     if (avatarInput) {
                         avatarInput.click();
                     }
@@ -1710,24 +1947,17 @@ try {
 
             // Functions
             function closeAllModals() {
-                console.log('Closing all modals');
-                if (avatarModal) {
-                    avatarModal.style.display = 'none';
-                }
-                document.body.style.overflow = ''; // Restore scrolling
-                hideUploadError();
-                // Reset form
-                if (avatarInput) {
-                    avatarInput.value = '';
-                }
+                if (avatarModal) avatarModal.style.display = 'none';
+                document.body.style.overflow = '';
+                if (avatarInput) avatarInput.value = '';
                 if (uploadBtn) {
                     uploadBtn.disabled = false;
                     uploadBtn.innerHTML = 'Update Picture';
                 }
+                hideUploadError();
             }
 
             function showUploadError(message) {
-                console.log('Upload error:', message);
                 if (uploadError) {
                     uploadError.textContent = message;
                     uploadError.style.display = 'block';
@@ -1735,72 +1965,41 @@ try {
             }
 
             function hideUploadError() {
-                if (uploadError) {
-                    uploadError.style.display = 'none';
-                }
+                if (uploadError) uploadError.style.display = 'none';
             }
 
-            // Dark mode toggle - FIXED
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            if (themeToggle) {
-                console.log('Theme toggle found');
-                
-                // Check for saved theme or prefer system theme
-                const savedTheme = localStorage.getItem('theme');
-                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                
-                let currentTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
-                
-                // Apply theme
-                if (currentTheme === 'dark') {
-                    body.classList.add('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                    themeToggle.title = 'Switch to Light Mode';
-                } else {
-                    body.classList.remove('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                    themeToggle.title = 'Switch to Dark Mode';
+            // Add loading animations
+            const cards = document.querySelectorAll('.profile-container, .profile-sidebar, .profile-content');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
                 }
-
-                themeToggle.addEventListener('click', () => {
-                    body.classList.toggle('dark-mode');
-                    const isDark = body.classList.contains('dark-mode');
-                    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                    
-                    if (isDark) {
-                        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        themeToggle.title = 'Switch to Light Mode';
-                    } else {
-                        themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        themeToggle.title = 'Switch to Dark Mode';
-                    }
-                    
-                    console.log('Theme changed to:', isDark ? 'dark' : 'light');
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
                 });
-
-                // Listen for system theme changes
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-                    if (!localStorage.getItem('theme')) {
-                        if (e.matches) {
-                            body.classList.add('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        } else {
-                            body.classList.remove('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        }
-                    }
-                });
-            } else {
-                console.error('Theme toggle button not found!');
-            }
+            }, 500);
         });
 
         // Tab switching
         function switchTab(tabName) {
-            console.log('Switching to tab:', tabName);
-            
             // Update URL without reload
             const url = new URL(window.location);
             url.searchParams.set('tab', tabName);
@@ -1823,8 +2022,9 @@ try {
             }
             
             // Activate selected tab button
-            if (event && event.target) {
-                event.target.classList.add('active');
+            const activeButton = document.querySelector(`.profile-tab[onclick="switchTab('${tabName}')"]`);
+            if (activeButton) {
+                activeButton.classList.add('active');
             }
         }
 
@@ -1868,8 +2068,8 @@ try {
 
         // Form validation
         document.getElementById('passwordForm')?.addEventListener('submit', function(e) {
-            const newPassword = document.getElementById('new_password').value;
-            const confirmPassword = document.getElementById('confirm_password').value;
+            const newPassword = document.getElementById('new_password')?.value;
+            const confirmPassword = document.getElementById('confirm_password')?.value;
             
             if (newPassword !== confirmPassword) {
                 e.preventDefault();
@@ -1877,15 +2077,12 @@ try {
                 return false;
             }
             
-            if (newPassword.length < 8) {
+            if (newPassword && newPassword.length < 8) {
                 e.preventDefault();
                 alert('Password must be at least 8 characters long');
                 return false;
             }
         });
-
-        // Debug helper
-        console.log('Profile scripts loaded successfully');
     </script>
 </body>
 </html>

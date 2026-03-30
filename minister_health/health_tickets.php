@@ -20,6 +20,107 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get sidebar statistics
+try {
+    // Total tickets
+    $stmt = $pdo->query("SELECT COUNT(*) as total_tickets FROM tickets");
+    $total_tickets_all = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'] ?? 0;
+    
+    // Open tickets
+    $stmt = $pdo->query("SELECT COUNT(*) as open_tickets FROM tickets WHERE status = 'open'");
+    $open_tickets_all = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'] ?? 0;
+    
+    // Pending reports
+    $pending_reports = 0;
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'");
+        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_reports = 0;
+    }
+    
+    // Unread messages
+    $unread_messages = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_count 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+    }
+    
+    // New students count
+    $new_students = 0;
+    try {
+        $new_students_stmt = $pdo->prepare("
+            SELECT COUNT(*) as new_students 
+            FROM users 
+            WHERE role = 'student' 
+            AND status = 'active' 
+            AND created_at >= NOW() - INTERVAL '7 days'
+        ");
+        $new_students_stmt->execute();
+        $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+    } catch (PDOException $e) {
+        $new_students = 0;
+    }
+    
+    // Upcoming meetings count
+    $upcoming_meetings = 0;
+    try {
+        $upcoming_meetings = $pdo->query("
+            SELECT COUNT(*) as count FROM meetings 
+            WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $upcoming_meetings = 0;
+    }
+    
+    // Pending minutes count
+    $pending_minutes = 0;
+    try {
+        $pending_minutes = $pdo->query("
+            SELECT COUNT(*) as count FROM meeting_minutes 
+            WHERE approval_status = 'submitted'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_minutes = 0;
+    }
+    
+    // Pending tickets for badge
+    $pending_tickets_badge = 0;
+    try {
+        $ticketStmt = $pdo->prepare("
+            SELECT COUNT(*) as pending_tickets 
+            FROM tickets 
+            WHERE status IN ('open', 'in_progress') 
+            AND (assigned_to = ? OR assigned_to IS NULL)
+        ");
+        $ticketStmt->execute([$user_id]);
+        $pending_tickets_badge = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_tickets_badge = 0;
+    }
+    
+    // Pending documents
+    $pending_docs = 0;
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as pending_docs FROM documents WHERE status = 'draft'");
+        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_docs = 0;
+    }
+    
+} catch (PDOException $e) {
+    $total_tickets_all = $open_tickets_all = $pending_reports = $unread_messages = 0;
+    $new_students = $upcoming_meetings = $pending_minutes = $pending_tickets_badge = $pending_docs = 0;
+}
+
 // Handle ticket actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -46,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
             case 'add_comment':
                 $comment = $_POST['comment'];
-                $is_internal = $_POST['is_internal'] ?? 0;
+                $is_internal = isset($_POST['is_internal']) ? 1 : 0;
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -97,7 +198,7 @@ $category_filter = $_GET['category'] ?? 'all';
 $priority_filter = $_GET['priority'] ?? 'all';
 $search = $_GET['search'] ?? '';
 
-// Build query for tickets
+// Build query for tickets (PostgreSQL compatible)
 $query = "
     SELECT t.*, 
            ic.name as category_name,
@@ -111,7 +212,7 @@ $query = "
     LEFT JOIN departments d ON u_student.department_id = d.id
     LEFT JOIN programs p ON u_student.program_id = p.id
     LEFT JOIN users u_assigned ON t.assigned_to = u_assigned.id
-    WHERE t.category_id IN (2, 4, 10)  -- Accommodation, Health, Other
+    WHERE t.category_id IN (2, 4, 10)
 ";
 
 $params = [];
@@ -133,7 +234,7 @@ if ($priority_filter !== 'all') {
 }
 
 if (!empty($search)) {
-    $query .= " AND (t.name LIKE ? OR t.reg_number LIKE ? OR t.subject LIKE ? OR t.description LIKE ?)";
+    $query .= " AND (t.name ILIKE ? OR t.reg_number ILIKE ? OR t.subject ILIKE ? OR t.description ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -149,9 +250,10 @@ $query .= " ORDER BY
         ELSE 4
     END,
     CASE 
-        WHEN t.priority = 'high' THEN 1
-        WHEN t.priority = 'medium' THEN 2
-        ELSE 3
+        WHEN t.priority = 'urgent' THEN 1
+        WHEN t.priority = 'high' THEN 2
+        WHEN t.priority = 'medium' THEN 3
+        ELSE 4
     END,
     t.created_at DESC";
 
@@ -197,7 +299,7 @@ try {
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as high_count 
         FROM tickets 
-        WHERE category_id IN (2, 4, 10) AND priority = 'high' AND status IN ('open', 'in_progress')
+        WHERE category_id IN (2, 4, 10) AND priority IN ('high', 'urgent') AND status IN ('open', 'in_progress')
     ");
     $stmt->execute();
     $high_priority = $stmt->fetch(PDO::FETCH_ASSOC)['high_count'] ?? 0;
@@ -227,6 +329,7 @@ try {
         LEFT JOIN committee_members cm ON u.id = cm.user_id
         WHERE u.role IN ('minister_health', 'vice_guild_academic', 'general_secretary', 'minister_gender')
         AND u.status = 'active'
+        ORDER BY u.full_name
     ");
     $stmt->execute();
     $committee_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -241,7 +344,7 @@ $ticket_comments = [];
 $ticket_assignments = [];
 
 if (isset($_GET['view']) && is_numeric($_GET['view'])) {
-    $ticket_id = $_GET['view'];
+    $ticket_id = (int)$_GET['view'];
     
     try {
         // Get ticket details
@@ -264,40 +367,52 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         $stmt->execute([$ticket_id]);
         $view_ticket = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Get ticket comments
-        $stmt = $pdo->prepare("
-            SELECT tc.*, u.full_name, u.role
-            FROM ticket_comments tc
-            LEFT JOIN users u ON tc.user_id = u.id
-            WHERE tc.ticket_id = ?
-            ORDER BY tc.created_at ASC
-        ");
-        $stmt->execute([$ticket_id]);
-        $ticket_comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // Get ticket assignment history
-        $stmt = $pdo->prepare("
-            SELECT ta.*, u_assigned.full_name as assigned_to_name, u_assigned_by.full_name as assigned_by_name
-            FROM ticket_assignments ta
-            LEFT JOIN users u_assigned ON ta.assigned_to = u_assigned.id
-            LEFT JOIN users u_assigned_by ON ta.assigned_by = u_assigned_by.id
-            WHERE ta.ticket_id = ?
-            ORDER BY ta.assigned_at DESC
-        ");
-        $stmt->execute([$ticket_id]);
-        $ticket_assignments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if ($view_ticket) {
+            // Get ticket comments
+            $stmt = $pdo->prepare("
+                SELECT tc.*, u.full_name, u.role
+                FROM ticket_comments tc
+                LEFT JOIN users u ON tc.user_id = u.id
+                WHERE tc.ticket_id = ?
+                ORDER BY tc.created_at ASC
+            ");
+            $stmt->execute([$ticket_id]);
+            $ticket_comments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Get ticket assignment history
+            $stmt = $pdo->prepare("
+                SELECT ta.*, u_assigned.full_name as assigned_to_name, u_assigned_by.full_name as assigned_by_name
+                FROM ticket_assignments ta
+                LEFT JOIN users u_assigned ON ta.assigned_to = u_assigned.id
+                LEFT JOIN users u_assigned_by ON ta.assigned_by = u_assigned_by.id
+                WHERE ta.ticket_id = ?
+                ORDER BY ta.assigned_at DESC
+            ");
+            $stmt->execute([$ticket_id]);
+            $ticket_assignments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
         
     } catch (PDOException $e) {
         error_log("Ticket view error: " . $e->getMessage());
         $_SESSION['error_message'] = "Error loading ticket details.";
     }
 }
+
+// Success/Error messages from session
+if (isset($_SESSION['success_message'])) {
+    $success_message = $_SESSION['success_message'];
+    unset($_SESSION['success_message']);
+}
+if (isset($_SESSION['error_message'])) {
+    $error_message = $_SESSION['error_message'];
+    unset($_SESSION['error_message']);
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Health Tickets Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -324,6 +439,8 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -363,14 +480,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -380,7 +494,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -389,38 +502,44 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -428,22 +547,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -452,41 +556,32 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -496,50 +591,85 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -569,9 +699,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -586,16 +714,25 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
-            margin-bottom: 1.5rem;
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title {
@@ -607,23 +744,18 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .page-description {
             color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
-        .page-actions {
-            display: flex;
-            gap: 0.75rem;
+            font-size: 0.85rem;
         }
 
         .btn {
             padding: 0.6rem 1.2rem;
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
-            font-size: 0.85rem;
             border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
             cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -635,19 +767,19 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
+            transform: translateY(-1px);
             box-shadow: var(--shadow-md);
         }
 
         .btn-outline {
             background: transparent;
-            border: 1px solid var(--primary-green);
-            color: var(--primary-green);
+            border: 1px solid var(--medium-gray);
+            color: var(--text-dark);
         }
 
         .btn-outline:hover {
-            background: var(--primary-green);
-            color: white;
+            border-color: var(--primary-green);
+            color: var(--primary-green);
         }
 
         /* Stats Grid */
@@ -663,7 +795,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -692,13 +824,14 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -713,7 +846,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -731,7 +864,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -739,24 +872,24 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        /* Filters */
+        /* Filters Card */
         .filters-card {
             background: var(--white);
-            padding: 1.25rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
+            padding: 1.25rem;
             margin-bottom: 1.5rem;
         }
 
         .filter-form {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
-            align-items: end;
+            align-items: flex-end;
         }
 
         .form-group {
@@ -768,7 +901,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         .form-label {
             font-weight: 600;
             color: var(--text-dark);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
         }
 
         .form-select, .form-input {
@@ -777,28 +910,31 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             border-radius: var(--border-radius);
             background: var(--white);
             color: var(--text-dark);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             transition: var(--transition);
         }
 
         .form-select:focus, .form-input:focus {
             outline: none;
             border-color: var(--primary-green);
-            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+            box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.1);
         }
 
         .filter-actions {
             display: flex;
             gap: 0.75rem;
-            align-items: center;
         }
 
-        /* Tables */
+        /* Table Container */
         .table-container {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
         }
 
         .table {
@@ -820,6 +956,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -830,59 +971,45 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .status-open {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-in_progress {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-closed {
-            background: #f8d7da;
-            color: var(--danger);
+            background: #e2e3e5;
+            color: #383d41;
         }
 
+        /* Priority Badges */
         .priority-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
             font-size: 0.7rem;
             font-weight: 600;
         }
 
-        .priority-high {
+        .priority-urgent, .priority-high {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
-        }
-
-        .action-btn {
-            padding: 0.25rem 0.5rem;
-            border: none;
-            background: none;
-            color: var(--primary-green);
-            cursor: pointer;
-            border-radius: 4px;
-            transition: var(--transition);
-            font-size: 0.8rem;
-        }
-
-        .action-btn:hover {
-            background: var(--light-green);
+            color: #155724;
         }
 
         /* Ticket View */
@@ -894,13 +1021,13 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .ticket-header {
-            padding: 1.25rem;
+            padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
-            background: var(--light-gray);
+            background: var(--light-green);
         }
 
         .ticket-title {
-            font-size: 1.25rem;
+            font-size: 1rem;
             font-weight: 700;
             color: var(--text-dark);
             margin-bottom: 0.5rem;
@@ -910,7 +1037,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             display: flex;
             gap: 1rem;
             flex-wrap: wrap;
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
@@ -919,6 +1046,13 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             display: grid;
             grid-template-columns: 2fr 1fr;
             gap: 1.5rem;
+        }
+
+        @media (max-width: 992px) {
+            .ticket-body {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
         }
 
         .ticket-details {
@@ -934,26 +1068,31 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .section-title {
-            font-size: 1rem;
+            font-size: 0.9rem;
             font-weight: 600;
             color: var(--text-dark);
-            border-bottom: 1px solid var(--medium-gray);
+            border-bottom: 2px solid var(--light-green);
             padding-bottom: 0.5rem;
         }
 
         .ticket-description {
             line-height: 1.6;
             color: var(--text-dark);
+            font-size: 0.85rem;
+            background: var(--light-gray);
+            padding: 1rem;
+            border-radius: var(--border-radius);
         }
 
+        /* Comments */
         .comments-list {
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .comment-item {
-            padding: 1rem;
+            padding: 0.75rem;
             border-radius: var(--border-radius);
             background: var(--light-gray);
             border-left: 3px solid var(--primary-green);
@@ -964,11 +1103,13 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
         }
 
         .comment-author {
             font-weight: 600;
-            color: var(--text-dark);
+            font-size: 0.8rem;
         }
 
         .comment-time {
@@ -979,6 +1120,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         .comment-content {
             color: var(--text-dark);
             line-height: 1.5;
+            font-size: 0.8rem;
         }
 
         .comment-form {
@@ -988,12 +1130,12 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .form-textarea {
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
             color: var(--text-dark);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             resize: vertical;
             min-height: 100px;
             transition: var(--transition);
@@ -1011,10 +1153,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             gap: 0.5rem;
         }
 
+        /* Ticket Sidebar */
         .ticket-sidebar {
             display: flex;
             flex-direction: column;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .sidebar-card {
@@ -1024,14 +1167,15 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .sidebar-title {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 600;
             color: var(--text-dark);
             margin-bottom: 0.75rem;
         }
 
         .info-grid {
-            display: grid;
+            display: flex;
+            flex-direction: column;
             gap: 0.5rem;
         }
 
@@ -1041,6 +1185,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             align-items: center;
             padding: 0.5rem 0;
             border-bottom: 1px solid var(--medium-gray);
+            font-size: 0.75rem;
         }
 
         .info-item:last-child {
@@ -1050,12 +1195,26 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         .info-label {
             font-weight: 600;
             color: var(--dark-gray);
-            font-size: 0.8rem;
         }
 
         .info-value {
             color: var(--text-dark);
+        }
+
+        /* Action Button */
+        .action-btn {
+            background: none;
+            border: none;
+            color: var(--primary-green);
+            cursor: pointer;
+            padding: 0.25rem;
+            border-radius: 4px;
+            transition: var(--transition);
             font-size: 0.8rem;
+        }
+
+        .action-btn:hover {
+            background: var(--light-green);
         }
 
         /* Alert */
@@ -1064,7 +1223,9 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
-            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -1085,51 +1246,123 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             border-left-color: var(--warning);
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .ticket-body {
-                grid-template-columns: 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-actions {
+                flex-direction: column;
+            }
+
+            .filter-actions .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
-            .page-actions {
-                width: 100%;
-                justify-content: space-between;
+
+            .ticket-meta {
+                flex-direction: column;
+                gap: 0.25rem;
             }
         }
 
@@ -1137,29 +1370,51 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .table {
-                font-size: 0.7rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .table th, .table td {
-                padding: 0.5rem;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title {
+                font-size: 1.2rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Health Tickets</h1>
                 </div>
@@ -1169,8 +1424,14 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1196,8 +1457,10 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-                <!-- Sidebar -->
-              <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1206,17 +1469,18 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="health_tickets.php"  class="active">
+                    <a href="health_tickets.php" class="active">
                         <i class="fas fa-heartbeat"></i>
                         <span>Health Issues</span>
-
+                        <?php if ($pending_tickets_badge > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets_badge; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="hostels.php">
                         <i class="fas fa-bed"></i>
                         <span>Hostel Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1229,7 +1493,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                     <a href="campaigns.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Health Campaigns</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1242,18 +1505,27 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Reports & Analytics</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="meetings.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Meetings</span>
+                        <?php if ($upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1265,43 +1537,33 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
-            <!-- Page Header -->
+        <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div>
-                    <h1 class="page-title">Health & Welfare Tickets</h1>
+                    <h1 class="page-title">Health & Welfare Tickets 🩺</h1>
                     <p class="page-description">Manage student health issues, accommodation problems, and welfare concerns</p>
                 </div>
                 <div class="page-actions">
                     <a href="health_tickets.php" class="btn btn-outline">
                         <i class="fas fa-list"></i> All Tickets
                     </a>
-                    <button class="btn btn-primary" onclick="document.getElementById('exportForm').submit()">
-                        <i class="fas fa-download"></i> Export
-                    </button>
-                    <form id="exportForm" action="export_tickets.php" method="POST" style="display: none;">
-                        <input type="hidden" name="status" value="<?php echo $status_filter; ?>">
-                        <input type="hidden" name="category" value="<?php echo $category_filter; ?>">
-                        <input type="hidden" name="priority" value="<?php echo $priority_filter; ?>">
-                    </form>
                 </div>
             </div>
 
-            <!-- Success/Error Messages -->
-            <?php if (isset($_SESSION['success_message'])): ?>
+            <!-- Alert Messages -->
+            <?php if (isset($success_message)): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i>
+                    <span><?php echo htmlspecialchars($success_message); ?></span>
                 </div>
-                <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
-            <?php if (isset($_SESSION['error_message'])): ?>
+            <?php if (isset($error_message)): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span><?php echo htmlspecialchars($error_message); ?></span>
                 </div>
-                <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
 
             <?php if ($view_ticket): ?>
@@ -1332,7 +1594,9 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                                 <h3 class="section-title">Comments & Updates</h3>
                                 <div class="comments-list">
                                     <?php if (empty($ticket_comments)): ?>
-                                        <p style="color: var(--dark-gray); text-align: center; padding: 2rem;">No comments yet</p>
+                                        <div class="empty-state" style="padding: 1rem;">
+                                            <p>No comments yet</p>
+                                        </div>
                                     <?php else: ?>
                                         <?php foreach ($ticket_comments as $comment): ?>
                                             <div class="comment-item">
@@ -1382,7 +1646,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                                     <input type="hidden" name="action" value="update_status">
                                     <input type="hidden" name="ticket_id" value="<?php echo $view_ticket['id']; ?>">
                                     
-                                    <div class="form-group">
+                                    <div class="form-group" style="margin-bottom: 0.75rem;">
                                         <label class="form-label">Status</label>
                                         <select name="status" class="form-select" onchange="this.form.submit()">
                                             <option value="open" <?php echo $view_ticket['status'] === 'open' ? 'selected' : ''; ?>>Open</option>
@@ -1392,9 +1656,9 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                                         </select>
                                     </div>
                                     
-                                    <div class="form-group">
+                                    <div class="form-group" style="margin-bottom: 0.75rem;">
                                         <label class="form-label">Resolution Notes</label>
-                                        <textarea name="resolution_notes" class="form-textarea" placeholder="Add resolution notes..."><?php echo htmlspecialchars($view_ticket['resolution_notes'] ?? ''); ?></textarea>
+                                        <textarea name="resolution_notes" class="form-textarea" placeholder="Add resolution notes..." style="min-height: 80px;"><?php echo htmlspecialchars($view_ticket['resolution_notes'] ?? ''); ?></textarea>
                                     </div>
                                     
                                     <button type="submit" class="btn btn-primary" style="width: 100%;">
@@ -1419,21 +1683,13 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                                     </div>
                                     <div class="info-item">
                                         <span class="info-label">Status:</span>
-                                        <span class="status-badge status-<?php echo $view_ticket['status']; ?>">
+                                        <span class="status-badge status-<?php echo str_replace('_', '', $view_ticket['status']); ?>">
                                             <?php echo ucfirst(str_replace('_', ' ', $view_ticket['status'])); ?>
                                         </span>
                                     </div>
                                     <div class="info-item">
                                         <span class="info-label">Assigned To:</span>
                                         <span class="info-value"><?php echo htmlspecialchars($view_ticket['assigned_to_name'] ?? 'Unassigned'); ?></span>
-                                    </div>
-                                    <div class="info-item">
-                                        <span class="info-label">Contact:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($view_ticket['email']); ?></span>
-                                    </div>
-                                    <div class="info-item">
-                                        <span class="info-label">Phone:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($view_ticket['phone']); ?></span>
                                     </div>
                                 </div>
                             </div>
@@ -1447,7 +1703,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                                             <div class="info-item">
                                                 <div>
                                                     <div style="font-weight: 600; font-size: 0.75rem;"><?php echo htmlspecialchars($assignment['assigned_to_name']); ?></div>
-                                                    <div style="font-size: 0.7rem; color: var(--dark-gray);">
+                                                    <div style="font-size: 0.65rem; color: var(--dark-gray);">
                                                         <?php echo date('M j, g:i A', strtotime($assignment['assigned_at'])); ?>
                                                     </div>
                                                 </div>
@@ -1464,11 +1720,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                                     <input type="hidden" name="action" value="assign_ticket">
                                     <input type="hidden" name="ticket_id" value="<?php echo $view_ticket['id']; ?>">
                                     
-                                    <div class="form-group">
+                                    <div class="form-group" style="margin-bottom: 0.75rem;">
                                         <select name="assigned_to" class="form-select" required>
                                             <option value="">Select assignee...</option>
                                             <?php foreach ($committee_members as $member): ?>
-                                                <option value="<?php echo $member['id']; ?>" <?php echo $view_ticket['assigned_to'] == $member['id'] ? 'selected' : ''; ?>>
+                                                <option value="<?php echo $member['id']; ?>" <?php echo ($view_ticket['assigned_to'] ?? '') == $member['id'] ? 'selected' : ''; ?>>
                                                     <?php echo htmlspecialchars($member['full_name'] . ' (' . $member['role'] . ')'); ?>
                                                 </option>
                                             <?php endforeach; ?>
@@ -1579,59 +1835,62 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
                 <!-- Tickets Table -->
                 <div class="table-container">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Ticket ID</th>
-                                <th>Student</th>
-                                <th>Subject</th>
-                                <th>Category</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Created</th>
-                                <th>Assigned To</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (empty($tickets)): ?>
+                    <div class="table-wrapper">
+                        <table class="table">
+                            <thead>
                                 <tr>
-                                    <td colspan="9" style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                        No tickets found matching your criteria.
-                                    </td>
+                                    <th>ID</th>
+                                    <th>Student</th>
+                                    <th>Subject</th>
+                                    <th>Category</th>
+                                    <th>Priority</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Assigned To</th>
+                                    <th>Actions</th>
                                 </tr>
-                            <?php else: ?>
-                                <?php foreach ($tickets as $ticket): ?>
+                            </thead>
+                            <tbody>
+                                <?php if (empty($tickets)): ?>
                                     <tr>
-                                        <td>#<?php echo $ticket['id']; ?></td>
-                                        <td>
-                                            <div style="font-weight: 600;"><?php echo htmlspecialchars($ticket['name']); ?></div>
-                                            <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></div>
-                                        </td>
-                                        <td><?php echo htmlspecialchars($ticket['subject']); ?></td>
-                                        <td><?php echo htmlspecialchars($ticket['category_name']); ?></td>
-                                        <td>
-                                            <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
-                                                <?php echo ucfirst($ticket['priority']); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge status-<?php echo $ticket['status']; ?>">
-                                                <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
-                                            </span>
-                                        </td>
-                                        <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
-                                        <td><?php echo htmlspecialchars($ticket['assigned_to_name'] ?? 'Unassigned'); ?></td>
-                                        <td>
-                                            <a href="?view=<?php echo $ticket['id']; ?>" class="action-btn" title="View Ticket">
-                                                <i class="fas fa-eye"></i>
-                                            </a>
+                                        <td colspan="9" class="empty-state">
+                                            <i class="fas fa-ticket-alt"></i>
+                                            <p>No tickets found matching your criteria.</p>
                                         </td>
                                     </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                                <?php else: ?>
+                                    <?php foreach ($tickets as $ticket): ?>
+                                        <tr>
+                                            <td>#<?php echo $ticket['id']; ?></td>
+                                            <td>
+                                                <div style="font-weight: 600;"><?php echo htmlspecialchars($ticket['name']); ?></div>
+                                                <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></div>
+                                            </td>
+                                            <td><?php echo htmlspecialchars($ticket['subject']); ?></td>
+                                            <td><?php echo htmlspecialchars($ticket['category_name']); ?></td>
+                                            <td>
+                                                <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
+                                                    <?php echo ucfirst($ticket['priority']); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <span class="status-badge status-<?php echo str_replace('_', '', $ticket['status']); ?>">
+                                                    <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
+                                                </span>
+                                            </td>
+                                            <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
+                                            <td><?php echo htmlspecialchars($ticket['assigned_to_name'] ?? 'Unassigned'); ?></td>
+                                            <td>
+                                                <a href="?view=<?php echo $ticket['id']; ?>" class="action-btn" title="View Ticket">
+                                                    <i class="fas fa-eye"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             <?php endif; ?>
         </main>
@@ -1642,7 +1901,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1656,12 +1914,66 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh tickets every 2 minutes
-        setInterval(() => {
-            if (!document.querySelector('.ticket-view')) {
-                window.location.reload();
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars</i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             }
-        }, 120000);
+        });
 
         // Add confirmation for critical actions
         document.addEventListener('DOMContentLoaded', function() {

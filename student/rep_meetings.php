@@ -2,8 +2,8 @@
 session_start();
 require_once '../config/database.php';
 
-// Check if user is logged in as student and is class rep
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? 0)) {
+// Check if user is logged in as student and is class rep (PostgreSQL uses true for boolean)
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? false)) {
     header('Location: student_login.php');
     exit();
 }
@@ -27,7 +27,7 @@ if (isset($_POST['toggle_theme'])) {
     exit();
 }
 
-// FIXED: Get upcoming meetings for the class rep
+// Get upcoming meetings for the class rep (PostgreSQL compatible)
 $upcoming_meetings_stmt = $pdo->prepare("
     SELECT 
         rm.*,
@@ -43,18 +43,18 @@ $upcoming_meetings_stmt = $pdo->prepare("
     WHERE rm.meeting_date >= CURRENT_DATE
         AND rm.status IN ('scheduled', 'ongoing')
         AND (
-    rm.required_attendees IS NULL
-    OR rm.required_attendees = '[]'::jsonb
-    OR ? = ANY (SELECT jsonb_array_elements_text(rm.required_attendees))
-    OR (SELECT COUNT(*) FROM users WHERE is_class_rep = '1' AND status = 'active') = jsonb_array_length(rm.required_attendees)
-)
+            rm.required_attendees IS NULL
+            OR rm.required_attendees = '[]'::jsonb
+            OR ? = ANY (SELECT jsonb_array_elements_text(rm.required_attendees))
+            OR (SELECT COUNT(*) FROM users WHERE is_class_rep = true AND status = 'active') = jsonb_array_length(rm.required_attendees)
+        )
     ORDER BY rm.meeting_date ASC, rm.start_time ASC
     LIMIT 10
 ");
 $upcoming_meetings_stmt->execute([$student_id, $student_id]);
 $upcoming_meetings = $upcoming_meetings_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// FIXED: Get past meetings with attendance
+// Get past meetings with attendance (PostgreSQL compatible)
 $past_meetings_stmt = $pdo->prepare("
     SELECT 
         rm.*,
@@ -69,20 +69,18 @@ $past_meetings_stmt = $pdo->prepare("
     WHERE rm.meeting_date < CURRENT_DATE
         AND rm.status IN ('completed', 'cancelled')
         AND (
-           
-    rm.required_attendees IS NULL
-    OR rm.required_attendees = '[]'::jsonb
-    OR ? = ANY (SELECT jsonb_array_elements_text(rm.required_attendees))
-    OR (SELECT COUNT(*) FROM users WHERE is_class_rep = '1' AND status = 'active') = jsonb_array_length(rm.required_attendees)
-)
-        
+            rm.required_attendees IS NULL
+            OR rm.required_attendees = '[]'::jsonb
+            OR ? = ANY (SELECT jsonb_array_elements_text(rm.required_attendees))
+            OR (SELECT COUNT(*) FROM users WHERE is_class_rep = true AND status = 'active') = jsonb_array_length(rm.required_attendees)
+        )
     ORDER BY rm.meeting_date DESC
     LIMIT 10
 ");
 $past_meetings_stmt->execute([$student_id, $student_id]);
 $past_meetings = $past_meetings_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// FIXED: Get meeting statistics
+// Get meeting statistics (PostgreSQL compatible)
 $meeting_stats_stmt = $pdo->prepare("
     SELECT 
         COUNT(DISTINCT rm.id) as total_meetings,
@@ -94,11 +92,11 @@ $meeting_stats_stmt = $pdo->prepare("
     FROM rep_meetings rm
     LEFT JOIN rep_meeting_attendance rma ON rm.id = rma.meeting_id AND rma.user_id = ?
     WHERE (
-    rm.required_attendees IS NULL
-    OR rm.required_attendees = '[]'::jsonb
-    OR ? = ANY (SELECT jsonb_array_elements_text(rm.required_attendees))
-    OR (SELECT COUNT(*) FROM users WHERE is_class_rep = '1' AND status = 'active') = jsonb_array_length(rm.required_attendees)
-)
+        rm.required_attendees IS NULL
+        OR rm.required_attendees = '[]'::jsonb
+        OR ? = ANY (SELECT jsonb_array_elements_text(rm.required_attendees))
+        OR (SELECT COUNT(*) FROM users WHERE is_class_rep = true AND status = 'active') = jsonb_array_length(rm.required_attendees)
+    )
 ");
 $meeting_stats_stmt->execute([$student_id, $student_id]);
 $meeting_stats = $meeting_stats_stmt->fetch(PDO::FETCH_ASSOC);
@@ -152,79 +150,100 @@ function getAttendanceBadge($status) {
 <html lang="en" data-theme="<?php echo $theme; ?>">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Representative Meetings - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
-            --primary: #0056b3; --secondary: #1e88e5; --accent: #0d47a1;
-            --light: #f8f9fa; --white: #fff; --gray: #e9ecef; 
-            --dark-gray: #6c757d; --text: #2c3e50; --success: #28a745;
-            --warning: #ffc107; --danger: #dc3545; --info: #17a2b8;
-            --shadow: 0 4px 12px rgba(0,0,0,0.1); --radius: 8px; 
+            --primary: #0056b3;
+            --secondary: #1e88e5;
+            --accent: #0d47a1;
+            --light: #f8f9fa;
+            --white: #fff;
+            --gray: #e9ecef;
+            --dark-gray: #6c757d;
+            --text: #2c3e50;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+            --info: #17a2b8;
+            --purple: #6f42c1;
+            --teal: #20c997;
+            --shadow: 0 4px 12px rgba(0,0,0,0.1);
+            --radius: 8px;
             --transition: all 0.3s ease;
         }
         [data-theme="dark"] {
-            --white: #1a1a1a; --light: #2d2d2d; --gray: #3d3d3d;
-            --dark-gray: #a0a0a0; --text: #e9ecef;
+            --white: #1a1a1a;
+            --light: #2d2d2d;
+            --gray: #3d3d3d;
+            --dark-gray: #a0a0a0;
+            --text: #e9ecef;
             --shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); }
-        .container { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+        body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); font-size: 0.875rem; }
+        .container { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
         
         /* Sidebar */
-        .sidebar { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 1.5rem; position: fixed; width: 250px; height: 100vh; z-index: 1000; }
+        .sidebar { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 1.5rem; position: fixed; width: 260px; height: 100vh; z-index: 1000; overflow-y: auto; }
         .brand { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.2); }
-        .brand-logo { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; }
+        .brand-logo { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+        .brand-logo img { width: 100%; height: 100%; object-fit: cover; }
         .brand-text h1 { font-size: 1.2rem; font-weight: 700; }
         .nav-links { list-style: none; }
-        .nav-links li { margin-bottom: 0.5rem; }
-        .nav-links a { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; color: white; text-decoration: none; border-radius: var(--radius); transition: var(--transition); }
+        .nav-links li { margin-bottom: 0.25rem; }
+        .nav-links a { display: flex; align-items: center; gap: 0.8rem; padding: 0.75rem 1rem; color: white; text-decoration: none; border-radius: var(--radius); transition: var(--transition); font-size: 0.85rem; }
         .nav-links a:hover, .nav-links a.active { background: rgba(255,255,255,0.15); }
+        .nav-links i { width: 20px; text-align: center; }
         
         /* Main Content */
-        .main { grid-column: 2; padding: 2rem; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; background: var(--white); padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
-        .welcome h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-        .actions { display: flex; gap: 1rem; }
-        .btn { padding: 0.8rem 1.5rem; border: none; border-radius: 50px; cursor: pointer; transition: var(--transition); text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+        .main { grid-column: 2; padding: 1.5rem; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; background: var(--white); padding: 1.25rem 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
+        .welcome h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
+        .welcome p { font-size: 0.85rem; color: var(--dark-gray); }
+        .actions { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 50px; cursor: pointer; transition: var(--transition); text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.85rem; }
         .btn-primary { background: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%); color: white; }
         .btn-success { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; }
         .btn-secondary { background: var(--gray); color: var(--text); }
-        .icon-btn { background: var(--white); border: 2px solid var(--gray); border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .icon-btn { background: var(--white); border: 2px solid var(--gray); border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: var(--transition); }
+        .icon-btn:hover { background: var(--gray); }
         
         /* Stats Grid */
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .stat-card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; text-align: center; box-shadow: var(--shadow); transition: var(--transition); }
-        .stat-card:hover { transform: translateY(-3px); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .stat-card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; text-align: center; box-shadow: var(--shadow); transition: var(--transition); }
+        .stat-card:hover { transform: translateY(-2px); }
         .stat-icon { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.2rem; }
-        .stat-number { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .stat-label { font-size: 0.9rem; color: var(--dark-gray); }
+        .stat-number { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
+        .stat-label { font-size: 0.8rem; color: var(--dark-gray); }
         
         /* Cards */
-        .card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-        .card-title { font-size: 1.2rem; font-weight: 600; }
-        .link { color: var(--secondary); text-decoration: none; font-size: 0.9rem; }
+        .card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .card-title { font-size: 1rem; font-weight: 600; }
+        .link { color: var(--secondary); text-decoration: none; font-size: 0.8rem; cursor: pointer; }
+        .link:hover { text-decoration: underline; }
         
         /* Class Rep Badge */
-        .class-rep-badge { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem; }
+        .class-rep-badge { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 0.75rem; }
         
         /* Meeting List */
         .meeting-list { display: grid; gap: 1rem; }
-        .meeting-card { padding: 1.5rem; background: var(--light); border-radius: var(--radius); transition: var(--transition); border-left: 4px solid var(--secondary); }
+        .meeting-card { padding: 1.25rem; background: var(--light); border-radius: var(--radius); transition: var(--transition); border-left: 4px solid var(--secondary); }
         .meeting-card:hover { background: var(--gray); transform: translateY(-2px); }
-        .meeting-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem; }
-        .meeting-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; flex: 1; }
-        .meeting-meta { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--dark-gray); margin-bottom: 0.5rem; }
+        .meeting-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; }
+        .meeting-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; flex: 1; }
+        .meeting-meta { display: flex; gap: 1rem; font-size: 0.75rem; color: var(--dark-gray); margin-bottom: 0.5rem; flex-wrap: wrap; }
         .meeting-datetime { font-weight: 600; color: var(--text); }
         .meeting-organizer { font-style: italic; }
-        .meeting-description { color: var(--dark-gray); margin-bottom: 1rem; line-height: 1.5; }
-        .meeting-footer { display: flex; justify-content: space-between; align-items: center; }
+        .meeting-description { color: var(--dark-gray); margin-bottom: 1rem; line-height: 1.5; font-size: 0.8rem; }
+        .meeting-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
         
         /* Status Badges */
-        .status { padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .status { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
         .status-upcoming { background: rgba(40,167,69,0.1); color: var(--success); }
         .status-ongoing { background: rgba(255,193,7,0.1); color: var(--warning); }
         .status-completed { background: rgba(108,117,125,0.1); color: var(--dark-gray); }
@@ -232,74 +251,52 @@ function getAttendanceBadge($status) {
         .status-past { background: rgba(23,162,184,0.1); color: var(--info); }
         
         /* Attendance Badges */
-        .attendance { padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .attendance { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
         .attendance-present { background: rgba(40,167,69,0.1); color: var(--success); }
         .attendance-absent { background: rgba(220,53,69,0.1); color: var(--danger); }
         .attendance-excused { background: rgba(108,117,125,0.1); color: var(--dark-gray); }
         .attendance-late { background: rgba(255,193,7,0.1); color: var(--warning); }
         .attendance-unknown { background: rgba(23,162,184,0.1); color: var(--info); }
         
+        /* Action Buttons */
+        .action-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .btn-sm { padding: 0.4rem 0.8rem; font-size: 0.75rem; border: none; border-radius: 4px; cursor: pointer; transition: var(--transition); display: inline-flex; align-items: center; gap: 0.3rem; font-weight: 600; }
+        .btn-agenda { background: var(--info); color: white; }
+        .btn-agenda:hover { background: #138496; transform: translateY(-1px); }
+        .btn-minutes { background: var(--warning); color: var(--text); }
+        .btn-minutes:hover { background: #e0a800; transform: translateY(-1px); }
+        .btn-checkin { background: var(--success); color: white; }
+        .btn-checkin:hover { background: #218838; transform: translateY(-1px); }
+        
         /* Empty State */
-        .empty-state { text-align: center; padding: 3rem; color: var(--dark-gray); }
-        .empty-state i { font-size: 3rem; margin-bottom: 1rem; color: var(--gray); }
+        .empty-state { text-align: center; padding: 2rem; color: var(--dark-gray); }
+        .empty-state i { font-size: 2rem; margin-bottom: 1rem; opacity: 0.5; }
+        .empty-state h3 { margin-bottom: 0.5rem; font-size: 1rem; }
         
         /* Alert */
-        .alert { padding: 1rem; border-radius: var(--radius); margin-bottom: 1.5rem; border-left: 4px solid; }
+        .alert { padding: 0.75rem 1rem; border-radius: var(--radius); margin-bottom: 1.5rem; border-left: 4px solid; display: flex; align-items: center; gap: 0.75rem; font-size: 0.8rem; flex-wrap: wrap; }
         .alert-info { background: rgba(23,162,184,0.1); color: var(--info); border-left-color: var(--info); }
         .alert-warning { background: rgba(255,193,7,0.1); color: var(--warning); border-left-color: var(--warning); }
         .alert-success { background: rgba(40,167,69,0.1); color: var(--success); border-left-color: var(--success); }
         .alert-error { background: rgba(220,53,69,0.1); color: var(--danger); border-left-color: var(--danger); }
+        .alert ul { margin-left: 1.5rem; margin-top: 0.25rem; margin-bottom: 0; }
+        .alert p { margin-top: 0.25rem; }
         
         /* Tabs */
-        .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 2px solid var(--gray); }
-        .tab { padding: 0.8rem 1.5rem; background: none; border: none; color: var(--dark-gray); cursor: pointer; transition: var(--transition); border-bottom: 2px solid transparent; margin-bottom: -2px; }
-        .tab.active { color: var(--secondary); border-bottom-color: var(--secondary); font-weight: 600; }
+        .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; border-bottom: 2px solid var(--gray); flex-wrap: wrap; }
+        .tab { padding: 0.75rem 1.5rem; background: none; border: none; color: var(--dark-gray); cursor: pointer; transition: var(--transition); border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 600; font-size: 0.85rem; }
+        .tab.active { color: var(--secondary); border-bottom-color: var(--secondary); }
         .tab:hover { color: var(--secondary); }
         
         /* Modal Styles */
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; }
         .modal-content { background: var(--white); border-radius: var(--radius); width: 90%; max-width: 600px; max-height: 80vh; overflow-y: auto; }
-        .modal-header { padding: 1.5rem; border-bottom: 1px solid var(--gray); display: flex; justify-content: space-between; align-items: center; }
-        .modal-body { padding: 1.5rem; }
-        .tab-content { display: block; }
-        
-        /* Button Styles */
-        .btn-sm {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.8rem;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: var(--transition);
-            display: inline-flex;
-            align-items: center;
-            gap: 0.3rem;
-            font-weight: 600;
-        }
-        .btn-agenda {
-            background: var(--info);
-            color: white;
-        }
-        .btn-agenda:hover {
-            background: #138496;
-            transform: translateY(-1px);
-        }
-        .btn-minutes {
-            background: var(--warning);
-            color: var(--text);
-        }
-        .btn-minutes:hover {
-            background: #e0a800;
-            transform: translateY(-1px);
-        }
-        .btn-checkin {
-            background: var(--success);
-            color: white;
-        }
-        .btn-checkin:hover {
-            background: #218838;
-            transform: translateY(-1px);
-        }
+        .modal-header { padding: 1.25rem; border-bottom: 1px solid var(--gray); display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h3 { font-size: 1.1rem; }
+        .modal-body { padding: 1.25rem; }
+        .modal-body pre { white-space: pre-wrap; font-family: inherit; background: var(--light); padding: 1rem; border-radius: var(--radius); }
+        .close-modal { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--dark-gray); width: auto; height: auto; border: none; }
+        .close-modal:hover { background: none; color: var(--danger); transform: scale(1.1); }
         
         /* Responsive */
         @media (max-width: 1024px) {
@@ -308,34 +305,39 @@ function getAttendanceBadge($status) {
         
         @media (max-width: 768px) {
             .container { grid-template-columns: 1fr; }
-            .sidebar { transform: translateX(-100%); }
+            .sidebar { transform: translateX(-100%); transition: transform 0.3s ease; }
+            .sidebar.mobile-open { transform: translateX(0); }
             .main { grid-column: 1; padding: 1rem; }
             .header { flex-direction: column; gap: 1rem; text-align: center; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
             .meeting-header { flex-direction: column; gap: 0.5rem; }
-            .meeting-footer { flex-direction: column; gap: 0.5rem; align-items: start; }
+            .meeting-footer { flex-direction: column; align-items: flex-start; }
             .action-buttons { flex-wrap: wrap; }
+            .tabs { justify-content: center; }
         }
         
         @media (max-width: 480px) {
             .stats-grid { grid-template-columns: 1fr; }
-            .tabs { flex-direction: column; }
+            .tabs { flex-direction: column; align-items: stretch; }
+            .tab { text-align: center; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <!-- Sidebar -->
-        <div class="sidebar">
+        <div class="sidebar" id="sidebar">
             <div class="brand">
-                <div class="brand-logo"><i class="fas fa-user-shield"></i></div>
+                <div class="brand-logo">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College">
+                </div>
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard.php"><i class="fas fa-arrow-left"></i> Back to Dashboard</a></li>
+                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
                 <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
                 <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="#" class="active"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_meetings.php" class="active"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
                 <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
                 <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
@@ -349,10 +351,13 @@ function getAttendanceBadge($status) {
                     <h1>Representative Meetings
                         <span class="class-rep-badge"><i class="fas fa-user-shield"></i> Class Representative</span>
                     </h1>
-                    <p>View scheduled meetings and track your attendance</p>
+                    <p><?php echo safe_display($program); ?> - <?php echo safe_display($academic_year); ?></p>
                 </div>
                 <div class="actions">
-                    <form method="POST">
+                    <button class="icon-btn" id="mobileMenuToggle" title="Menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <form method="POST" style="display: inline;">
                         <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
                             <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
                         </button>
@@ -370,22 +375,22 @@ function getAttendanceBadge($status) {
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon" style="background: rgba(30,136,229,0.1); color: var(--secondary);"><i class="fas fa-calendar"></i></div>
-                    <div class="stat-number"><?php echo $meeting_stats['total_meetings'] ?? 0; ?></div>
+                    <div class="stat-number"><?php echo number_format($meeting_stats['total_meetings'] ?? 0); ?></div>
                     <div class="stat-label">Total Meetings</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon" style="background: rgba(40,167,69,0.1); color: var(--success);"><i class="fas fa-clock"></i></div>
-                    <div class="stat-number"><?php echo $meeting_stats['upcoming_meetings'] ?? 0; ?></div>
+                    <div class="stat-number"><?php echo number_format($meeting_stats['upcoming_meetings'] ?? 0); ?></div>
                     <div class="stat-label">Upcoming</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon" style="background: rgba(40,167,69,0.1); color: var(--success);"><i class="fas fa-check-circle"></i></div>
-                    <div class="stat-number"><?php echo $meeting_stats['meetings_attended'] ?? 0; ?></div>
+                    <div class="stat-number"><?php echo number_format($meeting_stats['meetings_attended'] ?? 0); ?></div>
                     <div class="stat-label">Meetings Attended</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon" style="background: rgba(220,53,69,0.1); color: var(--danger);"><i class="fas fa-times-circle"></i></div>
-                    <div class="stat-number"><?php echo $meeting_stats['meetings_missed'] ?? 0; ?></div>
+                    <div class="stat-number"><?php echo number_format($meeting_stats['meetings_missed'] ?? 0); ?></div>
                     <div class="stat-label">Meetings Missed</div>
                 </div>
             </div>
@@ -403,8 +408,8 @@ function getAttendanceBadge($status) {
                     </ul>
                     <p style="margin-top: 0.5rem; font-size: 0.9rem;">
                         <i class="fas fa-info-circle"></i> 
-                        Your Student ID: <?php echo $student_id; ?> | 
-                        Name: <?php echo $student_name; ?>
+                        Student ID: <?php echo $student_id; ?> | 
+                        Name: <?php echo safe_display($student_name); ?>
                     </p>
                 </div>
             <?php endif; ?>
@@ -464,14 +469,14 @@ function getAttendanceBadge($status) {
                                     <?php endif; ?>
                                     
                                     <div class="meeting-footer">
-                                        <span style="font-size: 0.85rem; color: var(--dark-gray);">
+                                        <span style="font-size: 0.75rem; color: var(--dark-gray);">
                                             <i class="fas fa-info-circle"></i> 
                                             <?php echo ucfirst(str_replace('_', ' ', $meeting['meeting_type'])); ?> Meeting
                                             <?php if ($meeting['attendance_status']): ?>
                                                 | Your Status: <?php echo getAttendanceBadge($meeting['attendance_status']); ?>
                                             <?php endif; ?>
                                         </span>
-                                        <div class="action-buttons" style="display: flex; gap: 0.5rem;">
+                                        <div class="action-buttons">
                                             <?php if ($meeting['agenda']): ?>
                                                 <button class="btn-sm btn-agenda" 
                                                         onclick="viewAgenda(<?php echo $meeting['id']; ?>)">
@@ -530,7 +535,7 @@ function getAttendanceBadge($status) {
                                                 </span>
                                             </div>
                                         </div>
-                                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
                                             <?php echo getMeetingStatusBadge($meeting['status'], $meeting['meeting_date'], $meeting['start_time']); ?>
                                             <?php echo getAttendanceBadge($meeting['attendance_status']); ?>
                                         </div>
@@ -543,12 +548,12 @@ function getAttendanceBadge($status) {
                                     <?php endif; ?>
                                     
                                     <div class="meeting-footer">
-                                        <span style="font-size: 0.85rem; color: var(--dark-gray);">
+                                        <span style="font-size: 0.75rem; color: var(--dark-gray);">
                                             <?php if ($meeting['check_in_time']): ?>
                                                 <i class="fas fa-clock"></i> Checked in: <?php echo date('M j, g:i A', strtotime($meeting['check_in_time'])); ?>
                                             <?php endif; ?>
                                         </span>
-                                        <div class="action-buttons" style="display: flex; gap: 0.5rem;">
+                                        <div class="action-buttons">
                                             <?php if ($meeting['agenda']): ?>
                                                 <button class="btn-sm btn-agenda" 
                                                         onclick="viewAgenda(<?php echo $meeting['id']; ?>)">
@@ -577,7 +582,7 @@ function getAttendanceBadge($status) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Meeting Agenda</h3>
-                <button class="icon-btn close-modal" onclick="closeModal('agendaModal')">&times;</button>
+                <button class="close-modal" onclick="closeModal('agendaModal')">&times;</button>
             </div>
             <div class="modal-body" id="agendaContent">
                 <!-- Agenda content will be loaded here -->
@@ -590,7 +595,7 @@ function getAttendanceBadge($status) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Meeting Minutes</h3>
-                <button class="icon-btn close-modal" onclick="closeModal('minutesModal')">&times;</button>
+                <button class="close-modal" onclick="closeModal('minutesModal')">&times;</button>
             </div>
             <div class="modal-body" id="minutesContent">
                 <!-- Minutes content will be loaded here -->
@@ -599,6 +604,32 @@ function getAttendanceBadge($status) {
     </div>
 
     <script>
+        // Mobile Menu Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', function() {
+                sidebar.classList.toggle('mobile-open');
+            });
+        }
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            if (window.innerWidth <= 768) {
+                if (!sidebar.contains(event.target) && !mobileMenuToggle.contains(event.target)) {
+                    sidebar.classList.remove('mobile-open');
+                }
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('mobile-open');
+            }
+        });
+
         // Tab functionality
         function showTab(tabName) {
             // Hide all tabs
@@ -700,7 +731,6 @@ function getAttendanceBadge($status) {
         // Check-in function
         function checkIn(meetingId) {
             if (confirm('Do you want to check in for this meeting?')) {
-                // In a real implementation, this would make an API call
                 alert('Check-in functionality would be implemented here.\nMeeting ID: ' + meetingId);
                 // Refresh the page to update status
                 setTimeout(() => {
@@ -729,6 +759,37 @@ function getAttendanceBadge($status) {
                 closeModal('agendaModal');
                 closeModal('minutesModal');
             }
+        });
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.stat-card, .card');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

@@ -40,15 +40,15 @@ try {
     // Gender issues count
     $stmt = $pdo->prepare("SELECT COUNT(*) as gender_issues FROM tickets WHERE category_id = 7 AND status IN ('open', 'in_progress')");
     $stmt->execute();
-    $gender_issues = $stmt->fetch(PDO::FETCH_ASSOC)['gender_issues'];
+    $gender_issues = $stmt->fetch(PDO::FETCH_ASSOC)['gender_issues'] ?? 0;
     
     // Gender clubs count
     $stmt = $pdo->query("SELECT COUNT(*) as gender_clubs FROM clubs WHERE category IN ('cultural', 'other') AND status = 'active'");
-    $gender_clubs = $stmt->fetch(PDO::FETCH_ASSOC)['gender_clubs'];
+    $gender_clubs = $stmt->fetch(PDO::FETCH_ASSOC)['gender_clubs'] ?? 0;
     
     // Protocol activities count
     $stmt = $pdo->query("SELECT COUNT(*) as protocol_activities FROM events WHERE category_id IN (3, 5) AND status = 'published'");
-    $protocol_activities = $stmt->fetch(PDO::FETCH_ASSOC)['protocol_activities'];
+    $protocol_activities = $stmt->fetch(PDO::FETCH_ASSOC)['protocol_activities'] ?? 0;
     
     // Get unread messages count
     $stmt = $pdo->prepare("
@@ -58,7 +58,7 @@ try {
         WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
     ");
     $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'];
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     
 } catch (PDOException $e) {
     $gender_issues = $gender_clubs = $protocol_activities = $unread_messages = 0;
@@ -108,7 +108,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE users 
                     SET full_name = ?, email = ?, phone = ?, date_of_birth = ?, gender = ?, 
                         bio = ?, address = ?, emergency_contact_name = ?, emergency_contact_phone = ?,
-                        updated_at = NOW()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([
@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($bio)) {
                     $committeeStmt = $pdo->prepare("
                         UPDATE committee_members 
-                        SET bio = ?, updated_at = NOW() 
+                        SET bio = ?, updated_at = CURRENT_TIMESTAMP 
                         WHERE user_id = ?
                     ");
                     $committeeStmt->execute([$bio, $user_id]);
@@ -167,7 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Update password
                 $stmt = $pdo->prepare("
                     UPDATE users 
-                    SET password = ?, last_password_change = NOW(), updated_at = NOW()
+                    SET password = ?, last_password_change = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$new_password, $user_id]);
@@ -184,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $pdo->prepare("
                     UPDATE users 
                     SET email_notifications = ?, sms_notifications = ?, 
-                        preferred_language = ?, theme_preference = ?, updated_at = NOW()
+                        preferred_language = ?, theme_preference = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$email_notifications, $sms_notifications, $preferred_language, $theme_preference, $user_id]);
@@ -226,11 +226,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (move_uploaded_file($avatar['tmp_name'], $file_path)) {
                         // Update database with relative path
                         $avatar_url = 'assets/uploads/avatars/' . $filename;
-                        $stmt = $pdo->prepare("UPDATE users SET avatar_url = ?, updated_at = NOW() WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE users SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([$avatar_url, $user_id]);
                         
                         // Also update committee_members photo_url if user is a committee member
-                        $committeeStmt = $pdo->prepare("UPDATE committee_members SET photo_url = ?, updated_at = NOW() WHERE user_id = ?");
+                        $committeeStmt = $pdo->prepare("UPDATE committee_members SET photo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?");
                         $committeeStmt->execute([$avatar_url, $user_id]);
                         
                         $_SESSION['success'] = "Profile picture updated successfully";
@@ -246,13 +246,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
             case 'enable_2fa':
                 // In a real implementation, this would set up 2FA
-                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = TRUE, updated_at = NOW() WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                 $stmt->execute([$user_id]);
                 $_SESSION['success'] = "Two-factor authentication enabled successfully";
                 break;
                 
             case 'disable_2fa':
-                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = FALSE, updated_at = NOW() WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                 $stmt->execute([$user_id]);
                 $_SESSION['success'] = "Two-factor authentication disabled successfully";
                 break;
@@ -299,11 +299,11 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Profile & Settings - Minister of Gender - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-        <link rel="icon" href="../assets/images/logo.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-purple: #8B5CF6;
@@ -323,8 +323,12 @@ try {
             --gradient-primary: linear-gradient(135deg, var(--primary-purple) 0%, var(--accent-purple) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
+            --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
             --border-radius: 8px;
+            --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -352,26 +356,24 @@ try {
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: var(--light-gray);
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
             color: var(--text-dark);
+            background: var(--light-gray);
+            min-height: 100vh;
             font-size: 0.875rem;
             transition: var(--transition);
-            overflow-x: hidden;
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -381,7 +383,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -390,38 +391,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -429,22 +436,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -453,41 +445,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -497,50 +480,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -570,26 +588,20 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
-        }
-
-        .menu-badge {
-            background: var(--danger);
-            color: white;
-            border-radius: 10px;
-            padding: 0.1rem 0.4rem;
-            font-size: 0.7rem;
-            font-weight: 600;
-            margin-left: auto;
+            width: 20px;
         }
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .container {
@@ -622,6 +634,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -744,6 +759,7 @@ try {
             display: flex;
             border-bottom: 1px solid var(--medium-gray);
             background: var(--light-gray);
+            flex-wrap: wrap;
         }
 
         .profile-tab {
@@ -810,11 +826,13 @@ try {
 
         .form-control {
             width: 100%;
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             font-size: 0.9rem;
             transition: var(--transition);
+            background: var(--white);
+            color: var(--text-dark);
         }
 
         .form-control:focus {
@@ -836,73 +854,6 @@ try {
 
         .checkbox-group input[type="checkbox"] {
             width: auto;
-        }
-
-        .security-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-
-        .security-badge.enabled {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .security-badge.disabled {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .login-session {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            padding: 1rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-        }
-
-        .session-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: var(--light-purple);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--primary-purple);
-        }
-
-        .session-info {
-            flex: 1;
-        }
-
-        .session-location {
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-
-        .session-meta {
-            font-size: 0.8rem;
-            color: var(--dark-gray);
-        }
-
-        .session-status {
-            font-size: 0.7rem;
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-weight: 600;
-        }
-
-        .status-success {
-            background: #d4edda;
-            color: var(--success);
         }
 
         .password-strength {
@@ -960,6 +911,53 @@ try {
             margin-top: 1.5rem;
         }
 
+        .login-session {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+        }
+
+        .session-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--light-purple);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--primary-purple);
+        }
+
+        .session-info {
+            flex: 1;
+        }
+
+        .session-location {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .session-meta {
+            font-size: 0.8rem;
+            color: var(--dark-gray);
+        }
+
+        .session-status {
+            font-size: 0.7rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: var(--success);
+        }
+
         /* Modal Styles */
         .modal {
             display: none;
@@ -976,32 +974,28 @@ try {
 
         .modal-content {
             background-color: var(--white);
-            margin: 2% auto;
+            margin: 5% auto;
             padding: 0;
             border-radius: var(--border-radius);
             width: 90%;
             max-width: 500px;
             box-shadow: var(--shadow-md);
             animation: slideIn 0.3s;
-            position: relative;
         }
 
         .modal-header {
-            padding: 1.5rem;
+            padding: 1rem 1.5rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            position: sticky;
-            top: 0;
-            background: var(--white);
-            z-index: 10;
+            background: var(--light-purple);
         }
 
         .modal-header h3 {
             margin: 0;
             color: var(--text-dark);
-            font-size: 1.2rem;
+            font-size: 1rem;
         }
 
         .close {
@@ -1010,6 +1004,9 @@ try {
             font-weight: bold;
             cursor: pointer;
             transition: var(--transition);
+            background: none;
+            border: none;
+            line-height: 1;
         }
 
         .close:hover {
@@ -1071,58 +1068,155 @@ try {
             to { transform: translateY(0); opacity: 1; }
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-purple);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .profile-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
             .profile-tabs {
                 flex-wrap: wrap;
             }
-            
+
             .profile-tab {
                 flex: 1;
-                min-width: 120px;
+                min-width: 100px;
                 text-align: center;
+                padding: 0.75rem 1rem;
+                font-size: 0.8rem;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+        }
+
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
             }
-            
-            .user-details {
-                display: none;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .profile-sidebar {
+                padding: 1.5rem;
+            }
+
+            .tab-content {
+                padding: 1.5rem;
+            }
+
+            .modal-content {
+                width: 95%;
+                margin: 10% auto;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Minister of Gender</h1>
                 </div>
@@ -1132,7 +1226,7 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1149,11 +1243,11 @@ try {
                     </div>
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
-                        <div class="user-role">Minister of Gender</div>
+                        <div class="user-role">Minister of Gender & Protocol</div>
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-                    <i class="fas fa-sign-out-alt"></i>
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1162,81 +1256,78 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-         <!-- Sidebar -->
-      <nav class="sidebar">
-    <ul class="sidebar-menu">
-        <li class="menu-item">
-            <a href="dashboard.php">
-                <i class="fas fa-tachometer-alt"></i>
-                <span>Dashboard</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="tickets.php" >
-                <i class="fas fa-ticket-alt"></i>
-                <span>Gender Issues</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="protocol.php">
-                <i class="fas fa-handshake"></i>
-                <span>Protocol & Visitors</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="clubs.php">
-                <i class="fas fa-users"></i>
-                <span>Gender Clubs</span>
-            </a>
-        </li>
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <ul class="sidebar-menu">
+                <li class="menu-item">
+                    <a href="dashboard.php">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Gender Issues</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="protocol.php">
+                        <i class="fas fa-handshake"></i>
+                        <span>Protocol & Visitors</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="clubs.php">
+                        <i class="fas fa-users"></i>
+                        <span>Gender Clubs</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="hostel-management.php">
+                        <i class="fas fa-building"></i>
+                        <span>Hostel Management</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="action-funding.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Reports & Analytics</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php" class="active">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
 
-        <li class="menu-item">
-            <a href="hostel-management.php">
-                <i class="fas fa-building"></i>
-                <span>Hostel Management</span>
-            </a>
-        </li>
-        
-        <!-- Added Action Funding -->
-        <li class="menu-item">
-            <a href="action-funding.php">
-                <i class="fas fa-money-bill-wave"></i>
-                <span>Action Funding</span>
-            </a>
-        </li>
-        
-        <li class="menu-item">
-            <a href="reports.php" >
-                <i class="fas fa-file-alt"></i>
-                <span>Reports & Analytics</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="meetings.php">
-                <i class="fas fa-calendar-alt"></i>
-                <span>Meetings</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="messages.php">
-                <i class="fas fa-comments"></i>
-                <span>Messages</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="profile.php" class="active">
-                <i class="fas fa-user-cog"></i>
-                <span>Profile & Settings</span>
-            </a>
-        </li>
-    </ul>
-</nav>
-
-
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="container">
                 <!-- Page Header -->
                 <div class="page-header">
@@ -1248,13 +1339,13 @@ try {
 
                 <?php if (isset($_SESSION['success'])): ?>
                     <div class="alert alert-success">
-                        <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
+                        <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success']); unset($_SESSION['success']); ?>
                     </div>
                 <?php endif; ?>
 
                 <?php if (isset($_SESSION['error'])): ?>
                     <div class="alert alert-danger">
-                        <?php echo $_SESSION['error']; unset($_SESSION['error']); ?>
+                        <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
                     </div>
                 <?php endif; ?>
 
@@ -1277,11 +1368,11 @@ try {
                         
                         <div class="profile-stats">
                             <div class="stat-item">
-                                <div class="stat-number"><?php echo $gender_issues; ?></div>
+                                <div class="stat-number"><?php echo number_format($gender_issues); ?></div>
                                 <div class="stat-label">Gender Issues</div>
                             </div>
                             <div class="stat-item">
-                                <div class="stat-number"><?php echo $gender_clubs; ?></div>
+                                <div class="stat-number"><?php echo number_format($gender_clubs); ?></div>
                                 <div class="stat-label">Gender Clubs</div>
                             </div>
                         </div>
@@ -1441,13 +1532,13 @@ try {
                                         <div>
                                             <div style="font-weight: 600; margin-bottom: 0.25rem;">Two-Factor Authentication</div>
                                             <div style="font-size: 0.9rem; color: var(--dark-gray);">
-                                                <?php echo $user['two_factor_enabled'] ? 'Enabled' : 'Disabled'; ?>
+                                                <?php echo ($user['two_factor_enabled'] ?? false) ? 'Enabled' : 'Disabled'; ?>
                                             </div>
                                         </div>
                                         <form method="POST" style="margin: 0;">
-                                            <input type="hidden" name="action" value="<?php echo $user['two_factor_enabled'] ? 'disable_2fa' : 'enable_2fa'; ?>">
-                                            <button type="submit" class="btn <?php echo $user['two_factor_enabled'] ? 'btn-secondary' : 'btn-primary'; ?>">
-                                                <?php echo $user['two_factor_enabled'] ? 'Disable' : 'Enable'; ?> 2FA
+                                            <input type="hidden" name="action" value="<?php echo ($user['two_factor_enabled'] ?? false) ? 'disable_2fa' : 'enable_2fa'; ?>">
+                                            <button type="submit" class="btn <?php echo ($user['two_factor_enabled'] ?? false) ? 'btn-secondary' : 'btn-primary'; ?>">
+                                                <?php echo ($user['two_factor_enabled'] ?? false) ? 'Disable' : 'Enable'; ?> 2FA
                                             </button>
                                         </form>
                                     </div>
@@ -1532,8 +1623,8 @@ try {
                                 <div class="form-section">
                                     <h4>Recent Login Activity</h4>
                                     <?php if (empty($login_history)): ?>
-                                        <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                            <i class="fas fa-history" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                        <div class="empty-state">
+                                            <i class="fas fa-history"></i>
                                             <p>No login history available</p>
                                         </div>
                                     <?php else: ?>
@@ -1577,10 +1668,10 @@ try {
 
     <!-- Avatar Upload Modal -->
     <div id="avatarModal" class="modal">
-        <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-content">
             <div class="modal-header">
                 <h3>Update Profile Picture</h3>
-                <span class="close">&times;</span>
+                <button class="close" onclick="closeModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <form method="POST" enctype="multipart/form-data" id="avatarForm">
@@ -1605,7 +1696,7 @@ try {
                     
                     <div class="modal-actions">
                         <button type="submit" class="btn btn-primary" id="uploadBtn">Update Picture</button>
-                        <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -1620,45 +1711,44 @@ try {
             // Modal elements
             const avatarModal = document.getElementById('avatarModal');
             const avatarUploadBtn = document.getElementById('avatarUploadBtn');
-            const closeButtons = document.querySelectorAll('.close, .close-modal');
             const avatarForm = document.getElementById('avatarForm');
             const avatarInput = document.getElementById('avatar');
             const uploadBtn = document.getElementById('uploadBtn');
             const uploadError = document.getElementById('uploadError');
 
-            // Debug logging
-            console.log('Avatar Modal:', avatarModal);
-            console.log('Avatar Upload Button:', avatarUploadBtn);
-            console.log('Avatar Form:', avatarForm);
-            console.log('Avatar Input:', avatarInput);
-
-            // Close modals
-            closeButtons.forEach(btn => {
-                btn.addEventListener('click', function() {
-                    console.log('Close button clicked');
-                    closeAllModals();
-                });
-            });
-
-            window.addEventListener('click', function(event) {
-                if (event.target.classList.contains('modal')) {
-                    console.log('Modal background clicked');
-                    closeAllModals();
+            // Close modal function
+            window.closeModal = function() {
+                if (avatarModal) {
+                    avatarModal.style.display = 'none';
+                    document.body.style.overflow = '';
                 }
-            });
+                if (uploadError) uploadError.style.display = 'none';
+                if (avatarInput) avatarInput.value = '';
+                if (uploadBtn) {
+                    uploadBtn.disabled = false;
+                    uploadBtn.innerHTML = 'Update Picture';
+                }
+            }
 
-            // Avatar upload trigger - FIXED
+            // Avatar upload trigger
             if (avatarUploadBtn) {
                 avatarUploadBtn.addEventListener('click', function(e) {
                     console.log('Avatar upload button clicked');
                     e.preventDefault();
                     e.stopPropagation();
-                    avatarModal.style.display = 'block';
-                    document.body.style.overflow = 'hidden'; // Prevent background scrolling
+                    if (avatarModal) {
+                        avatarModal.style.display = 'block';
+                        document.body.style.overflow = 'hidden';
+                    }
                 });
-            } else {
-                console.error('Avatar upload button not found!');
             }
+
+            // Close modal when clicking outside
+            window.addEventListener('click', function(event) {
+                if (event.target === avatarModal) {
+                    closeModal();
+                }
+            });
 
             // Avatar form validation
             if (avatarForm) {
@@ -1667,7 +1757,10 @@ try {
                     
                     if (!avatarInput.files.length) {
                         e.preventDefault();
-                        showUploadError('Please select a file to upload');
+                        if (uploadError) {
+                            uploadError.textContent = 'Please select a file to upload';
+                            uploadError.style.display = 'block';
+                        }
                         return false;
                     }
 
@@ -1676,32 +1769,35 @@ try {
 
                     if (file.size > maxSize) {
                         e.preventDefault();
-                        showUploadError('File size must be less than 2MB');
+                        if (uploadError) {
+                            uploadError.textContent = 'File size must be less than 2MB';
+                            uploadError.style.display = 'block';
+                        }
                         return false;
                     }
 
                     // Show loading state
-                    uploadBtn.disabled = true;
-                    uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-                    
-                    console.log('Form submission proceeding...');
+                    if (uploadBtn) {
+                        uploadBtn.disabled = true;
+                        uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+                    }
                 });
             }
 
             // File input change handler
             if (avatarInput) {
                 avatarInput.addEventListener('change', function(e) {
-                    console.log('File input changed');
-                    hideUploadError();
+                    if (uploadError) uploadError.style.display = 'none';
                     const file = e.target.files[0];
                     
                     if (file) {
-                        console.log('File selected:', file.name, file.type, file.size);
-                        
                         // Validate file type
                         const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/jpg'];
                         if (!allowedTypes.includes(file.type)) {
-                            showUploadError('Please select a valid image file (JPG, PNG, GIF)');
+                            if (uploadError) {
+                                uploadError.textContent = 'Please select a valid image file (JPG, PNG, GIF)';
+                                uploadError.style.display = 'block';
+                            }
                             avatarInput.value = '';
                             return;
                         }
@@ -1709,7 +1805,10 @@ try {
                         // Validate file size
                         const maxSize = 2 * 1024 * 1024;
                         if (file.size > maxSize) {
-                            showUploadError('File size must be less than 2MB');
+                            if (uploadError) {
+                                uploadError.textContent = 'File size must be less than 2MB';
+                                uploadError.style.display = 'block';
+                            }
                             avatarInput.value = '';
                             return;
                         }
@@ -1723,106 +1822,96 @@ try {
             const fileUploadLabel = document.querySelector('.file-upload');
             if (fileUploadLabel) {
                 fileUploadLabel.addEventListener('click', function(e) {
-                    console.log('File upload label clicked');
                     if (avatarInput) {
                         avatarInput.click();
                     }
                 });
             }
 
-            // Functions
-            function closeAllModals() {
-                console.log('Closing all modals');
-                if (avatarModal) {
-                    avatarModal.style.display = 'none';
-                }
-                document.body.style.overflow = ''; // Restore scrolling
-                hideUploadError();
-                // Reset form
-                if (avatarInput) {
-                    avatarInput.value = '';
-                }
-                if (uploadBtn) {
-                    uploadBtn.disabled = false;
-                    uploadBtn.innerHTML = 'Update Picture';
-                }
-            }
-
-            function showUploadError(message) {
-                console.log('Upload error:', message);
-                if (uploadError) {
-                    uploadError.textContent = message;
-                    uploadError.style.display = 'block';
-                }
-            }
-
-            function hideUploadError() {
-                if (uploadError) {
-                    uploadError.style.display = 'none';
-                }
-            }
-
-            // Dark mode toggle - FIXED
+            // Dark mode toggle
             const themeToggle = document.getElementById('themeToggle');
             const body = document.body;
 
             if (themeToggle) {
-                console.log('Theme toggle found');
-                
-                // Check for saved theme or prefer system theme
                 const savedTheme = localStorage.getItem('theme');
                 const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                 
                 let currentTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
                 
-                // Apply theme
                 if (currentTheme === 'dark') {
                     body.classList.add('dark-mode');
                     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                    themeToggle.title = 'Switch to Light Mode';
                 } else {
                     body.classList.remove('dark-mode');
                     themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                    themeToggle.title = 'Switch to Dark Mode';
                 }
 
                 themeToggle.addEventListener('click', () => {
                     body.classList.toggle('dark-mode');
                     const isDark = body.classList.contains('dark-mode');
                     localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                    
-                    if (isDark) {
-                        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        themeToggle.title = 'Switch to Light Mode';
-                    } else {
-                        themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        themeToggle.title = 'Switch to Dark Mode';
-                    }
-                    
-                    console.log('Theme changed to:', isDark ? 'dark' : 'light');
+                    themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
                 });
-
-                // Listen for system theme changes
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-                    if (!localStorage.getItem('theme')) {
-                        if (e.matches) {
-                            body.classList.add('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        } else {
-                            body.classList.remove('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        }
-                    }
-                });
-            } else {
-                console.error('Theme toggle button not found!');
             }
+
+            // Sidebar Toggle
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            
+            const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+            if (savedSidebarState === 'true') {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('sidebar-collapsed');
+                if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            }
+            
+            function toggleSidebar() {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('sidebar-collapsed');
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                localStorage.setItem('sidebarCollapsed', isCollapsed);
+                const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+                if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            }
+            
+            if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+            
+            // Mobile Menu Toggle
+            const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+            const mobileOverlay = document.getElementById('mobileOverlay');
+            
+            if (mobileMenuToggle) {
+                mobileMenuToggle.addEventListener('click', () => {
+                    const isOpen = sidebar.classList.toggle('mobile-open');
+                    mobileOverlay.classList.toggle('active', isOpen);
+                    mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = isOpen ? 'hidden' : '';
+                });
+            }
+            
+            if (mobileOverlay) {
+                mobileOverlay.addEventListener('click', () => {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                });
+            }
+
+            // Close mobile nav on resize to desktop
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 992) {
+                    sidebar.classList.remove('mobile-open');
+                    if (mobileOverlay) mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            });
         });
 
         // Tab switching
         function switchTab(tabName) {
-            console.log('Switching to tab:', tabName);
-            
             // Update URL without reload
             const url = new URL(window.location);
             url.searchParams.set('tab', tabName);
@@ -1905,9 +1994,6 @@ try {
                 return false;
             }
         });
-
-        // Debug helper
-        console.log('Profile scripts loaded successfully');
     </script>
 </body>
 </html>

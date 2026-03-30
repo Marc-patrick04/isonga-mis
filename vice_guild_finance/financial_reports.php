@@ -96,7 +96,7 @@ function getReportData($report_type, $academic_year, $start_date, $end_date) {
     return $data;
 }
 
-// Individual report data functions - CORRECTED VERSIONS
+// Individual report data functions
 function getFinancialSummaryReport($academic_year, $start_date, $end_date) {
     global $pdo;
     
@@ -105,7 +105,7 @@ function getFinancialSummaryReport($academic_year, $start_date, $end_date) {
     try {
         // Total Income
         $stmt = $pdo->prepare("
-            SELECT SUM(amount) as total_income 
+            SELECT COALESCE(SUM(amount), 0) as total_income 
             FROM financial_transactions 
             WHERE transaction_type = 'income' 
             AND status = 'completed'
@@ -116,7 +116,7 @@ function getFinancialSummaryReport($academic_year, $start_date, $end_date) {
         
         // Total Expenses
         $stmt = $pdo->prepare("
-            SELECT SUM(amount) as total_expenses 
+            SELECT COALESCE(SUM(amount), 0) as total_expenses 
             FROM financial_transactions 
             WHERE transaction_type = 'expense' 
             AND status = 'completed'
@@ -132,18 +132,16 @@ function getFinancialSummaryReport($academic_year, $start_date, $end_date) {
         $stmt = $pdo->query("SELECT current_balance FROM rpsu_account WHERE is_active = 1 LIMIT 1");
         $data['bank_balance'] = $stmt->fetch(PDO::FETCH_ASSOC)['current_balance'] ?? 0;
         
-        // Budget Utilization - Using committee_budget_requests instead of monthly_budgets
+        // Budget Utilization
         $stmt = $pdo->prepare("
-            SELECT 
-                COALESCE(SUM(requested_amount), 0) as total_budget,
-                COALESCE(SUM(approved_amount), 0) as total_approved
+            SELECT COALESCE(SUM(approved_amount), 0) as total_budget
             FROM committee_budget_requests 
             WHERE academic_year = ?
             AND status IN ('approved_by_president', 'funded')
         ");
         $stmt->execute([$academic_year]);
         $budget_data = $stmt->fetch(PDO::FETCH_ASSOC);
-        $data['total_budget'] = $budget_data['total_approved'] ?? 0;
+        $data['total_budget'] = $budget_data['total_budget'] ?? 0;
         $data['budget_utilization'] = $data['total_budget'] > 0 ? ($data['total_expenses'] / $data['total_budget']) * 100 : 0;
         
         // Transaction counts
@@ -177,7 +175,7 @@ function getIncomeStatementReport($academic_year, $start_date, $end_date) {
         $stmt = $pdo->prepare("
             SELECT 
                 bc.category_name,
-                SUM(ft.amount) as amount,
+                COALESCE(SUM(ft.amount), 0) as amount,
                 COUNT(ft.id) as transaction_count
             FROM financial_transactions ft
             LEFT JOIN budget_categories bc ON ft.category_id = bc.id
@@ -195,7 +193,7 @@ function getIncomeStatementReport($academic_year, $start_date, $end_date) {
         $stmt = $pdo->prepare("
             SELECT 
                 bc.category_name,
-                SUM(ft.amount) as amount,
+                COALESCE(SUM(ft.amount), 0) as amount,
                 COUNT(ft.id) as transaction_count
             FROM financial_transactions ft
             LEFT JOIN budget_categories bc ON ft.category_id = bc.id
@@ -227,12 +225,10 @@ function getBudgetVsActualReport($academic_year, $start_date, $end_date) {
     $data = [];
     
     try {
-        // Using committee budget requests as the budget source
         $stmt = $pdo->prepare("
             SELECT 
                 cbr.request_title as category_name,
-                cbr.requested_amount as budgeted_amount,
-                cbr.approved_amount,
+                cbr.approved_amount as budgeted_amount,
                 COALESCE((
                     SELECT SUM(ft.amount) 
                     FROM financial_transactions ft 
@@ -241,6 +237,14 @@ function getBudgetVsActualReport($academic_year, $start_date, $end_date) {
                     AND ft.status = 'completed'
                     AND ft.transaction_date BETWEEN ? AND ?
                 ), 0) as actual_amount,
+                cbr.approved_amount - COALESCE((
+                    SELECT SUM(ft.amount) 
+                    FROM financial_transactions ft 
+                    WHERE ft.description LIKE CONCAT('%', cbr.request_title, '%')
+                    AND ft.transaction_type = 'expense'
+                    AND ft.status = 'completed'
+                    AND ft.transaction_date BETWEEN ? AND ?
+                ), 0) as variance,
                 CASE 
                     WHEN cbr.approved_amount > 0 THEN 
                         (COALESCE((
@@ -252,15 +256,7 @@ function getBudgetVsActualReport($academic_year, $start_date, $end_date) {
                             AND ft.transaction_date BETWEEN ? AND ?
                         ), 0) / cbr.approved_amount) * 100
                     ELSE 0 
-                END as utilization_percentage,
-                (cbr.approved_amount - COALESCE((
-                    SELECT SUM(ft.amount) 
-                    FROM financial_transactions ft 
-                    WHERE ft.description LIKE CONCAT('%', cbr.request_title, '%')
-                    AND ft.transaction_type = 'expense'
-                    AND ft.status = 'completed'
-                    AND ft.transaction_date BETWEEN ? AND ?
-                ), 0)) as variance
+                END as utilization_percentage
             FROM committee_budget_requests cbr
             WHERE cbr.academic_year = ?
             AND cbr.status IN ('approved_by_president', 'funded')
@@ -282,17 +278,17 @@ function getExpenseAnalysisReport($academic_year, $start_date, $end_date) {
     $data = [];
     
     try {
-        // Monthly expense trend
+        // Monthly expense trend (PostgreSQL compatible)
         $stmt = $pdo->prepare("
             SELECT 
-                DATE_FORMAT(transaction_date, '%Y-%m') as month,
-                SUM(amount) as monthly_expenses,
+                TO_CHAR(transaction_date, 'YYYY-MM') as month,
+                COALESCE(SUM(amount), 0) as monthly_expenses,
                 COUNT(*) as transaction_count
             FROM financial_transactions 
             WHERE transaction_type = 'expense' 
             AND status = 'completed'
             AND transaction_date BETWEEN ? AND ?
-            GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
+            GROUP BY TO_CHAR(transaction_date, 'YYYY-MM')
             ORDER BY month
         ");
         $stmt->execute([$start_date, $end_date]);
@@ -336,8 +332,8 @@ function getStudentAidReport($academic_year, $start_date, $end_date) {
             SELECT 
                 status,
                 COUNT(*) as request_count,
-                SUM(amount_requested) as total_requested,
-                SUM(amount_approved) as total_approved,
+                COALESCE(SUM(amount_requested), 0) as total_requested,
+                COALESCE(SUM(amount_approved), 0) as total_approved,
                 AVG(amount_requested) as avg_requested,
                 AVG(amount_approved) as avg_approved
             FROM student_financial_aid 
@@ -375,12 +371,12 @@ function getAllowancesReport($academic_year, $start_date, $end_date) {
     $data = [];
     
     try {
-        // Mission allowances - CORRECTED column names
+        // Mission allowances
         $stmt = $pdo->prepare("
             SELECT 
                 status,
                 COUNT(*) as count,
-                SUM(amount) as total_amount,
+                COALESCE(SUM(amount), 0) as total_amount,
                 AVG(amount) as avg_amount
             FROM mission_allowances 
             WHERE created_at BETWEEN ? AND ?
@@ -389,12 +385,12 @@ function getAllowancesReport($academic_year, $start_date, $end_date) {
         $stmt->execute([$start_date, $end_date]);
         $data['mission_allowances'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Communication allowances - CORRECTED table and column names
+        // Communication allowances
         $stmt = $pdo->prepare("
             SELECT 
                 status,
                 COUNT(*) as count,
-                SUM(amount) as total_amount,
+                COALESCE(SUM(amount), 0) as total_amount,
                 AVG(amount) as avg_amount
             FROM committee_communication_allowances 
             WHERE created_at BETWEEN ? AND ?
@@ -455,7 +451,7 @@ function getRentalIncomeReport($academic_year, $start_date, $end_date) {
             SELECT 
                 rp.property_name,
                 COUNT(rpm.id) as payment_count,
-                SUM(rpm.amount) as total_collected,
+                COALESCE(SUM(rpm.amount), 0) as total_collected,
                 AVG(rpm.amount) as avg_payment
             FROM rental_payments rpm
             LEFT JOIN rental_properties rp ON rpm.property_id = rp.id
@@ -466,16 +462,16 @@ function getRentalIncomeReport($academic_year, $start_date, $end_date) {
         $stmt->execute([$start_date, $end_date]);
         $data['rental_income'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        // Monthly rental income
+        // Monthly rental income (PostgreSQL compatible)
         $stmt = $pdo->prepare("
             SELECT 
-                DATE_FORMAT(payment_date, '%Y-%m') as month,
-                SUM(amount) as monthly_income,
+                TO_CHAR(payment_date, 'YYYY-MM') as month,
+                COALESCE(SUM(amount), 0) as monthly_income,
                 COUNT(*) as payment_count
             FROM rental_payments 
             WHERE payment_date BETWEEN ? AND ?
             AND status = 'verified'
-            GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+            GROUP BY TO_CHAR(payment_date, 'YYYY-MM')
             ORDER BY month
         ");
         $stmt->execute([$start_date, $end_date]);
@@ -537,7 +533,8 @@ function generatePDFReport($title, $data, $academic_year, $start_date, $end_date
     $pdf->Ln(10);
     
     // Add report content based on type
-    $report_type = array_search($title, [
+    $report_type = '';
+    foreach ([
         'Financial Summary Report' => 'financial_summary',
         'Income Statement Report' => 'income_statement',
         'Budget vs Actual Report' => 'budget_vs_actual',
@@ -545,7 +542,12 @@ function generatePDFReport($title, $data, $academic_year, $start_date, $end_date
         'Student Financial Aid Report' => 'student_aid_report',
         'Allowances Report' => 'allowances_report',
         'Rental Income Report' => 'rental_income_report'
-    ]);
+    ] as $report_title => $type) {
+        if ($title === $report_title) {
+            $report_type = $type;
+            break;
+        }
+    }
     
     switch ($report_type) {
         case 'financial_summary':
@@ -577,6 +579,7 @@ function generateExcelReport($title, $data, $academic_year, $start_date, $end_da
     
     echo "<html>";
     echo "<head>";
+    echo "<meta charset='UTF-8'>";
     echo "<style>";
     echo "td { border: 1px solid #000; padding: 5px; }";
     echo "th { border: 1px solid #000; padding: 5px; background-color: #f0f0f0; }";
@@ -592,7 +595,8 @@ function generateExcelReport($title, $data, $academic_year, $start_date, $end_da
     echo "<br>";
     
     // Add report content based on type
-    $report_type = array_search($title, [
+    $report_type = '';
+    foreach ([
         'Financial Summary Report' => 'financial_summary',
         'Income Statement Report' => 'income_statement',
         'Budget vs Actual Report' => 'budget_vs_actual',
@@ -600,7 +604,12 @@ function generateExcelReport($title, $data, $academic_year, $start_date, $end_da
         'Student Financial Aid Report' => 'student_aid_report',
         'Allowances Report' => 'allowances_report',
         'Rental Income Report' => 'rental_income_report'
-    ]);
+    ] as $report_title => $type) {
+        if ($title === $report_title) {
+            $report_type = $type;
+            break;
+        }
+    }
     
     switch ($report_type) {
         case 'financial_summary':
@@ -637,10 +646,14 @@ function generateFinancialSummaryPDF($pdf, $data) {
     $pdf->Cell(0, 7, 'RWF ' . number_format($data['total_expenses'] ?? 0, 2), 0, 1);
     
     $pdf->Cell(100, 7, 'Net Cash Flow:', 0, 0);
+    $net_color = ($data['net_cash_flow'] ?? 0) >= 0 ? '' : '';
     $pdf->Cell(0, 7, 'RWF ' . number_format($data['net_cash_flow'] ?? 0, 2), 0, 1);
     
     $pdf->Cell(100, 7, 'Bank Balance:', 0, 0);
     $pdf->Cell(0, 7, 'RWF ' . number_format($data['bank_balance'] ?? 0, 2), 0, 1);
+    
+    $pdf->Cell(100, 7, 'Total Budget:', 0, 0);
+    $pdf->Cell(0, 7, 'RWF ' . number_format($data['total_budget'] ?? 0, 2), 0, 1);
     
     $pdf->Cell(100, 7, 'Budget Utilization:', 0, 0);
     $pdf->Cell(0, 7, number_format($data['budget_utilization'] ?? 0, 1) . '%', 0, 1);
@@ -711,14 +724,16 @@ function generateBudgetVsActualPDF($pdf, $data) {
     $pdf->Cell(60, 6, 'Category', 1, 0);
     $pdf->Cell(30, 6, 'Budgeted', 1, 0);
     $pdf->Cell(30, 6, 'Actual', 1, 0);
+    $pdf->Cell(25, 6, 'Variance', 1, 0);
     $pdf->Cell(25, 6, 'Utilization', 1, 1);
     
     $pdf->SetFont('helvetica', '', 9);
     
     foreach ($data['budget_comparison'] ?? [] as $comparison) {
         $pdf->Cell(60, 6, substr($comparison['category_name'], 0, 30), 1, 0);
-        $pdf->Cell(30, 6, 'RWF ' . number_format($comparison['approved_amount'], 0), 1, 0);
+        $pdf->Cell(30, 6, 'RWF ' . number_format($comparison['budgeted_amount'], 0), 1, 0);
         $pdf->Cell(30, 6, 'RWF ' . number_format($comparison['actual_amount'], 0), 1, 0);
+        $pdf->Cell(25, 6, 'RWF ' . number_format($comparison['variance'], 0), 1, 0);
         $pdf->Cell(25, 6, number_format($comparison['utilization_percentage'], 1) . '%', 1, 1);
     }
 }
@@ -732,10 +747,14 @@ function generateAllowancesPDF($pdf, $data) {
     $pdf->Cell(0, 10, 'Mission Allowances', 0, 1);
     $pdf->SetFont('helvetica', '', 9);
     
+    $pdf->Cell(60, 6, 'Status', 1, 0);
+    $pdf->Cell(40, 6, 'Count', 1, 0);
+    $pdf->Cell(50, 6, 'Total Amount', 1, 1);
+    
     foreach ($data['mission_allowances'] ?? [] as $allowance) {
-        $pdf->Cell(40, 6, ucfirst($allowance['status']), 0, 0);
-        $pdf->Cell(30, 6, $allowance['count'] . ' records', 0, 0);
-        $pdf->Cell(40, 6, 'RWF ' . number_format($allowance['total_amount'], 2), 0, 1);
+        $pdf->Cell(60, 6, ucfirst($allowance['status']), 1, 0);
+        $pdf->Cell(40, 6, $allowance['count'] . ' records', 1, 0);
+        $pdf->Cell(50, 6, 'RWF ' . number_format($allowance['total_amount'], 2), 1, 1);
     }
     
     $pdf->Ln(5);
@@ -745,10 +764,14 @@ function generateAllowancesPDF($pdf, $data) {
     $pdf->Cell(0, 10, 'Communication Allowances', 0, 1);
     $pdf->SetFont('helvetica', '', 9);
     
+    $pdf->Cell(60, 6, 'Status', 1, 0);
+    $pdf->Cell(40, 6, 'Count', 1, 0);
+    $pdf->Cell(50, 6, 'Total Amount', 1, 1);
+    
     foreach ($data['communication_allowances'] ?? [] as $allowance) {
-        $pdf->Cell(40, 6, ucfirst($allowance['status']), 0, 0);
-        $pdf->Cell(30, 6, $allowance['count'] . ' records', 0, 0);
-        $pdf->Cell(40, 6, 'RWF ' . number_format($allowance['total_amount'], 2), 0, 1);
+        $pdf->Cell(60, 6, ucfirst($allowance['status']), 1, 0);
+        $pdf->Cell(40, 6, $allowance['count'] . ' records', 1, 0);
+        $pdf->Cell(50, 6, 'RWF ' . number_format($allowance['total_amount'], 2), 1, 1);
     }
 }
 
@@ -760,43 +783,46 @@ function generateFinancialSummaryExcel($data) {
     echo "<tr><td>Total Expenses:</td><td>RWF " . number_format($data['total_expenses'] ?? 0, 2) . "</td></tr>";
     echo "<tr><td>Net Cash Flow:</td><td>RWF " . number_format($data['net_cash_flow'] ?? 0, 2) . "</td></tr>";
     echo "<tr><td>Bank Balance:</td><td>RWF " . number_format($data['bank_balance'] ?? 0, 2) . "</td></tr>";
+    echo "<tr><td>Total Budget:</td><td>RWF " . number_format($data['total_budget'] ?? 0, 2) . "</td></tr>";
     echo "<tr><td>Budget Utilization:</td><td>" . number_format($data['budget_utilization'] ?? 0, 1) . "%</td></tr>";
     echo "</table><br>";
     
     echo "<table>";
     echo "<tr><th colspan='2'>Transaction Summary</th></tr>";
-    echo "<tr><td>Total Transactions:</td><td>" . number_format($data['total_transactions'] ?? 0) . "</td></tr>";
-    echo "<tr><td>Income Transactions:</td><td>" . number_format($data['income_transactions'] ?? 0) . "</td></tr>";
-    echo "<tr><td>Expense Transactions:</td><td>" . number_format($data['expense_transactions'] ?? 0) . "</td></tr>";
+    echo "irs<th>Total Transactions:</th><td>" . number_format($data['total_transactions'] ?? 0) . "</td></tr>";
+    echo "<tr><th>Income Transactions:</th><td>" . number_format($data['income_transactions'] ?? 0) . "</td></tr>";
+    echo "<tr><th>Expense Transactions:</th><td>" . number_format($data['expense_transactions'] ?? 0) . "</td></tr>";
     echo "</table>";
 }
 
 function generateIncomeStatementExcel($data) {
     echo "<table>";
     echo "<tr><th colspan='2'>Income Statement Summary</th></tr>";
-    echo "<tr><td>Total Income:</td><td>RWF " . number_format($data['total_income'] ?? 0, 2) . "</td></tr>";
-    echo "<tr><td>Total Expenses:</td><td>RWF " . number_format($data['total_expenses'] ?? 0, 2) . "</td></tr>";
-    echo "<tr><td>Net Income:</td><td>RWF " . number_format($data['net_income'] ?? 0, 2) . "</td></tr>";
+    echo "<tr><th>Total Income:</th><td>RWF " . number_format($data['total_income'] ?? 0, 2) . "</td></tr>";
+    echo "<tr><th>Total Expenses:</th><td>RWF " . number_format($data['total_expenses'] ?? 0, 2) . "</td></tr>";
+    echo "<tr><th>Net Income:</th><td>RWF " . number_format($data['net_income'] ?? 0, 2) . "</td></tr>";
     echo "</table><br>";
     
     echo "<table>";
     echo "<tr><th colspan='3'>Income by Category</th></tr>";
+    echo "<tr><th>Category</th><th>Amount</th><th>Transactions</th></tr>";
     foreach ($data['income_categories'] ?? [] as $category) {
         echo "<tr>";
         echo "<td>" . htmlspecialchars($category['category_name']) . "</td>";
         echo "<td>RWF " . number_format($category['amount'], 2) . "</td>";
-        echo "<td>" . $category['transaction_count'] . " transactions</td>";
+        echo "<td>" . $category['transaction_count'] . "</td>";
         echo "</tr>";
     }
     echo "</table><br>";
     
     echo "<table>";
     echo "<tr><th colspan='3'>Expenses by Category</th></tr>";
+    echo "<tr><th>Category</th><th>Amount</th><th>Transactions</th></tr>";
     foreach ($data['expense_categories'] ?? [] as $category) {
         echo "<tr>";
         echo "<td>" . htmlspecialchars($category['category_name']) . "</td>";
         echo "<td>RWF " . number_format($category['amount'], 2) . "</td>";
-        echo "<td>" . $category['transaction_count'] . " transactions</td>";
+        echo "<td>" . $category['transaction_count'] . "</td>";
         echo "</tr>";
     }
     echo "</table>";
@@ -810,7 +836,7 @@ function generateBudgetVsActualExcel($data) {
     foreach ($data['budget_comparison'] ?? [] as $comparison) {
         echo "<tr>";
         echo "<td>" . htmlspecialchars($comparison['category_name']) . "</td>";
-        echo "<td>RWF " . number_format($comparison['approved_amount'], 2) . "</td>";
+        echo "<td>RWF " . number_format($comparison['budgeted_amount'], 2) . "</td>";
         echo "<td>RWF " . number_format($comparison['actual_amount'], 2) . "</td>";
         echo "<td>RWF " . number_format($comparison['variance'], 2) . "</td>";
         echo "<td>" . number_format($comparison['utilization_percentage'], 1) . "%</td>";
@@ -854,14 +880,13 @@ function generateAllowancesExcel($data) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Financial Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* Reuse all the CSS from dashboard.php with additions for reports */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -875,6 +900,7 @@ function generateAllowancesExcel($data) {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --finance-primary: #1976D2;
             --finance-secondary: #2196F3;
             --finance-accent: #0D47A1;
@@ -886,6 +912,8 @@ function generateAllowancesExcel($data) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -901,11 +929,11 @@ function generateAllowancesExcel($data) {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --finance-primary: #2196F3;
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
         }
 
         * {
@@ -928,14 +956,11 @@ function generateAllowancesExcel($data) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -945,7 +970,6 @@ function generateAllowancesExcel($data) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -954,38 +978,44 @@ function generateAllowancesExcel($data) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -993,22 +1023,7 @@ function generateAllowancesExcel($data) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -1017,41 +1032,32 @@ function generateAllowancesExcel($data) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -1061,57 +1067,85 @@ function generateAllowancesExcel($data) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -1141,9 +1175,7 @@ function generateAllowancesExcel($data) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -1156,6 +1188,20 @@ function generateAllowancesExcel($data) {
             margin-left: auto;
         }
 
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -1189,7 +1235,7 @@ function generateAllowancesExcel($data) {
         }
 
         .form-group {
-            margin-bottom: 1rem;
+            margin-bottom: 0;
         }
 
         .form-label {
@@ -1200,7 +1246,7 @@ function generateAllowancesExcel($data) {
             font-size: 0.8rem;
         }
 
-        .form-control {
+        .form-control, .form-select {
             width: 100%;
             padding: 0.75rem;
             border: 1px solid var(--medium-gray);
@@ -1211,20 +1257,10 @@ function generateAllowancesExcel($data) {
             transition: var(--transition);
         }
 
-        .form-control:focus {
+        .form-control:focus, .form-select:focus {
             outline: none;
             border-color: var(--finance-primary);
             box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
         }
 
         .btn {
@@ -1256,11 +1292,6 @@ function generateAllowancesExcel($data) {
             color: white;
         }
 
-        .btn-warning {
-            background: var(--warning);
-            color: var(--text-dark);
-        }
-
         .btn-danger {
             background: var(--danger);
             color: white;
@@ -1268,27 +1299,27 @@ function generateAllowancesExcel($data) {
 
         .export-options {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
             flex-wrap: wrap;
         }
 
         /* Report Display */
         .report-display {
             background: var(--white);
-            padding: 1.5rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
+            overflow: hidden;
         }
 
         .report-header {
             text-align: center;
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 2px solid var(--medium-gray);
+            padding: 1.5rem;
+            border-bottom: 1px solid var(--medium-gray);
+            background: var(--finance-light);
         }
 
         .report-title {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--text-dark);
             margin-bottom: 0.5rem;
@@ -1296,41 +1327,11 @@ function generateAllowancesExcel($data) {
 
         .report-meta {
             color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
-        /* Tables */
-        .table {
-            width: 100%;
-            border-collapse: collapse;
             font-size: 0.8rem;
-            margin-bottom: 1.5rem;
         }
 
-        .table th, .table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.75rem;
-        }
-
-        .amount {
-            font-weight: 600;
-            font-family: 'Courier New', monospace;
-        }
-
-        .amount.positive {
-            color: var(--success);
-        }
-
-        .amount.negative {
-            color: var(--danger);
+        .report-body {
+            padding: 1.5rem;
         }
 
         /* Stats Grid */
@@ -1338,17 +1339,19 @@ function generateAllowancesExcel($data) {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--finance-primary);
             transition: var(--transition);
-            text-align: center;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
         .stat-card:hover {
@@ -1368,8 +1371,40 @@ function generateAllowancesExcel($data) {
             border-left-color: var(--danger);
         }
 
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+            background: var(--finance-light);
+            color: var(--finance-primary);
+        }
+
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: var(--warning);
+        }
+
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
+
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -1377,43 +1412,188 @@ function generateAllowancesExcel($data) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        /* Charts */
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+            margin-bottom: 1.5rem;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .table th, .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .table th {
+            background: var(--light-gray);
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .table tbody tr:hover {
+            background: var(--finance-light);
+        }
+
+        .amount {
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+        }
+
+        .amount.positive {
+            color: var(--success);
+        }
+
+        .amount.negative {
+            color: var(--danger);
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-completed, .status-verified, .status-approved_by_president {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .status-pending, .status-submitted, .status-under_review {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        /* Chart Container */
         .chart-container {
             position: relative;
             height: 300px;
             margin: 1.5rem 0;
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .control-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
-            
-            .user-details {
-                display: none;
+
+            .export-options {
+                flex-direction: column;
+            }
+
+            .btn {
+                justify-content: center;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1421,25 +1601,55 @@ function generateAllowancesExcel($data) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .main-content {
-                padding: 1rem;
+
+            .chart-container {
+                height: 200px;
             }
-            
-            .export-options {
-                flex-direction: column;
+
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Financial Reports</h1>
                 </div>
@@ -1449,7 +1659,10 @@ function generateAllowancesExcel($data) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
@@ -1476,7 +1689,10 @@ function generateAllowancesExcel($data) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1560,7 +1776,7 @@ function generateAllowancesExcel($data) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Financial Reports & Analytics 📊</h1>
@@ -1576,7 +1792,7 @@ function generateAllowancesExcel($data) {
                     <div class="control-grid">
                         <div class="form-group">
                             <label class="form-label">Report Type</label>
-                            <select class="form-select" name="report_type" id="reportType" onchange="updateDateRange()">
+                            <select class="form-select" name="report_type" id="reportType">
                                 <option value="financial_summary" <?php echo $report_type === 'financial_summary' ? 'selected' : ''; ?>>Financial Summary</option>
                                 <option value="income_statement" <?php echo $report_type === 'income_statement' ? 'selected' : ''; ?>>Income Statement</option>
                                 <option value="budget_vs_actual" <?php echo $report_type === 'budget_vs_actual' ? 'selected' : ''; ?>>Budget vs Actual</option>
@@ -1632,36 +1848,511 @@ function generateAllowancesExcel($data) {
                     <div class="report-header">
                         <h2 class="report-title"><?php echo getReportTitle($report_type); ?></h2>
                         <div class="report-meta">
-                            Academic Year: <?php echo $academic_year; ?> | 
+                            Academic Year: <?php echo htmlspecialchars($academic_year); ?> | 
                             Period: <?php echo date('F j, Y', strtotime($start_date)); ?> to <?php echo date('F j, Y', strtotime($end_date)); ?> | 
                             Generated on: <?php echo date('F j, Y g:i A'); ?>
                         </div>
                     </div>
-
-                    <!-- Report Content based on type -->
-                    <?php switch ($report_type):
-                        case 'financial_summary': ?>
-                            <?php include 'report_templates/financial_summary.php'; ?>
-                            <?php break; ?>
-                        <?php case 'income_statement': ?>
-                            <?php include 'report_templates/income_statement.php'; ?>
-                            <?php break; ?>
-                        <?php case 'budget_vs_actual': ?>
-                            <?php include 'report_templates/budget_vs_actual.php'; ?>
-                            <?php break; ?>
-                        <?php case 'expense_analysis': ?>
-                            <?php include 'report_templates/expense_analysis.php'; ?>
-                            <?php break; ?>
-                        <?php case 'student_aid_report': ?>
-                            <?php include 'report_templates/student_aid.php'; ?>
-                            <?php break; ?>
-                        <?php case 'allowances_report': ?>
-                            <?php include 'report_templates/allowances.php'; ?>
-                            <?php break; ?>
-                        <?php case 'rental_income_report': ?>
-                            <?php include 'report_templates/rental_income.php'; ?>
-                            <?php break; ?>
-                    <?php endswitch; ?>
+                    <div class="report-body">
+                        <?php switch ($report_type):
+                            case 'financial_summary': ?>
+                                <!-- Financial Summary Report -->
+                                <div class="stats-grid">
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-arrow-up"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['total_income'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Total Income</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card danger">
+                                        <div class="stat-icon"><i class="fas fa-arrow-down"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['total_expenses'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Total Expenses</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card <?php echo ($report_data['net_cash_flow'] ?? 0) >= 0 ? 'success' : 'danger'; ?>">
+                                        <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['net_cash_flow'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Net Cash Flow</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-university"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['bank_balance'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Bank Balance</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="stats-grid">
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-money-bill-wave"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['total_budget'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Total Budget</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card <?php echo ($report_data['budget_utilization'] ?? 0) <= 80 ? 'success' : 'warning'; ?>">
+                                        <div class="stat-icon"><i class="fas fa-chart-pie"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number"><?php echo number_format($report_data['budget_utilization'] ?? 0, 1); ?>%</div>
+                                            <div class="stat-label">Budget Utilization</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-exchange-alt"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number"><?php echo number_format($report_data['total_transactions'] ?? 0); ?></div>
+                                            <div class="stat-label">Total Transactions</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Metric</th>
+                                                <th>Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>Income Transactions</td>
+                                                <td><?php echo number_format($report_data['income_transactions'] ?? 0); ?></td>
+                                            </tr>
+                                            <tr>
+                                                <td>Expense Transactions</td>
+                                                <td><?php echo number_format($report_data['expense_transactions'] ?? 0); ?></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <?php break; ?>
+                                
+                            <?php case 'income_statement': ?>
+                                <!-- Income Statement Report -->
+                                <div class="stats-grid">
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-arrow-up"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['total_income'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Total Income</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card danger">
+                                        <div class="stat-icon"><i class="fas fa-arrow-down"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['total_expenses'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Total Expenses</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card <?php echo ($report_data['net_income'] ?? 0) >= 0 ? 'success' : 'danger'; ?>">
+                                        <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($report_data['net_income'] ?? 0, 0); ?></div>
+                                            <div class="stat-label">Net Income</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <h3 style="margin: 1rem 0 0.5rem;">Income by Category</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Category</th>
+                                                <th>Amount</th>
+                                                <th>Transactions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['income_categories'] ?? [] as $category): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($category['category_name']); ?></td>
+                                                    <td class="amount positive">RWF <?php echo number_format($category['amount'], 0); ?></td>
+                                                    <td><?php echo $category['transaction_count']; ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['income_categories'])): ?>
+                                                <tr><td colspan="3" class="empty-state">No income data available</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                <h3 style="margin: 1rem 0 0.5rem;">Expenses by Category</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Category</th>
+                                                <th>Amount</th>
+                                                <th>Transactions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['expense_categories'] ?? [] as $category): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($category['category_name']); ?></td>
+                                                    <td class="amount negative">RWF <?php echo number_format($category['amount'], 0); ?></td>
+                                                    <td><?php echo $category['transaction_count']; ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['expense_categories'])): ?>
+                                                <tr><td colspan="3" class="empty-state">No expense data available</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <?php break; ?>
+                                
+                            <?php case 'budget_vs_actual': ?>
+                                <!-- Budget vs Actual Report -->
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Category</th>
+                                                <th>Budgeted</th>
+                                                <th>Actual</th>
+                                                <th>Variance</th>
+                                                <th>Utilization</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['budget_comparison'] ?? [] as $comparison): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($comparison['category_name']); ?></td>
+                                                    <td>RWF <?php echo number_format($comparison['budgeted_amount'], 0); ?></td>
+                                                    <td>RWF <?php echo number_format($comparison['actual_amount'], 0); ?></td>
+                                                    <td class="amount <?php echo $comparison['variance'] >= 0 ? 'positive' : 'negative'; ?>">
+                                                        RWF <?php echo number_format($comparison['variance'], 0); ?>
+                                                    </td>
+                                                    <td>
+                                                        <span class="status-badge <?php echo $comparison['utilization_percentage'] <= 80 ? 'status-completed' : 'status-pending'; ?>">
+                                                            <?php echo number_format($comparison['utilization_percentage'], 1); ?>%
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['budget_comparison'])): ?>
+                                                <tr><td colspan="5" class="empty-state">No budget data available</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <?php break; ?>
+                                
+                            <?php case 'expense_analysis': ?>
+                                <!-- Expense Analysis Report -->
+                                <h3 style="margin: 0 0 1rem;">Top 20 Expenses</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Date</th>
+                                                <th>Description</th>
+                                                <th>Category</th>
+                                                <th>Payee</th>
+                                                <th>Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['top_expenses'] ?? [] as $expense): ?>
+                                                <tr>
+                                                    <td><?php echo date('M j, Y', strtotime($expense['transaction_date'])); ?></td>
+                                                    <td><?php echo htmlspecialchars(substr($expense['description'], 0, 40)); ?></td>
+                                                    <td><?php echo htmlspecialchars($expense['category_name'] ?? 'N/A'); ?></td>
+                                                    <td><?php echo htmlspecialchars($expense['payee_payer'] ?? 'N/A'); ?></td>
+                                                    <td class="amount negative">RWF <?php echo number_format($expense['amount'], 0); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['top_expenses'])): ?>
+                                                <tr><td colspan="5" class="empty-state">No expense data available</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                <?php if (!empty($report_data['monthly_trends'])): ?>
+                                    <h3 style="margin: 1rem 0 0.5rem;">Monthly Expense Trends</h3>
+                                    <div class="chart-container">
+                                        <canvas id="expenseTrendsChart"></canvas>
+                                    </div>
+                                    <script>
+                                        document.addEventListener('DOMContentLoaded', function() {
+                                            const ctx = document.getElementById('expenseTrendsChart');
+                                            if (ctx) {
+                                                new Chart(ctx, {
+                                                    type: 'line',
+                                                    data: {
+                                                        labels: <?php echo json_encode(array_map(function($trend) {
+                                                            return date('M Y', strtotime($trend['month'] . '-01'));
+                                                        }, $report_data['monthly_trends'])); ?>,
+                                                        datasets: [{
+                                                            label: 'Monthly Expenses',
+                                                            data: <?php echo json_encode(array_column($report_data['monthly_trends'], 'monthly_expenses')); ?>,
+                                                            borderColor: '#dc3545',
+                                                            backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                                                            fill: true,
+                                                            tension: 0.4
+                                                        }]
+                                                    },
+                                                    options: {
+                                                        responsive: true,
+                                                        maintainAspectRatio: false,
+                                                        scales: {
+                                                            y: {
+                                                                beginAtZero: true,
+                                                                ticks: {
+                                                                    callback: function(value) {
+                                                                        return 'RWF ' + value.toLocaleString();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    </script>
+                                <?php endif; ?>
+                                <?php break; ?>
+                                
+                            <?php case 'student_aid_report': ?>
+                                <!-- Student Aid Report -->
+                                <div class="stats-grid">
+                                    <?php 
+                                    $total_requested = array_sum(array_column($report_data['aid_summary'] ?? [], 'total_requested'));
+                                    $total_approved = array_sum(array_column($report_data['aid_summary'] ?? [], 'total_approved'));
+                                    ?>
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-hand-holding-heart"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($total_requested, 0); ?></div>
+                                            <div class="stat-label">Total Requested</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card success">
+                                        <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format($total_approved, 0); ?></div>
+                                            <div class="stat-label">Total Approved</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <h3 style="margin: 1rem 0 0.5rem;">Aid Summary by Status</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Status</th>
+                                                <th>Requests</th>
+                                                <th>Total Requested</th>
+                                                <th>Total Approved</th>
+                                                <th>Average Requested</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['aid_summary'] ?? [] as $summary): ?>
+                                                <tr>
+                                                    <td><span class="status-badge status-<?php echo str_replace('_', '-', $summary['status']); ?>"><?php echo ucfirst(str_replace('_', ' ', $summary['status'])); ?></span></td>
+                                                    <td><?php echo $summary['request_count']; ?></td>
+                                                    <td>RWF <?php echo number_format($summary['total_requested'], 0); ?></td>
+                                                    <td>RWF <?php echo number_format($summary['total_approved'], 0); ?></td>
+                                                    <td>RWF <?php echo number_format($summary['avg_requested'], 0); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['aid_summary'])): ?>
+                                                <tr><td colspan="5" class="empty-state">No aid data available</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                <h3 style="margin: 1rem 0 0.5rem;">Recent Aid Requests</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Student</th>
+                                                <th>Registration #</th>
+                                                <th>Purpose</th>
+                                                <th>Amount Requested</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['recent_requests'] ?? [] as $request): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($request['student_name']); ?></td>
+                                                    <td><?php echo htmlspecialchars($request['registration_number'] ?? 'N/A'); ?></td>
+                                                    <td><?php echo htmlspecialchars(substr($request['purpose'], 0, 40)); ?></td>
+                                                    <td>RWF <?php echo number_format($request['amount_requested'], 0); ?></td>
+                                                    <td><span class="status-badge status-<?php echo str_replace('_', '-', $request['status']); ?>"><?php echo ucfirst(str_replace('_', ' ', $request['status'])); ?></span></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['recent_requests'])): ?>
+                                                <tr><td colspan="5" class="empty-state">No recent aid requests</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <?php break; ?>
+                                
+                            <?php case 'allowances_report': ?>
+                                <!-- Allowances Report -->
+                                <div class="stats-grid">
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-plane"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format(array_sum(array_column($report_data['mission_allowances'] ?? [], 'total_amount')), 0); ?></div>
+                                            <div class="stat-label">Mission Allowances</div>
+                                        </div>
+                                    </div>
+                                    <div class="stat-card">
+                                        <div class="stat-icon"><i class="fas fa-phone-alt"></i></div>
+                                        <div class="stat-content">
+                                            <div class="stat-number">RWF <?php echo number_format(array_sum(array_column($report_data['communication_allowances'] ?? [], 'total_amount')), 0); ?></div>
+                                            <div class="stat-label">Communication Allowances</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <h3 style="margin: 1rem 0 0.5rem;">Mission Allowances Summary</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Status</th>
+                                                <th>Count</th>
+                                                <th>Total Amount</th>
+                                                <th>Average</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['mission_allowances'] ?? [] as $allowance): ?>
+                                                <tr>
+                                                    <td><span class="status-badge status-<?php echo str_replace('_', '-', $allowance['status']); ?>"><?php echo ucfirst(str_replace('_', ' ', $allowance['status'])); ?></span></td>
+                                                    <td><?php echo $allowance['count']; ?></td>
+                                                    <td>RWF <?php echo number_format($allowance['total_amount'], 0); ?></td>
+                                                    <td>RWF <?php echo number_format($allowance['avg_amount'], 0); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['mission_allowances'])): ?>
+                                                <tr><td colspan="4" class="empty-state">No mission allowance data</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                <h3 style="margin: 1rem 0 0.5rem;">Communication Allowances Summary</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Status</th>
+                                                <th>Count</th>
+                                                <th>Total Amount</th>
+                                                <th>Average</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['communication_allowances'] ?? [] as $allowance): ?>
+                                                <tr>
+                                                    <td><span class="status-badge status-<?php echo str_replace('_', '-', $allowance['status']); ?>"><?php echo ucfirst(str_replace('_', ' ', $allowance['status'])); ?></span></td>
+                                                    <td><?php echo $allowance['count']; ?></td>
+                                                    <td>RWF <?php echo number_format($allowance['total_amount'], 0); ?></td>
+                                                    <td>RWF <?php echo number_format($allowance['avg_amount'], 0); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['communication_allowances'])): ?>
+                                                <tr><td colspan="4" class="empty-state">No communication allowance data</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <?php break; ?>
+                                
+                            <?php case 'rental_income_report': ?>
+                                <!-- Rental Income Report -->
+                                <h3 style="margin: 0 0 1rem;">Rental Income Summary</h3>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Property</th>
+                                                <th>Payments</th>
+                                                <th>Total Collected</th>
+                                                <th>Average Payment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($report_data['rental_income'] ?? [] as $rental): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($rental['property_name']); ?></td>
+                                                    <td><?php echo $rental['payment_count']; ?></td>
+                                                    <td class="amount positive">RWF <?php echo number_format($rental['total_collected'], 0); ?></td>
+                                                    <td>RWF <?php echo number_format($rental['avg_payment'], 0); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                            <?php if (empty($report_data['rental_income'])): ?>
+                                                <tr><td colspan="4" class="empty-state">No rental income data available</td></tr>
+                                            <?php endif; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                <?php if (!empty($report_data['monthly_rental_income'])): ?>
+                                    <h3 style="margin: 1rem 0 0.5rem;">Monthly Rental Income</h3>
+                                    <div class="chart-container">
+                                        <canvas id="rentalIncomeChart"></canvas>
+                                    </div>
+                                    <script>
+                                        document.addEventListener('DOMContentLoaded', function() {
+                                            const ctx = document.getElementById('rentalIncomeChart');
+                                            if (ctx) {
+                                                new Chart(ctx, {
+                                                    type: 'bar',
+                                                    data: {
+                                                        labels: <?php echo json_encode(array_map(function($item) {
+                                                            return date('M Y', strtotime($item['month'] . '-01'));
+                                                        }, $report_data['monthly_rental_income'])); ?>,
+                                                        datasets: [{
+                                                            label: 'Rental Income',
+                                                            data: <?php echo json_encode(array_column($report_data['monthly_rental_income'], 'monthly_income')); ?>,
+                                                            backgroundColor: '#28a745',
+                                                            borderRadius: 8
+                                                        }]
+                                                    },
+                                                    options: {
+                                                        responsive: true,
+                                                        maintainAspectRatio: false,
+                                                        scales: {
+                                                            y: {
+                                                                beginAtZero: true,
+                                                                ticks: {
+                                                                    callback: function(value) {
+                                                                        return 'RWF ' + value.toLocaleString();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    </script>
+                                <?php endif; ?>
+                                <?php break; ?>
+                        <?php endswitch; ?>
+                    </div>
                 </div>
             <?php endif; ?>
         </main>
@@ -1685,148 +2376,66 @@ function generateAllowancesExcel($data) {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Update date range based on report type
-        function updateDateRange() {
-            const reportType = document.getElementById('reportType').value;
-            const today = new Date();
-            let startDate, endDate;
-
-            switch (reportType) {
-                case 'financial_summary':
-                case 'income_statement':
-                    // Current month
-                    startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-                    endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-                    break;
-                case 'budget_vs_actual':
-                    // Academic year to date
-                    startDate = new Date(today.getFullYear(), 7, 1); // August 1st
-                    if (today < startDate) {
-                        startDate = new Date(today.getFullYear() - 1, 7, 1);
-                    }
-                    endDate = today;
-                    break;
-                default:
-                    // Last 30 days
-                    startDate = new Date(today);
-                    startDate.setDate(today.getDate() - 30);
-                    endDate = today;
-            }
-
-            // Format dates for input fields
-            document.querySelector('input[name="start_date"]').value = startDate.toISOString().split('T')[0];
-            document.querySelector('input[name="end_date"]').value = endDate.toISOString().split('T')[0];
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        // Initialize date ranges
-        document.addEventListener('DOMContentLoaded', function() {
-            updateDateRange();
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
-
-        // Add these functions to the existing financial_reports.php file
-
-function generateIncomeStatementPDF($pdf, $data) {
-    $pdf->SetFont('helvetica', 'B', 12);
-    $pdf->Cell(0, 10, 'Income Statement Summary', 0, 1);
-    $pdf->SetFont('helvetica', '', 10);
-    
-    $pdf->Cell(100, 7, 'Total Income:', 0, 0);
-    $pdf->Cell(0, 7, 'RWF ' . number_format($data['total_income'] ?? 0, 2), 0, 1);
-    
-    $pdf->Cell(100, 7, 'Total Expenses:', 0, 0);
-    $pdf->Cell(0, 7, 'RWF ' . number_format($data['total_expenses'] ?? 0, 2), 0, 1);
-    
-    $pdf->Cell(100, 7, 'Net Income:', 0, 0);
-    $pdf->Cell(0, 7, 'RWF ' . number_format($data['net_income'] ?? 0, 2), 0, 1);
-    
-    $pdf->Ln(10);
-    
-    // Income Categories
-    $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(0, 10, 'Income by Category', 0, 1);
-    $pdf->SetFont('helvetica', '', 9);
-    
-    foreach ($data['income_categories'] ?? [] as $category) {
-        $pdf->Cell(80, 6, $category['category_name'], 0, 0);
-        $pdf->Cell(40, 6, 'RWF ' . number_format($category['amount'], 2), 0, 0);
-        $pdf->Cell(30, 6, $category['transaction_count'] . ' trans', 0, 1);
-    }
-    
-    $pdf->Ln(5);
-    
-    // Expense Categories
-    $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(0, 10, 'Expenses by Category', 0, 1);
-    $pdf->SetFont('helvetica', '', 9);
-    
-    foreach ($data['expense_categories'] ?? [] as $category) {
-        $pdf->Cell(80, 6, $category['category_name'], 0, 0);
-        $pdf->Cell(40, 6, 'RWF ' . number_format($category['amount'], 2), 0, 0);
-        $pdf->Cell(30, 6, $category['transaction_count'] . ' trans', 0, 1);
-    }
-}
-
-function generateBudgetVsActualPDF($pdf, $data) {
-    $pdf->SetFont('helvetica', 'B', 12);
-    $pdf->Cell(0, 10, 'Budget vs Actual Comparison', 0, 1);
-    $pdf->SetFont('helvetica', '', 9);
-    
-    foreach ($data['budget_comparison'] ?? [] as $comparison) {
-        $pdf->Cell(60, 6, substr($comparison['category_name'], 0, 30), 0, 0);
-        $pdf->Cell(30, 6, 'RWF ' . number_format($comparison['budgeted_amount'], 0), 0, 0);
-        $pdf->Cell(30, 6, 'RWF ' . number_format($comparison['actual_amount'], 0), 0, 0);
-        $pdf->Cell(25, 6, number_format($comparison['utilization_percentage'], 1) . '%', 0, 1);
-    }
-}
-
-// Excel generators
-function generateIncomeStatementExcel($data) {
-    echo "<table>";
-    echo "<tr><th colspan='2'>Income Statement Summary</th></tr>";
-    echo "<tr><td>Total Income:</td><td>RWF " . number_format($data['total_income'] ?? 0, 2) . "</td></tr>";
-    echo "<tr><td>Total Expenses:</td><td>RWF " . number_format($data['total_expenses'] ?? 0, 2) . "</td></tr>";
-    echo "<tr><td>Net Income:</td><td>RWF " . number_format($data['net_income'] ?? 0, 2) . "</td></tr>";
-    echo "</table><br>";
-    
-    echo "<table>";
-    echo "<tr><th colspan='3'>Income by Category</th></tr>";
-    foreach ($data['income_categories'] ?? [] as $category) {
-        echo "<tr>";
-        echo "<td>" . htmlspecialchars($category['category_name']) . "</td>";
-        echo "<td>RWF " . number_format($category['amount'], 2) . "</td>";
-        echo "<td>" . $category['transaction_count'] . " transactions</td>";
-        echo "</tr>";
-    }
-    echo "</table><br>";
-    
-    echo "<table>";
-    echo "<tr><th colspan='3'>Expenses by Category</th></tr>";
-    foreach ($data['expense_categories'] ?? [] as $category) {
-        echo "<tr>";
-        echo "<td>" . htmlspecialchars($category['category_name']) . "</td>";
-        echo "<td>RWF " . number_format($category['amount'], 2) . "</td>";
-        echo "<td>" . $category['transaction_count'] . " transactions</td>";
-        echo "</tr>";
-    }
-    echo "</table>";
-}
-
-function generateBudgetVsActualExcel($data) {
-    echo "<table>";
-    echo "<tr><th colspan='5'>Budget vs Actual Comparison</th></tr>";
-    echo "<tr><th>Category</th><th>Budgeted</th><th>Actual</th><th>Variance</th><th>Utilization</th></tr>";
-    
-    foreach ($data['budget_comparison'] ?? [] as $comparison) {
-        echo "<tr>";
-        echo "<td>" . htmlspecialchars($comparison['category_name']) . "</td>";
-        echo "<td>RWF " . number_format($comparison['budgeted_amount'], 2) . "</td>";
-        echo "<td>RWF " . number_format($comparison['actual_amount'], 2) . "</td>";
-        echo "<td>RWF " . number_format($comparison['variance'], 2) . "</td>";
-        echo "<td>" . number_format($comparison['utilization_percentage'], 1) . "%</td>";
-        echo "</tr>";
-    }
-    echo "</table>";
-}
     </script>
 </body>
 </html>

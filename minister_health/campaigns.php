@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $campaign_type = $_POST['campaign_type'];
                 $target_audience = $_POST['target_audience'];
                 $start_date = $_POST['start_date'];
-                $end_date = $_POST['end_date'];
+                $end_date = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
                 $location = $_POST['location'];
                 $budget = $_POST['budget'] ?? 0;
                 $allocated_budget = $_POST['allocated_budget'] ?? 0;
@@ -43,8 +43,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         INSERT INTO health_campaigns 
                         (title, description, campaign_type, target_audience, start_date, end_date, 
                          location, budget, allocated_budget, expected_participants, objectives, 
-                         partner_organizations, organizer_id, status, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?)
+                         partner_organizations, organizer_id, status, created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([
                         $title, $description, $campaign_type, $target_audience, $start_date, $end_date,
@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $campaign_type = $_POST['campaign_type'];
                 $target_audience = $_POST['target_audience'];
                 $start_date = $_POST['start_date'];
-                $end_date = $_POST['end_date'];
+                $end_date = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
                 $location = $_POST['location'];
                 $budget = $_POST['budget'] ?? 0;
                 $allocated_budget = $_POST['allocated_budget'] ?? 0;
@@ -117,15 +117,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $campaign_id = $_POST['campaign_id'];
                 $title = $_POST['title'];
                 $description = $_POST['description'];
-                $assigned_to = $_POST['assigned_to'] ?? null;
+                $assigned_to = !empty($_POST['assigned_to']) ? $_POST['assigned_to'] : null;
                 $due_date = $_POST['due_date'];
                 $priority = $_POST['priority'];
                 
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO campaign_tasks 
-                        (campaign_id, title, description, assigned_to, due_date, priority, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (campaign_id, title, description, assigned_to, due_date, priority, created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$campaign_id, $title, $description, $assigned_to, $due_date, $priority, $user_id]);
                     
@@ -144,7 +144,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $pdo->prepare("
                         UPDATE campaign_tasks 
                         SET status = ?, completion_notes = ?, 
-                            completed_at = CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END
+                            completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE NULL END,
+                            updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     ");
                     $stmt->execute([$status, $completion_notes, $status, $task_id]);
@@ -166,8 +167,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO campaign_resources 
-                        (campaign_id, resource_type, title, description, quantity, cost, uploaded_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (campaign_id, resource_type, title, description, quantity, cost, uploaded_by, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$campaign_id, $resource_type, $title, $description, $quantity, $cost, $user_id]);
                     
@@ -181,9 +182,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $campaign_id = $_POST['campaign_id'];
                 $reg_number = $_POST['reg_number'];
                 $name = $_POST['name'];
-                $email = $_POST['email'];
-                $phone = $_POST['phone'];
-                $department_id = $_POST['department_id'] ?? null;
+                $email = $_POST['email'] ?? '';
+                $phone = $_POST['phone'] ?? '';
+                $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
                 
                 try {
                     // Check if already registered
@@ -195,10 +196,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         $stmt = $pdo->prepare("
                             INSERT INTO campaign_participants 
-                            (campaign_id, reg_number, name, email, phone, department_id)
-                            VALUES (?, ?, ?, ?, ?, ?)
+                            (campaign_id, reg_number, name, email, phone, department_id, registered_at)
+                            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                         ");
                         $stmt->execute([$campaign_id, $reg_number, $name, $email, $phone, $department_id]);
+                        
+                        // Update actual participants count in campaign
+                        $stmt = $pdo->prepare("
+                            UPDATE health_campaigns 
+                            SET actual_participants = actual_participants + 1, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$campaign_id]);
                         
                         $_SESSION['success_message'] = "Participant registered successfully!";
                     }
@@ -210,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'update_participant_attendance':
                 $participant_id = $_POST['participant_id'];
                 $attendance_status = $_POST['attendance_status'];
-                $feedback_rating = $_POST['feedback_rating'] ?? null;
+                $feedback_rating = !empty($_POST['feedback_rating']) ? $_POST['feedback_rating'] : null;
                 $feedback_comment = $_POST['feedback_comment'] ?? '';
                 
                 try {
@@ -237,6 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $status_filter = $_GET['status'] ?? 'all';
 $type_filter = $_GET['type'] ?? 'all';
 $search = $_GET['search'] ?? '';
+$view_id = isset($_GET['view']) && is_numeric($_GET['view']) ? (int)$_GET['view'] : null;
 
 // Get campaigns data
 try {
@@ -244,10 +254,10 @@ try {
     $stmt = $pdo->query("
         SELECT 
             COUNT(*) as total_campaigns,
-            SUM(budget) as total_budget,
-            SUM(allocated_budget) as total_allocated,
-            SUM(expected_participants) as total_expected,
-            SUM(actual_participants) as total_participants
+            COALESCE(SUM(budget), 0) as total_budget,
+            COALESCE(SUM(allocated_budget), 0) as total_allocated,
+            COALESCE(SUM(expected_participants), 0) as total_expected,
+            COALESCE(SUM(actual_participants), 0) as total_participants
         FROM health_campaigns
     ");
     $campaign_stats = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -280,7 +290,7 @@ try {
     }
     
     if (!empty($search)) {
-        $query .= " AND (hc.title LIKE ? OR hc.description LIKE ? OR hc.location LIKE ?)";
+        $query .= " AND (hc.title ILIKE ? OR hc.description ILIKE ? OR hc.location ILIKE ?)";
         $search_term = "%$search%";
         $params[] = $search_term;
         $params[] = $search_term;
@@ -312,7 +322,7 @@ try {
     $committee_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Get departments for participant registration
-    $stmt = $pdo->query("SELECT * FROM departments WHERE is_active = 1 ORDER BY name");
+    $stmt = $pdo->query("SELECT * FROM departments WHERE is_active = true ORDER BY name");
     $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
 } catch (PDOException $e) {
@@ -321,19 +331,13 @@ try {
     $campaigns_by_status = $campaigns = $committee_members = $departments = [];
 }
 
-// Common campaign types and partner organizations
-$campaign_types = ['awareness', 'vaccination', 'screening', 'workshop', 'seminar', 'other'];
-$partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', 'Red Cross', 'Local Hospital', 'Community Health Center', 'NGO Partners'];
-
 // Handle single campaign view
 $view_campaign = null;
 $campaign_tasks = [];
 $campaign_resources = [];
 $campaign_participants = [];
 
-if (isset($_GET['view']) && is_numeric($_GET['view'])) {
-    $campaign_id = $_GET['view'];
-    
+if ($view_id) {
     try {
         // Get campaign details
         $stmt = $pdo->prepare("
@@ -342,65 +346,72 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             LEFT JOIN users u ON hc.organizer_id = u.id
             WHERE hc.id = ?
         ");
-        $stmt->execute([$campaign_id]);
+        $stmt->execute([$view_id]);
         $view_campaign = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Get campaign tasks
-        $stmt = $pdo->prepare("
-            SELECT ct.*, u.full_name as assigned_to_name
-            FROM campaign_tasks ct
-            LEFT JOIN users u ON ct.assigned_to = u.id
-            WHERE ct.campaign_id = ?
-            ORDER BY 
-                CASE 
-                    WHEN ct.status = 'pending' THEN 1
-                    WHEN ct.status = 'in_progress' THEN 2
-                    ELSE 3
-                END,
-                CASE 
-                    WHEN ct.priority = 'urgent' THEN 1
-                    WHEN ct.priority = 'high' THEN 2
-                    WHEN ct.priority = 'medium' THEN 3
-                    ELSE 4
-                END,
-                ct.due_date ASC
-        ");
-        $stmt->execute([$campaign_id]);
-        $campaign_tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // Get campaign resources
-        $stmt = $pdo->prepare("
-            SELECT cr.*, u.full_name as uploaded_by_name
-            FROM campaign_resources cr
-            LEFT JOIN users u ON cr.uploaded_by = u.id
-            WHERE cr.campaign_id = ?
-            ORDER BY cr.created_at DESC
-        ");
-        $stmt->execute([$campaign_id]);
-        $campaign_resources = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
-        // Get campaign participants
-        $stmt = $pdo->prepare("
-            SELECT cp.*, d.name as department_name
-            FROM campaign_participants cp
-            LEFT JOIN departments d ON cp.department_id = d.id
-            WHERE cp.campaign_id = ?
-            ORDER BY cp.registered_at DESC
-        ");
-        $stmt->execute([$campaign_id]);
-        $campaign_participants = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if ($view_campaign) {
+            // Get campaign tasks
+            $stmt = $pdo->prepare("
+                SELECT ct.*, u.full_name as assigned_to_name
+                FROM campaign_tasks ct
+                LEFT JOIN users u ON ct.assigned_to = u.id
+                WHERE ct.campaign_id = ?
+                ORDER BY 
+                    CASE 
+                        WHEN ct.status = 'pending' THEN 1
+                        WHEN ct.status = 'in_progress' THEN 2
+                        ELSE 3
+                    END,
+                    CASE 
+                        WHEN ct.priority = 'urgent' THEN 1
+                        WHEN ct.priority = 'high' THEN 2
+                        WHEN ct.priority = 'medium' THEN 3
+                        ELSE 4
+                    END,
+                    ct.due_date ASC
+            ");
+            $stmt->execute([$view_id]);
+            $campaign_tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Get campaign resources
+            $stmt = $pdo->prepare("
+                SELECT cr.*, u.full_name as uploaded_by_name
+                FROM campaign_resources cr
+                LEFT JOIN users u ON cr.uploaded_by = u.id
+                WHERE cr.campaign_id = ?
+                ORDER BY cr.created_at DESC
+            ");
+            $stmt->execute([$view_id]);
+            $campaign_resources = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Get campaign participants
+            $stmt = $pdo->prepare("
+                SELECT cp.*, d.name as department_name
+                FROM campaign_participants cp
+                LEFT JOIN departments d ON cp.department_id = d.id
+                WHERE cp.campaign_id = ?
+                ORDER BY cp.registered_at DESC
+            ");
+            $stmt->execute([$view_id]);
+            $campaign_participants = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
         
     } catch (PDOException $e) {
         error_log("Campaign view error: " . $e->getMessage());
         $_SESSION['error_message'] = "Error loading campaign details.";
+        $view_campaign = null;
     }
 }
+
+// Common campaign types and partner organizations
+$campaign_types = ['awareness', 'vaccination', 'screening', 'workshop', 'seminar', 'other'];
+$partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', 'Red Cross', 'Local Hospital', 'Community Health Center', 'NGO Partners'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Health Campaigns - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -427,6 +438,8 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -466,14 +479,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -483,7 +493,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -492,38 +501,44 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -531,22 +546,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -555,94 +555,104 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -2px;
-            right: -2px;
-            background: var(--danger);
-            color: white;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            border: 2px solid var(--white);
+            border-color: var(--primary-green);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -672,33 +682,30 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
-        }
-
-        .menu-badge {
-            background: var(--danger);
-            color: white;
-            border-radius: 10px;
-            padding: 0.1rem 0.4rem;
-            font-size: 0.7rem;
-            font-weight: 600;
-            margin-left: auto;
+            width: 20px;
         }
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             margin-bottom: 1.5rem;
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title {
@@ -753,6 +760,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             color: white;
         }
 
+        .btn-small {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.75rem;
+        }
+
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -766,7 +778,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -795,13 +807,14 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -816,7 +829,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -834,7 +847,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -842,11 +855,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        /* Filters */
+        /* Filters Card */
         .filters-card {
             background: var(--white);
             padding: 1.25rem;
@@ -862,10 +875,301 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             align-items: end;
         }
 
+        .filter-actions {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        /* Campaigns Grid */
+        .campaigns-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .campaign-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .campaign-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .campaign-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--medium-gray);
+            background: var(--light-green);
+        }
+
+        .campaign-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--text-dark);
+            margin-bottom: 0.5rem;
+        }
+
+        .campaign-meta {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            font-size: 0.75rem;
+        }
+
+        .campaign-body {
+            padding: 1rem;
+        }
+
+        .campaign-description {
+            color: var(--text-dark);
+            margin-bottom: 1rem;
+            line-height: 1.5;
+            font-size: 0.8rem;
+        }
+
+        .campaign-details {
+            display: grid;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.25rem 0;
+            font-size: 0.75rem;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: var(--dark-gray);
+        }
+
+        .detail-value {
+            color: var(--text-dark);
+        }
+
+        .campaign-progress {
+            margin: 1rem 0;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: var(--medium-gray);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.25rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--success);
+            border-radius: 3px;
+        }
+
+        .progress-text {
+            font-size: 0.65rem;
+            color: var(--dark-gray);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .campaign-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--medium-gray);
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-planned {
+            background: #cce7ff;
+            color: #004085;
+        }
+
+        .status-ongoing {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-cancelled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .type-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            background: var(--light-green);
+            color: var(--primary-green);
+        }
+
+        .priority-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .priority-high, .priority-urgent {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .priority-medium {
+            background: #fff3cd;
+            color: var(--warning);
+        }
+
+        .priority-low {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        /* Card for single view */
+        .card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
+        }
+
+        .card-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-green);
+        }
+
+        .card-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .card-header-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .card-body {
+            padding: 1.25rem;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.75rem;
+        }
+
+        .table th, .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .table th {
+            background: var(--light-gray);
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.7rem;
+        }
+
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Task List */
+        .task-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .task-item {
+            background: var(--light-gray);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--primary-green);
+        }
+
+        .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .task-title {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--text-dark);
+        }
+
+        .task-meta {
+            display: flex;
+            gap: 0.75rem;
+            font-size: 0.65rem;
+            color: var(--dark-gray);
+            flex-wrap: wrap;
+        }
+
+        .task-description {
+            font-size: 0.75rem;
+            color: var(--text-dark);
+            margin-bottom: 0.75rem;
+        }
+
+        .task-actions {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        /* Forms */
         .form-group {
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
+            margin-bottom: 1rem;
         }
 
         .form-label {
@@ -890,291 +1194,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
         }
 
-        .filter-actions {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
-        /* Tables */
-        .table-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
-        }
-
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8rem;
-        }
-
-        .table th, .table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.75rem;
-        }
-
-        .status-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-planned {
-            background: #cce7ff;
-            color: var(--info);
-        }
-
-        .status-ongoing {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-completed {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-cancelled {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .type-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            background: var(--light-green);
-            color: var(--primary-green);
-        }
-
-        .priority-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .priority-high {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .priority-medium {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .priority-low {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .action-btn {
-            padding: 0.25rem 0.5rem;
-            border: none;
-            background: none;
-            color: var(--primary-green);
-            cursor: pointer;
-            border-radius: 4px;
-            transition: var(--transition);
-            font-size: 0.8rem;
-        }
-
-        .action-btn:hover {
-            background: var(--light-green);
-        }
-
-        /* Campaign Cards */
-        .campaigns-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .campaign-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
-            transition: var(--transition);
-        }
-
-        .campaign-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .campaign-header {
-            padding: 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
-            background: var(--light-gray);
-        }
-
-        .campaign-title {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--text-dark);
-            margin-bottom: 0.5rem;
-        }
-
-        .campaign-meta {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-            font-size: 0.8rem;
-            color: var(--dark-gray);
-        }
-
-        .campaign-body {
-            padding: 1.25rem;
-        }
-
-        .campaign-description {
-            color: var(--text-dark);
-            margin-bottom: 1rem;
-            line-height: 1.5;
-        }
-
-        .campaign-details {
-            display: grid;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-        }
-
-        .detail-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .detail-item:last-child {
-            border-bottom: none;
-        }
-
-        .detail-label {
-            font-weight: 600;
-            color: var(--dark-gray);
-            font-size: 0.8rem;
-        }
-
-        .detail-value {
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .campaign-progress {
-            margin: 1rem 0;
-        }
-
-        .progress-bar {
-            height: 6px;
-            background: var(--medium-gray);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-bottom: 0.25rem;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--success);
-            border-radius: 3px;
-        }
-
-        .progress-text {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .campaign-actions {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-        }
-
-        .btn-small {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.75rem;
-        }
-
-        /* Modal */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.5);
-        }
-
-        .modal-content {
-            background-color: var(--white);
-            margin: 5% auto;
-            padding: 0;
-            border-radius: var(--border-radius);
-            width: 90%;
-            max-width: 800px;
-            max-height: 90vh;
-            overflow-y: auto;
-            box-shadow: var(--shadow-lg);
-        }
-
-        .modal-header {
-            padding: 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .modal-header h3 {
-            margin: 0;
-            color: var(--text-dark);
-        }
-
-        .close {
-            color: var(--dark-gray);
-            float: right;
-            font-size: 1.5rem;
-            font-weight: bold;
-            cursor: pointer;
-            background: none;
-            border: none;
-        }
-
-        .close:hover {
-            color: var(--text-dark);
-        }
-
-        .modal-body {
-            padding: 1.25rem;
-        }
-
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-
         .form-textarea {
             padding: 0.75rem;
             border: 1px solid var(--medium-gray);
@@ -1193,11 +1212,18 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
         }
 
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
         .checkbox-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
             gap: 0.5rem;
-            margin: 1rem 0;
+            margin-top: 0.5rem;
         }
 
         .checkbox-item {
@@ -1207,7 +1233,15 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         .checkbox-item input[type="checkbox"] {
-            margin: 0;
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .checkbox-item label {
+            font-size: 0.8rem;
+            color: var(--text-dark);
+            cursor: pointer;
         }
 
         .form-actions {
@@ -1219,58 +1253,15 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             border-top: 1px solid var(--medium-gray);
         }
 
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-2px);
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 1.5rem;
-            flex-wrap: wrap;
-        }
-
-        .tab {
-            padding: 0.75rem 1.5rem;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--dark-gray);
-            cursor: pointer;
-            transition: var(--transition);
-            font-weight: 500;
-        }
-
-        .tab:hover {
-            color: var(--primary-green);
-        }
-
-        .tab.active {
-            color: var(--primary-green);
-            border-bottom-color: var(--primary-green);
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
         /* Alert */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1286,116 +1277,192 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             border-left-color: var(--danger);
         }
 
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
-        }
-
-        /* Task List */
-        .task-list {
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-
-        .task-item {
-            background: var(--light-gray);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            border-left: 3px solid var(--primary-green);
-        }
-
-        .task-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.5rem;
-        }
-
-        .task-title {
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .task-meta {
-            display: flex;
-            gap: 1rem;
-            font-size: 0.7rem;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
             color: var(--dark-gray);
         }
 
-        .task-description {
-            color: var(--text-dark);
-            margin-bottom: 0.75rem;
-            line-height: 1.4;
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
         }
 
-        .task-actions {
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
+        }
+
+        .modal-content {
+            background-color: var(--white);
+            margin: 5% auto;
+            padding: 0;
+            border-radius: var(--border-radius);
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .modal-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
             display: flex;
-            gap: 0.5rem;
+            justify-content: space-between;
             align-items: center;
+            background: var(--light-green);
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: var(--text-dark);
+        }
+
+        .close {
+            color: var(--dark-gray);
+            font-size: 1.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            background: none;
+            border: none;
+            line-height: 1;
+        }
+
+        .close:hover {
+            color: var(--text-dark);
+        }
+
+        .modal-body {
+            padding: 1.25rem;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .campaigns-grid {
-                grid-template-columns: 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .campaigns-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .page-actions {
                 width: 100%;
                 justify-content: space-between;
             }
-            
-            .tabs {
-                flex-direction: column;
-            }
-            
-            .tab {
-                border-bottom: none;
-                border-left: 2px solid transparent;
-            }
-            
-            .tab.active {
-                border-left-color: var(--primary-green);
-                border-bottom-color: transparent;
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1403,38 +1470,56 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .table {
-                font-size: 0.7rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .table th, .table td {
-                padding: 0.5rem;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
             }
-            
-            .campaign-actions {
-                flex-direction: column;
+
+            .stat-card {
+                padding: 0.75rem;
             }
-            
-            .btn-small {
-                width: 100%;
-                text-align: center;
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
+            }
+
+            .checkbox-grid {
+                grid-template-columns: 1fr;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Health Campaigns</h1>
                 </div>
@@ -1470,8 +1555,11 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-               <!-- Sidebar -->
-              <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1483,18 +1571,16 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                     <a href="health_tickets.php">
                         <i class="fas fa-heartbeat"></i>
                         <span>Health Issues</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="hostels.php">
                         <i class="fas fa-bed"></i>
                         <span>Hostel Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="action-funding.php" >
+                    <a href="action-funding.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1503,7 +1589,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                     <a href="campaigns.php" class="active">
                         <i class="fas fa-bullhorn"></i>
                         <span>Health Campaigns</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1540,7 +1625,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div>
@@ -1560,264 +1645,270 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             <!-- Success/Error Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
 
             <?php if ($view_campaign): ?>
                 <!-- Single Campaign View -->
-                <div class="campaign-view">
-                    <!-- Campaign details will be shown here -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3><?php echo htmlspecialchars($view_campaign['title']); ?></h3>
-                            <div class="card-header-actions">
-                                <button class="btn btn-outline btn-small" onclick="editCampaign(<?php echo $view_campaign['id']; ?>)">
-                                    <i class="fas fa-edit"></i> Edit
-                                </button>
-                                <button class="btn btn-outline btn-small" onclick="showModal('addTaskModal', <?php echo $view_campaign['id']; ?>)">
-                                    <i class="fas fa-tasks"></i> Add Task
-                                </button>
-                                <button class="btn btn-outline btn-small" onclick="showModal('addResourceModal', <?php echo $view_campaign['id']; ?>)">
-                                    <i class="fas fa-box"></i> Add Resource
-                                </button>
-                                <button class="btn btn-outline btn-small" onclick="showModal('registerParticipantModal', <?php echo $view_campaign['id']; ?>)">
-                                    <i class="fas fa-user-plus"></i> Register Participant
-                                </button>
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fas fa-bullhorn"></i> <?php echo htmlspecialchars($view_campaign['title']); ?></h3>
+                        <div class="card-header-actions">
+                            <button class="btn btn-outline btn-small" onclick="editCampaign(<?php echo $view_campaign['id']; ?>)">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button class="btn btn-outline btn-small" onclick="showModalWithCampaign('addTaskModal', <?php echo $view_campaign['id']; ?>)">
+                                <i class="fas fa-tasks"></i> Add Task
+                            </button>
+                            <button class="btn btn-outline btn-small" onclick="showModalWithCampaign('addResourceModal', <?php echo $view_campaign['id']; ?>)">
+                                <i class="fas fa-box"></i> Add Resource
+                            </button>
+                            <button class="btn btn-outline btn-small" onclick="showModalWithCampaign('registerParticipantModal', <?php echo $view_campaign['id']; ?>)">
+                                <i class="fas fa-user-plus"></i> Register
+                            </button>
+                            <a href="campaigns.php" class="btn btn-outline btn-small">
+                                <i class="fas fa-arrow-left"></i> Back
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="campaign-details">
+                            <div class="detail-item">
+                                <span class="detail-label">Status:</span>
+                                <span class="status-badge status-<?php echo $view_campaign['status']; ?>">
+                                    <?php echo ucfirst($view_campaign['status']); ?>
+                                </span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Type:</span>
+                                <span class="type-badge"><?php echo ucfirst($view_campaign['campaign_type']); ?></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Dates:</span>
+                                <span class="detail-value">
+                                    <?php echo date('M j, Y', strtotime($view_campaign['start_date'])); ?> 
+                                    <?php if ($view_campaign['end_date']): ?>
+                                        - <?php echo date('M j, Y', strtotime($view_campaign['end_date'])); ?>
+                                    <?php endif; ?>
+                                </span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Location:</span>
+                                <span class="detail-value"><?php echo htmlspecialchars($view_campaign['location']); ?></span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Budget:</span>
+                                <span class="detail-value">
+                                    RWF <?php echo number_format($view_campaign['allocated_budget'], 0); ?> 
+                                    (of RWF <?php echo number_format($view_campaign['budget'], 0); ?>)
+                                </span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="detail-label">Participants:</span>
+                                <span class="detail-value">
+                                    <?php echo $view_campaign['actual_participants']; ?> 
+                                    (of <?php echo $view_campaign['expected_participants']; ?> expected)
+                                </span>
                             </div>
                         </div>
-                        <div class="card-body">
-                            <!-- Campaign details, tasks, resources, and participants will be displayed here -->
-                            <div class="campaign-details">
-                                <div class="detail-item">
-                                    <span class="detail-label">Status:</span>
-                                    <span class="status-badge status-<?php echo $view_campaign['status']; ?>">
-                                        <?php echo ucfirst($view_campaign['status']); ?>
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Type:</span>
-                                    <span class="type-badge"><?php echo ucfirst($view_campaign['campaign_type']); ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Dates:</span>
-                                    <span class="detail-value">
-                                        <?php echo date('M j, Y', strtotime($view_campaign['start_date'])); ?> 
-                                        <?php if ($view_campaign['end_date']): ?>
-                                            - <?php echo date('M j, Y', strtotime($view_campaign['end_date'])); ?>
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Location:</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($view_campaign['location']); ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Budget:</span>
-                                    <span class="detail-value">
-                                        <?php echo number_format($view_campaign['allocated_budget'], 2); ?> RWF 
-                                        (of <?php echo number_format($view_campaign['budget'], 2); ?> RWF)
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Participants:</span>
-                                    <span class="detail-value">
-                                        <?php echo $view_campaign['actual_participants']; ?> 
-                                        (of <?php echo $view_campaign['expected_participants']; ?> expected)
-                                    </span>
-                                </div>
+
+                        <?php if ($view_campaign['description']): ?>
+                            <div style="margin-top: 1rem;">
+                                <h4>Description</h4>
+                                <p><?php echo nl2br(htmlspecialchars($view_campaign['description'])); ?></p>
                             </div>
+                        <?php endif; ?>
 
-                            <?php if ($view_campaign['description']): ?>
-                                <div class="campaign-description">
-                                    <h4>Description</h4>
-                                    <p><?php echo nl2br(htmlspecialchars($view_campaign['description'])); ?></p>
+                        <?php if ($view_campaign['objectives']): ?>
+                            <div style="margin-top: 1rem;">
+                                <h4>Objectives</h4>
+                                <p><?php echo nl2br(htmlspecialchars($view_campaign['objectives'])); ?></p>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- Tasks Section -->
+                        <div style="margin-top: 2rem;">
+                            <h4><i class="fas fa-tasks"></i> Campaign Tasks</h4>
+                            <?php if (empty($campaign_tasks)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-check-circle"></i>
+                                    <p>No tasks created for this campaign.</p>
                                 </div>
-                            <?php endif; ?>
-
-                            <?php if ($view_campaign['objectives']): ?>
-                                <div class="campaign-objectives">
-                                    <h4>Objectives</h4>
-                                    <p><?php echo nl2br(htmlspecialchars($view_campaign['objectives'])); ?></p>
-                                </div>
-                            <?php endif; ?>
-
-                            <!-- Tasks Section -->
-                            <div class="tasks-section" style="margin-top: 2rem;">
-                                <h4>Campaign Tasks</h4>
-                                <?php if (empty($campaign_tasks)): ?>
-                                    <p style="color: var(--dark-gray); text-align: center; padding: 2rem;">
-                                        No tasks created for this campaign.
-                                    </p>
-                                <?php else: ?>
-                                    <div class="task-list">
-                                        <?php foreach ($campaign_tasks as $task): ?>
-                                            <div class="task-item">
-                                                <div class="task-header">
-                                                    <div class="task-title"><?php echo htmlspecialchars($task['title']); ?></div>
-                                                    <div class="task-meta">
-                                                        <span class="priority-badge priority-<?php echo $task['priority']; ?>">
-                                                            <?php echo ucfirst($task['priority']); ?>
-                                                        </span>
-                                                        <span class="status-badge status-<?php echo $task['status']; ?>">
-                                                            <?php echo ucfirst(str_replace('_', ' ', $task['status'])); ?>
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <?php if ($task['description']): ?>
-                                                    <div class="task-description">
-                                                        <?php echo nl2br(htmlspecialchars($task['description'])); ?>
-                                                    </div>
-                                                <?php endif; ?>
+                            <?php else: ?>
+                                <div class="task-list">
+                                    <?php foreach ($campaign_tasks as $task): ?>
+                                        <div class="task-item">
+                                            <div class="task-header">
+                                                <div class="task-title"><?php echo htmlspecialchars($task['title']); ?></div>
                                                 <div class="task-meta">
-                                                    <?php if ($task['assigned_to_name']): ?>
-                                                        <span>Assigned to: <?php echo htmlspecialchars($task['assigned_to_name']); ?></span>
-                                                    <?php endif; ?>
-                                                    <?php if ($task['due_date']): ?>
-                                                        <span>Due: <?php echo date('M j, Y', strtotime($task['due_date'])); ?></span>
-                                                    <?php endif; ?>
-                                                </div>
-                                                <div class="task-actions">
-                                                    <form method="POST" style="display: inline;">
-                                                        <input type="hidden" name="action" value="update_task_status">
-                                                        <input type="hidden" name="task_id" value="<?php echo $task['id']; ?>">
-                                                        <select name="status" class="form-select" style="font-size: 0.7rem; padding: 0.25rem;" onchange="this.form.submit()">
-                                                            <option value="pending" <?php echo $task['status'] === 'pending' ? 'selected' : ''; ?>>Pending</option>
-                                                            <option value="in_progress" <?php echo $task['status'] === 'in_progress' ? 'selected' : ''; ?>>In Progress</option>
-                                                            <option value="completed" <?php echo $task['status'] === 'completed' ? 'selected' : ''; ?>>Completed</option>
-                                                        </select>
-                                                    </form>
+                                                    <span class="priority-badge priority-<?php echo $task['priority']; ?>">
+                                                        <?php echo ucfirst($task['priority']); ?>
+                                                    </span>
+                                                    <span class="status-badge status-<?php echo $task['status']; ?>">
+                                                        <?php echo ucfirst(str_replace('_', ' ', $task['status'])); ?>
+                                                    </span>
                                                 </div>
                                             </div>
-                                        <?php endforeach; ?>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
+                                            <?php if ($task['description']): ?>
+                                                <div class="task-description">
+                                                    <?php echo nl2br(htmlspecialchars($task['description'])); ?>
+                                                </div>
+                                            <?php endif; ?>
+                                            <div class="task-meta">
+                                                <?php if ($task['assigned_to_name']): ?>
+                                                    <span><i class="fas fa-user"></i> Assigned to: <?php echo htmlspecialchars($task['assigned_to_name']); ?></span>
+                                                <?php endif; ?>
+                                                <?php if ($task['due_date']): ?>
+                                                    <span><i class="fas fa-calendar"></i> Due: <?php echo date('M j, Y', strtotime($task['due_date'])); ?></span>
+                                                <?php endif; ?>
+                                            </div>
+                                            <div class="task-actions">
+                                                <form method="POST" style="display: inline;">
+                                                    <input type="hidden" name="action" value="update_task_status">
+                                                    <input type="hidden" name="task_id" value="<?php echo $task['id']; ?>">
+                                                    <select name="status" class="form-select" style="font-size: 0.7rem; padding: 0.25rem; width: auto;" onchange="this.form.submit()">
+                                                        <option value="pending" <?php echo $task['status'] === 'pending' ? 'selected' : ''; ?>>Pending</option>
+                                                        <option value="in_progress" <?php echo $task['status'] === 'in_progress' ? 'selected' : ''; ?>>In Progress</option>
+                                                        <option value="completed" <?php echo $task['status'] === 'completed' ? 'selected' : ''; ?>>Completed</option>
+                                                    </select>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
 
-                            <!-- Resources Section -->
-                            <div class="resources-section" style="margin-top: 2rem;">
-                                <h4>Campaign Resources</h4>
-                                <?php if (empty($campaign_resources)): ?>
-                                    <p style="color: var(--dark-gray); text-align: center; padding: 2rem;">
-                                        No resources added for this campaign.
-                                    </p>
-                                <?php else: ?>
-                                    <div class="table-container">
-                                        <table class="table">
-                                            <thead>
+                        <!-- Resources Section -->
+                        <div style="margin-top: 2rem;">
+                            <h4><i class="fas fa-box"></i> Campaign Resources</h4>
+                            <?php if (empty($campaign_resources)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-box-open"></i>
+                                    <p>No resources added for this campaign.</p>
+                                </div>
+                            <?php else: ?>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Resource</th>
+                                                <th>Type</th>
+                                                <th>Quantity</th>
+                                                <th>Cost (RWF)</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($campaign_resources as $resource): ?>
                                                 <tr>
-                                                    <th>Resource</th>
-                                                    <th>Type</th>
-                                                    <th>Quantity</th>
-                                                    <th>Cost</th>
-                                                    <th>Status</th>
-                                                    <th>Added By</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <?php foreach ($campaign_resources as $resource): ?>
-                                                    <tr>
-                                                        <td>
-                                                            <div style="font-weight: 600;"><?php echo htmlspecialchars($resource['title']); ?></div>
-                                                            <?php if ($resource['description']): ?>
-                                                                <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                                    <?php echo htmlspecialchars($resource['description']); ?>
-                                                                </div>
-                                                            <?php endif; ?>
-                                                        </td>
-                                                        <td><?php echo ucfirst($resource['resource_type']); ?></td>
-                                                        <td><?php echo $resource['quantity']; ?></td>
-                                                        <td><?php echo number_format($resource['cost'], 2); ?> RWF</td>
-                                                        <td>
-                                                            <span class="status-badge status-<?php echo $resource['status']; ?>">
-                                                                <?php echo ucfirst($resource['status']); ?>
-                                                            </span>
-                                                        </td>
-                                                        <td><?php echo htmlspecialchars($resource['uploaded_by_name']); ?></td>
-                                                    </tr>
-                                                <?php endforeach; ?>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-
-                            <!-- Participants Section -->
-                            <div class="participants-section" style="margin-top: 2rem;">
-                                <h4>Campaign Participants (<?php echo count($campaign_participants); ?>)</h4>
-                                <?php if (empty($campaign_participants)): ?>
-                                    <p style="color: var(--dark-gray); text-align: center; padding: 2rem;">
-                                        No participants registered for this campaign.
-                                    </p>
-                                <?php else: ?>
-                                    <div class="table-container">
-                                        <table class="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Student</th>
-                                                    <th>Department</th>
-                                                    <th>Contact</th>
-                                                    <th>Attendance</th>
-                                                    <th>Feedback</th>
-                                                    <th>Registered</th>
-                                                    <th>Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <?php foreach ($campaign_participants as $participant): ?>
-                                                    <tr>
-                                                        <td>
-                                                            <div style="font-weight: 600;"><?php echo htmlspecialchars($participant['name']); ?></div>
+                                                    <td>
+                                                        <div style="font-weight: 600;"><?php echo htmlspecialchars($resource['title']); ?></div>
+                                                        <?php if ($resource['description']): ?>
                                                             <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                                <?php echo htmlspecialchars($participant['reg_number']); ?>
+                                                                <?php echo htmlspecialchars($resource['description']); ?>
                                                             </div>
-                                                        </td>
-                                                        <td><?php echo htmlspecialchars($participant['department_name'] ?? 'N/A'); ?></td>
-                                                        <td>
-                                                            <?php if ($participant['email']): ?>
-                                                                <div style="font-size: 0.7rem;"><?php echo htmlspecialchars($participant['email']); ?></div>
-                                                            <?php endif; ?>
-                                                            <?php if ($participant['phone']): ?>
-                                                                <div style="font-size: 0.7rem;"><?php echo htmlspecialchars($participant['phone']); ?></div>
-                                                            <?php endif; ?>
-                                                        </td>
-                                                        <td>
-                                                            <span class="status-badge status-<?php echo $participant['attendance_status']; ?>">
-                                                                <?php echo ucfirst($participant['attendance_status']); ?>
-                                                            </span>
-                                                        </td>
-                                                        <td>
-                                                            <?php if ($participant['feedback_rating']): ?>
-                                                                <div style="color: var(--warning);">
-                                                                    <?php for ($i = 1; $i <= 5; $i++): ?>
-                                                                        <i class="fas fa-star<?php echo $i <= $participant['feedback_rating'] ? '' : '-o'; ?>"></i>
-                                                                    <?php endfor; ?>
-                                                                </div>
-                                                            <?php else: ?>
-                                                                <span style="color: var(--dark-gray); font-size: 0.7rem;">No feedback</span>
-                                                            <?php endif; ?>
-                                                        </td>
-                                                        <td><?php echo date('M j, Y', strtotime($participant['registered_at'])); ?></td>
-                                                        <td>
-                                                            <button class="btn btn-outline btn-small" onclick="updateParticipantAttendance(<?php echo $participant['id']; ?>)">
-                                                                <i class="fas fa-user-check"></i> Update
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                <?php endforeach; ?>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td><?php echo ucfirst($resource['resource_type']); ?></td>
+                                                    <td><?php echo $resource['quantity']; ?></td>
+                                                    <td><?php echo number_format($resource['cost'], 0); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $resource['status']; ?>">
+                                                            <?php echo ucfirst($resource['status']); ?>
+                                                        </span>
+                                                    </td>
+                                                </table>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- Participants Section -->
+                        <div style="margin-top: 2rem;">
+                            <h4><i class="fas fa-users"></i> Campaign Participants (<?php echo count($campaign_participants); ?>)</h4>
+                            <?php if (empty($campaign_participants)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-user-friends"></i>
+                                    <p>No participants registered for this campaign.</p>
+                                </div>
+                            <?php else: ?>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
+                                            <tr>
+                                                <th>Student</th>
+                                                <th>Department</th>
+                                                <th>Contact</th>
+                                                <th>Attendance</th>
+                                                <th>Feedback</th>
+                                                <th>Registered</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($campaign_participants as $participant): ?>
+                                                <tr>
+                                                    <td>
+                                                        <div style="font-weight: 600;"><?php echo htmlspecialchars($participant['name']); ?></div>
+                                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">
+                                                            <?php echo htmlspecialchars($participant['reg_number']); ?>
+                                                        </div>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($participant['department_name'] ?? 'N/A'); ?></td>
+                                                    <td>
+                                                        <?php if ($participant['email']): ?>
+                                                            <div style="font-size: 0.7rem;"><?php echo htmlspecialchars($participant['email']); ?></div>
+                                                        <?php endif; ?>
+                                                        <?php if ($participant['phone']): ?>
+                                                            <div style="font-size: 0.7rem;"><?php echo htmlspecialchars($participant['phone']); ?></div>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td>
+                                                        <form method="POST" style="display: inline;">
+                                                            <input type="hidden" name="action" value="update_participant_attendance">
+                                                            <input type="hidden" name="participant_id" value="<?php echo $participant['id']; ?>">
+                                                            <select name="attendance_status" class="form-select" style="font-size: 0.7rem; padding: 0.25rem; width: auto;" onchange="this.form.submit()">
+                                                                <option value="registered" <?php echo $participant['attendance_status'] === 'registered' ? 'selected' : ''; ?>>Registered</option>
+                                                                <option value="attended" <?php echo $participant['attendance_status'] === 'attended' ? 'selected' : ''; ?>>Attended</option>
+                                                                <option value="absent" <?php echo $participant['attendance_status'] === 'absent' ? 'selected' : ''; ?>>Absent</option>
+                                                            </select>
+                                                        </form>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($participant['feedback_rating']): ?>
+                                                            <div style="color: var(--warning);">
+                                                                <?php for ($i = 1; $i <= 5; $i++): ?>
+                                                                    <i class="fas fa-star<?php echo $i <= $participant['feedback_rating'] ? '' : '-o'; ?>"></i>
+                                                                <?php endfor; ?>
+                                                            </div>
+                                                        <?php else: ?>
+                                                            <span style="color: var(--dark-gray); font-size: 0.7rem;">No feedback</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td><?php echo date('M j, Y', strtotime($participant['registered_at'])); ?></td>
+                                                    <td>
+                                                        <button class="btn btn-outline btn-small" onclick="updateParticipantAttendance(<?php echo $participant['id']; ?>)">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -1832,7 +1923,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                             <i class="fas fa-bullhorn"></i>
                         </div>
                         <div class="stat-content">
-                            <div class="stat-number"><?php echo $campaign_stats['total_campaigns'] ?? 0; ?></div>
+                            <div class="stat-number"><?php echo number_format($campaign_stats['total_campaigns'] ?? 0); ?></div>
                             <div class="stat-label">Total Campaigns</div>
                         </div>
                     </div>
@@ -1841,8 +1932,8 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                             <i class="fas fa-money-bill-wave"></i>
                         </div>
                         <div class="stat-content">
-                            <div class="stat-number"><?php echo number_format($campaign_stats['total_budget'] ?? 0, 0); ?></div>
-                            <div class="stat-label">Total Budget (RWF)</div>
+                            <div class="stat-number">RWF <?php echo number_format(($campaign_stats['total_budget'] ?? 0), 0); ?></div>
+                            <div class="stat-label">Total Budget</div>
                         </div>
                     </div>
                     <div class="stat-card warning">
@@ -1850,7 +1941,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                             <i class="fas fa-users"></i>
                         </div>
                         <div class="stat-content">
-                            <div class="stat-number"><?php echo $campaign_stats['total_expected'] ?? 0; ?></div>
+                            <div class="stat-number"><?php echo number_format($campaign_stats['total_expected'] ?? 0); ?></div>
                             <div class="stat-label">Expected Participants</div>
                         </div>
                     </div>
@@ -1859,14 +1950,14 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                             <i class="fas fa-user-check"></i>
                         </div>
                         <div class="stat-content">
-                            <div class="stat-number"><?php echo $campaign_stats['total_participants'] ?? 0; ?></div>
+                            <div class="stat-number"><?php echo number_format($campaign_stats['total_participants'] ?? 0); ?></div>
                             <div class="stat-label">Actual Participants</div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Status Overview -->
-                <div class="stats-grid" style="margin-top: 1rem;">
+                <div class="stats-grid" style="margin-top: 0;">
                     <?php foreach ($campaigns_by_status as $status): ?>
                         <div class="stat-card status-<?php echo $status['status']; ?>">
                             <div class="stat-icon">
@@ -1882,7 +1973,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                             </div>
                             <div class="stat-content">
                                 <div class="stat-number"><?php echo $status['count']; ?></div>
-                                <div class="stat-label"><?php echo ucfirst($status['status']); ?> Campaigns</div>
+                                <div class="stat-label"><?php echo ucfirst($status['status']); ?></div>
                             </div>
                         </div>
                     <?php endforeach; ?>
@@ -1931,132 +2022,85 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                 </div>
 
                 <!-- Campaigns Grid -->
-                            <div class="campaigns-grid">
-                                <?php if (empty($campaigns)): ?>
-                                    <div style="text-align: center; color: var(--dark-gray); padding: 2rem; grid-column: 1 / -1;">
-                                        <i class="fas fa-bullhorn" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                        <p>No campaigns found. <a href="javascript:void(0)" onclick="showModal('addCampaignModal')" style="color: var(--primary-green);">Create the first campaign</a></p>
+                <div class="campaigns-grid">
+                    <?php if (empty($campaigns)): ?>
+                        <div class="empty-state" style="grid-column: 1 / -1;">
+                            <i class="fas fa-bullhorn"></i>
+                            <p>No campaigns found. <a href="javascript:void(0)" onclick="showModal('addCampaignModal')" style="color: var(--primary-green);">Create the first campaign</a></p>
+                        </div>
+                    <?php else: ?>
+                        <?php foreach ($campaigns as $campaign): ?>
+                            <?php 
+                            $expected = $campaign['expected_participants'] ?? 0;
+                            $actual = $campaign['actual_participants'] ?? 0;
+                            $participant_rate = $expected > 0 ? ($actual / $expected) * 100 : 0;
+                            ?>
+                            <div class="campaign-card">
+                                <div class="campaign-header">
+                                    <h3 class="campaign-title"><?php echo htmlspecialchars($campaign['title']); ?></h3>
+                                    <div class="campaign-meta">
+                                        <span class="status-badge status-<?php echo $campaign['status']; ?>">
+                                            <?php echo ucfirst($campaign['status']); ?>
+                                        </span>
+                                        <span class="type-badge"><?php echo ucfirst($campaign['campaign_type']); ?></span>
+                                        <span><?php echo date('M j, Y', strtotime($campaign['start_date'])); ?></span>
                                     </div>
-                                <?php else: ?>
-                                    <?php foreach ($campaigns as $campaign): ?>
-                                        <?php 
-                                        // Ensure values are not null before calculations
-                                        $expected_participants = $campaign['expected_participants'] ?? 0;
-                                        $actual_participants = $campaign['actual_participants'] ?? 0;
-                                        $budget = $campaign['budget'] ?? 0;
-                                        $allocated_budget = $campaign['allocated_budget'] ?? 0;
-                                        
-                                        $participant_rate = $expected_participants > 0 ? 
-                                            ($actual_participants / $expected_participants) * 100 : 0;
-                                        $budget_utilization = $budget > 0 ? 
-                                            ($allocated_budget / $budget) * 100 : 0;
-                                        ?>
-                                        <div class="campaign-card">
-                                            <div class="campaign-header">
-                                                <h3 class="campaign-title"><?php echo htmlspecialchars($campaign['title']); ?></h3>
-                                                <div class="campaign-meta">
-                                                    <span class="status-badge status-<?php echo $campaign['status']; ?>">
-                                                        <?php echo ucfirst($campaign['status']); ?>
-                                                    </span>
-                                                    <span class="type-badge"><?php echo ucfirst($campaign['campaign_type']); ?></span>
-                                                    <span><?php echo date('M j, Y', strtotime($campaign['start_date'])); ?></span>
-                                                </div>
+                                </div>
+                                <div class="campaign-body">
+                                    <?php if ($campaign['description']): ?>
+                                        <div class="campaign-description">
+                                            <?php 
+                                            $desc = htmlspecialchars($campaign['description']);
+                                            echo strlen($desc) > 120 ? substr($desc, 0, 120) . '...' : $desc;
+                                            ?>
+                                        </div>
+                                    <?php endif; ?>
+                                    
+                                    <div class="campaign-details">
+                                        <div class="detail-item">
+                                            <span class="detail-label">Location:</span>
+                                            <span class="detail-value"><?php echo htmlspecialchars($campaign['location']); ?></span>
+                                        </div>
+                                        <div class="detail-item">
+                                            <span class="detail-label">Budget:</span>
+                                            <span class="detail-value">RWF <?php echo number_format($campaign['allocated_budget'], 0); ?></span>
+                                        </div>
+                                        <div class="detail-item">
+                                            <span class="detail-label">Participants:</span>
+                                            <span class="detail-value"><?php echo $actual; ?> / <?php echo $expected; ?></span>
+                                        </div>
+                                    </div>
+                                    
+                                    <?php if ($campaign['status'] === 'ongoing' || $campaign['status'] === 'planned'): ?>
+                                        <div class="campaign-progress">
+                                            <div class="progress-bar">
+                                                <div class="progress-fill" style="width: <?php echo min(100, $participant_rate); ?>%"></div>
                                             </div>
-                                            <div class="campaign-body">
-                                                <?php if ($campaign['description']): ?>
-                                                    <div class="campaign-description">
-                                                        <?php 
-                                                        $description = htmlspecialchars($campaign['description']);
-                                                        echo strlen($description) > 150 ? substr($description, 0, 150) . '...' : $description;
-                                                        ?>
-                                                    </div>
-                                                <?php endif; ?>
-                                                
-                            <div class="campaign-details">
-                                <div class="detail-item">
-                                    <span class="detail-label">Status:</span>
-                                    <span class="status-badge status-<?php echo $view_campaign['status']; ?>">
-                                        <?php echo ucfirst($view_campaign['status']); ?>
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Type:</span>
-                                    <span class="type-badge"><?php echo ucfirst($view_campaign['campaign_type']); ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Dates:</span>
-                                    <span class="detail-value">
-                                        <?php echo date('M j, Y', strtotime($view_campaign['start_date'])); ?> 
-                                        <?php if ($view_campaign['end_date']): ?>
-                                            - <?php echo date('M j, Y', strtotime($view_campaign['end_date'])); ?>
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <span class="detail-label">Location:</span>
-                                    <span class="detail-value"><?php echo htmlspecialchars($view_campaign['location']); ?></span>
-                                </div>
-                                <div class="detail-item">
-                                    <?php
-                                    $budget = $view_campaign['budget'] ?? 0;
-                                    $allocated_budget = $view_campaign['allocated_budget'] ?? 0;
-                                    ?>
-                                    <span class="detail-label">Budget:</span>
-                                    <span class="detail-value">
-                                        <?php echo number_format($allocated_budget, 2); ?> RWF 
-                                        <?php if ($budget > 0): ?>
-                                            (of <?php echo number_format($budget, 2); ?> RWF)
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                                <div class="detail-item">
-                                    <?php
-                                    $expected_participants = $view_campaign['expected_participants'] ?? 0;
-                                    $actual_participants = $view_campaign['actual_participants'] ?? 0;
-                                    ?>
-                                    <span class="detail-label">Participants:</span>
-                                    <span class="detail-value">
-                                        <?php echo $actual_participants; ?> 
-                                        <?php if ($expected_participants > 0): ?>
-                                            (of <?php echo $expected_participants; ?> expected)
-                                        <?php endif; ?>
-                                    </span>
-                                </div>
-                            </div>
-                                                
-                                                <?php if ($campaign['status'] === 'ongoing' || $campaign['status'] === 'planned'): ?>
-                                                    <div class="campaign-progress">
-                                                        <div class="progress-bar">
-                                                            <div class="progress-fill" style="width: <?php echo min(100, $participant_rate); ?>%"></div>
-                                                        </div>
-                                                        <div class="progress-text">
-                                                            <span>Participant Registration</span>
-                                                            <span><?php echo round($participant_rate); ?>%</span>
-                                                        </div>
-                                                    </div>
-                                                <?php endif; ?>
-                                                
-                                                <div class="campaign-actions">
-                                                    <a href="?view=<?php echo $campaign['id']; ?>" class="btn btn-primary btn-small">
-                                                        <i class="fas fa-eye"></i> View Details
-                                                    </a>
-                                                    <button class="btn btn-outline btn-small" onclick="editCampaign(<?php echo $campaign['id']; ?>)">
-                                                        <i class="fas fa-edit"></i> Edit
-                                                    </button>
-                                                    <?php if ($campaign['status'] !== 'completed' && $campaign['status'] !== 'cancelled'): ?>
-                                                        <button class="btn btn-outline btn-small" onclick="showModal('addTaskModal', <?php echo $campaign['id']; ?>)">
-                                                            <i class="fas fa-tasks"></i> Add Task
-                                                        </button>
-                                                    <?php endif; ?>
-                                                </div>
+                                            <div class="progress-text">
+                                                <span>Registration Progress</span>
+                                                <span><?php echo round($participant_rate); ?>%</span>
                                             </div>
                                         </div>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
+                                    <?php endif; ?>
+                                    
+                                    <div class="campaign-actions">
+                                        <a href="?view=<?php echo $campaign['id']; ?>" class="btn btn-primary btn-small">
+                                            <i class="fas fa-eye"></i> View Details
+                                        </a>
+                                        <button class="btn btn-outline btn-small" onclick="editCampaign(<?php echo $campaign['id']; ?>)">
+                                            <i class="fas fa-edit"></i> Edit
+                                        </button>
+                                        <?php if ($campaign['status'] !== 'completed' && $campaign['status'] !== 'cancelled'): ?>
+                                            <button class="btn btn-outline btn-small" onclick="showModalWithCampaign('addTaskModal', <?php echo $campaign['id']; ?>)">
+                                                <i class="fas fa-tasks"></i> Add Task
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
                             </div>
-
-
-                
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
             <?php endif; ?>
         </main>
     </div>
@@ -2110,12 +2154,12 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                         
                         <div class="form-group">
                             <label class="form-label">Estimated Budget (RWF)</label>
-                            <input type="number" name="budget" class="form-input" placeholder="0.00" step="0.01">
+                            <input type="number" name="budget" class="form-input" placeholder="0" step="1">
                         </div>
                         
                         <div class="form-group">
                             <label class="form-label">Allocated Budget (RWF)</label>
-                            <input type="number" name="allocated_budget" class="form-input" placeholder="0.00" step="0.01">
+                            <input type="number" name="allocated_budget" class="form-input" placeholder="0" step="1">
                         </div>
                         
                         <div class="form-group">
@@ -2251,7 +2295,7 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                         
                         <div class="form-group">
                             <label class="form-label">Cost (RWF)</label>
-                            <input type="number" name="cost" class="form-input" placeholder="0.00" step="0.01">
+                            <input type="number" name="cost" class="form-input" placeholder="0" step="1">
                         </div>
                     </div>
                     
@@ -2322,28 +2366,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         </div>
     </div>
 
-    <!-- Edit Campaign Modal -->
-    <div id="editCampaignModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Edit Health Campaign</h3>
-                <button class="close" onclick="closeModal('editCampaignModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form method="POST" id="editCampaignForm">
-                    <input type="hidden" name="action" value="edit_campaign">
-                    <input type="hidden" name="campaign_id" id="edit_campaign_id">
-                    
-                    <!-- Form content similar to add campaign but with existing data -->
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-outline" onclick="closeModal('editCampaignModal')">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Update Campaign</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
     <script>
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
@@ -2362,19 +2384,67 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Modal Functions
-        function showModal(modalId, campaignId = null) {
+        function showModal(modalId) {
             const modal = document.getElementById(modalId);
             if (modal) {
                 modal.style.display = 'block';
-                
-                // Set campaign ID for modals that need it
-                if (campaignId) {
-                    const campaignIdField = modal.querySelector('input[name="campaign_id"]');
-                    if (campaignIdField) {
-                        campaignIdField.value = campaignId;
-                    }
-                }
+                document.body.style.overflow = 'hidden';
                 
                 // Set current date for date fields
                 const today = new Date().toISOString().split('T')[0];
@@ -2386,39 +2456,37 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                 });
             }
         }
+        
+        function showModalWithCampaign(modalId, campaignId) {
+            showModal(modalId);
+            const campaignIdField = document.getElementById(modalId.replace('Modal', '_campaign_id'));
+            if (campaignIdField) {
+                campaignIdField.value = campaignId;
+            }
+        }
 
         function closeModal(modalId) {
             const modal = document.getElementById(modalId);
             if (modal) {
                 modal.style.display = 'none';
+                document.body.style.overflow = '';
             }
         }
 
         function editCampaign(campaignId) {
             // In a real implementation, you would fetch campaign data and populate the form
-            // For now, we'll just show the modal
-            showModal('editCampaignModal');
-            document.getElementById('edit_campaign_id').value = campaignId;
-            
-            // Here you would typically make an AJAX call to get campaign data
-            // and populate the edit form
-            console.log('Editing campaign:', campaignId);
+            alert('Edit functionality would open a form with campaign data. Campaign ID: ' + campaignId);
         }
 
         function updateParticipantAttendance(participantId) {
-            // Implementation for updating participant attendance
-            console.log('Updating attendance for participant:', participantId);
-            
-            // Show a prompt or modal for updating attendance
-            const status = prompt('Update attendance status (registered, attended, absent, excused):');
-            if (status) {
-                // Create a form and submit it
+            const status = prompt('Update attendance status (registered, attended, absent):');
+            if (status && ['registered', 'attended', 'absent'].includes(status.toLowerCase())) {
                 const form = document.createElement('form');
                 form.method = 'POST';
                 form.innerHTML = `
                     <input type="hidden" name="action" value="update_participant_attendance">
                     <input type="hidden" name="participant_id" value="${participantId}">
-                    <input type="hidden" name="attendance_status" value="${status}">
+                    <input type="hidden" name="attendance_status" value="${status.toLowerCase()}">
                 `;
                 document.body.appendChild(form);
                 form.submit();
@@ -2426,46 +2494,35 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
         }
 
         // Close modal when clicking outside
-        window.onclick = function(event) {
+        window.addEventListener('click', function(event) {
             const modals = document.getElementsByClassName('modal');
             for (let modal of modals) {
                 if (event.target === modal) {
                     modal.style.display = 'none';
+                    document.body.style.overflow = '';
                 }
             }
-        }
+        });
 
-        // Auto-refresh campaigns every 5 minutes
-        setInterval(() => {
-            if (!document.querySelector('.campaign-view')) {
-                window.location.reload();
-            }
-        }, 300000);
-
-        // Form validation
-        document.addEventListener('DOMContentLoaded', function() {
-            const forms = document.querySelectorAll('form');
-            forms.forEach(form => {
-                form.addEventListener('submit', function(e) {
-                    const requiredFields = form.querySelectorAll('[required]');
-                    let valid = true;
-                    
-                    requiredFields.forEach(field => {
-                        if (!field.value.trim()) {
-                            valid = false;
-                            field.style.borderColor = 'var(--danger)';
-                        } else {
-                            field.style.borderColor = '';
-                        }
-                    });
-                    
-                    if (!valid) {
-                        e.preventDefault();
-                        alert('Please fill in all required fields.');
-                    }
-                });
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
             });
+        }, 5000);
 
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
+            
             // Set minimum dates to today
             const dateFields = document.querySelectorAll('input[type="date"]');
             const today = new Date().toISOString().split('T')[0];
@@ -2475,26 +2532,6 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
                 }
             });
         });
-
-        // Campaign status progress calculation
-        function calculateCampaignProgress(campaign) {
-            const now = new Date();
-            const start = new Date(campaign.start_date);
-            const end = campaign.end_date ? new Date(campaign.end_date) : null;
-            
-            if (campaign.status === 'completed') return 100;
-            if (campaign.status === 'cancelled') return 0;
-            if (now < start) return 0;
-            if (end && now > end) return 100;
-            
-            if (end) {
-                const totalDuration = end - start;
-                const elapsed = now - start;
-                return Math.min(100, (elapsed / totalDuration) * 100);
-            }
-            
-            return 50; // Default for ongoing campaigns without end date
-        }
     </script>
 </body>
 </html>

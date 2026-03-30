@@ -20,6 +20,63 @@ try {
     error_log("User query error: " . $e->getMessage());
 }
 
+// Get sidebar statistics
+try {
+    // Pending tickets count
+    $ticketStmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE status IN ('open', 'in_progress') 
+        AND (assigned_to = ? OR assigned_to IS NULL)
+    ");
+    $ticketStmt->execute([$user_id]);
+    $pending_tickets = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    
+    // New students count
+    $new_students_stmt = $pdo->prepare("
+        SELECT COUNT(*) as new_students 
+        FROM users 
+        WHERE role = 'student' 
+        AND status = 'active' 
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    ");
+    $new_students_stmt->execute();
+    $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+    
+    // Upcoming meetings count
+    $upcoming_meetings = $pdo->query("
+        SELECT COUNT(*) as count FROM meetings 
+        WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'
+    ")->fetch()['count'] ?? 0;
+    
+    // Pending minutes count
+    $pending_minutes = $pdo->query("
+        SELECT COUNT(*) as count FROM meeting_minutes 
+        WHERE approval_status = 'submitted'
+    ")->fetch()['count'] ?? 0;
+    
+    // Pending reports
+    $pending_reports = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'")->fetch()['pending_reports'] ?? 0;
+    
+    // Unread messages
+    $unread_messages = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_count 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+    }
+    
+} catch (PDOException $e) {
+    $pending_tickets = $new_students = $upcoming_meetings = $pending_minutes = $pending_reports = $unread_messages = 0;
+}
+
 // Handle actions
 $action = $_GET['action'] ?? '';
 $member_id = $_GET['id'] ?? null;
@@ -131,7 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $insert_stmt = $pdo->prepare("
                                 INSERT INTO committee_members 
                                 (reg_number, name, email, phone, department_id, program_id, academic_year, user_id, role, bio, portfolio_description, start_date, status, role_order)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, 'active', ?)
                             ");
                             
                             $role_order = array_search($role, array_keys($committee_roles)) + 1;
@@ -204,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     if ($member_data) {
                         // Update committee member status
-                        $update_stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive', end_date = CURDATE() WHERE id = ?");
+                        $update_stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive', end_date = CURRENT_DATE WHERE id = ?");
                         $update_stmt->execute([$member_id]);
                         
                         // Reset user role to student
@@ -252,12 +309,12 @@ try {
             cm.role,
             COUNT(ma.id) as total_meetings,
             SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) as meetings_attended,
-            ROUND((SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) / COUNT(ma.id)) * 100, 2) as attendance_rate
+            ROUND((SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) / NULLIF(COUNT(ma.id), 0)) * 100, 2) as attendance_rate
         FROM committee_members cm
         LEFT JOIN meeting_attendance ma ON cm.id = ma.committee_member_id
         LEFT JOIN meetings m ON ma.meeting_id = m.id
         WHERE cm.status = 'active'
-        AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND m.meeting_date >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
         GROUP BY cm.id, cm.name, cm.role
         ORDER BY attendance_rate DESC
     ");
@@ -272,12 +329,12 @@ try {
             cm.role,
             COUNT(t.id) as total_tickets,
             SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END) as resolved_tickets,
-            ROUND((SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END) / COUNT(t.id)) * 100, 2) as resolution_rate
+            ROUND((SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END) / NULLIF(COUNT(t.id), 0)) * 100, 2) as resolution_rate
         FROM committee_members cm
         LEFT JOIN users u ON cm.user_id = u.id
         LEFT JOIN tickets t ON u.id = t.assigned_to
         WHERE cm.status = 'active'
-        AND t.created_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND t.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
         GROUP BY cm.id, cm.name, cm.role
         ORDER BY resolution_rate DESC
     ");
@@ -291,12 +348,12 @@ try {
             cm.name,
             cm.role,
             COUNT(r.id) as total_reports,
-            SUM(CASE WHEN r.status = 'submitted' OR r.status = 'approved' THEN 1 ELSE 0 END) as submitted_reports
+            SUM(CASE WHEN r.status IN ('submitted', 'approved') THEN 1 ELSE 0 END) as submitted_reports
         FROM committee_members cm
         LEFT JOIN users u ON cm.user_id = u.id
         LEFT JOIN reports r ON u.id = r.user_id
         WHERE cm.status = 'active'
-        AND r.created_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND r.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 3 MONTH)
         GROUP BY cm.id, cm.name, cm.role
         ORDER BY submitted_reports DESC
     ");
@@ -364,7 +421,7 @@ try {
             cm.role
         FROM meetings m
         LEFT JOIN committee_members cm ON m.chairperson_id = cm.user_id
-        WHERE m.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY)
         ORDER BY m.created_at DESC
         LIMIT 5)
         
@@ -379,7 +436,7 @@ try {
             cm.role
         FROM tickets t
         LEFT JOIN committee_members cm ON t.assigned_to = cm.user_id
-        WHERE t.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE t.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY)
         ORDER BY t.created_at DESC
         LIMIT 5)
         
@@ -394,7 +451,7 @@ try {
             cm.role
         FROM reports r
         LEFT JOIN committee_members cm ON r.user_id = cm.user_id
-        WHERE r.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE r.created_at >= DATE_SUB(CURRENT_DATE, INTERVAL 7 DAY)
         ORDER BY r.created_at DESC
         LIMIT 5)
         
@@ -408,15 +465,14 @@ try {
     error_log("Recent activities error: " . $e->getMessage());
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Committee Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
@@ -432,6 +488,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -439,6 +496,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -454,6 +513,7 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
         }
 
@@ -477,14 +537,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -494,7 +551,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -503,38 +559,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -542,22 +604,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -566,77 +613,120 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            background: var(--danger);
+            color: white;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -666,9 +756,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -683,16 +771,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -704,26 +801,21 @@ try {
 
         .page-title p {
             color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
-        .page-actions {
-            display: flex;
-            gap: 0.75rem;
+            font-size: 0.85rem;
         }
 
         .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.6rem 1.2rem;
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.85rem;
-            transition: var(--transition);
-            border: none;
-            cursor: pointer;
         }
 
         .btn-primary {
@@ -732,84 +824,44 @@ try {
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
+            transform: translateY(-1px);
             box-shadow: var(--shadow-md);
         }
 
         .btn-outline {
             background: transparent;
-            border: 1px solid var(--primary-blue);
-            color: var(--primary-blue);
+            border: 1px solid var(--medium-gray);
+            color: var(--text-dark);
         }
 
         .btn-outline:hover {
-            background: var(--primary-blue);
-            color: white;
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: black;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
+            border-color: var(--primary-blue);
+            color: var(--primary-blue);
         }
 
         .btn-sm {
             padding: 0.4rem 0.8rem;
-            font-size: 0.75rem;
-        }
-
-        /* Cards */
-        .card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
-            margin-bottom: 1.5rem;
-        }
-
-        .card-header {
-            padding: 1rem 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .card-header h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .card-body {
-            padding: 1.25rem;
+            font-size: 0.7rem;
         }
 
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
-            text-align: center;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
         .stat-card:hover {
@@ -817,22 +869,101 @@ try {
             box-shadow: var(--shadow-md);
         }
 
-        .stat-card.success { border-left-color: var(--success); }
-        .stat-card.warning { border-left-color: var(--warning); }
-        .stat-card.danger { border-left-color: var(--danger); }
-        .stat-card.info { border-left-color: var(--secondary-blue); }
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
+
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .stat-card .stat-icon {
+            background: var(--light-blue);
+            color: var(--primary-blue);
+        }
+
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: var(--warning);
+        }
+
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
 
         .stat-number {
-            font-size: 2rem;
+            font-size: 1.4rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
             color: var(--text-dark);
         }
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             font-weight: 500;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--medium-gray);
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            padding: 0.75rem 1.25rem;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: var(--dark-gray);
+            cursor: pointer;
+            transition: var(--transition);
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .tab:hover {
+            color: var(--primary-blue);
+        }
+
+        .tab.active {
+            color: var(--primary-blue);
+            border-bottom-color: var(--primary-blue);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
         }
 
         /* Committee Grid */
@@ -840,7 +971,6 @@ try {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 1.5rem;
-            margin-bottom: 1.5rem;
         }
 
         .member-card {
@@ -862,7 +992,6 @@ try {
             color: white;
             padding: 1.5rem;
             text-align: center;
-            position: relative;
         }
 
         .member-avatar {
@@ -876,7 +1005,7 @@ try {
             color: white;
             font-size: 1.5rem;
             font-weight: 600;
-            margin: 0 auto 1rem;
+            margin: 0 auto 0.75rem;
             border: 3px solid rgba(255, 255, 255, 0.3);
             overflow: hidden;
         }
@@ -888,18 +1017,18 @@ try {
         }
 
         .member-name {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             margin-bottom: 0.25rem;
         }
 
         .member-role {
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             opacity: 0.9;
         }
 
         .member-body {
-            padding: 1.25rem;
+            padding: 1rem;
         }
 
         .member-info {
@@ -912,6 +1041,7 @@ try {
             align-items: center;
             padding: 0.5rem 0;
             border-bottom: 1px solid var(--medium-gray);
+            font-size: 0.75rem;
         }
 
         .info-item:last-child {
@@ -921,21 +1051,19 @@ try {
         .info-label {
             font-weight: 600;
             color: var(--dark-gray);
-            font-size: 0.8rem;
         }
 
         .info-value {
             color: var(--text-dark);
-            font-size: 0.8rem;
             text-align: right;
         }
 
         .performance-score {
             text-align: center;
-            padding: 1rem;
+            padding: 0.75rem;
             background: var(--light-gray);
             border-radius: var(--border-radius);
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
         }
 
         .score-circle {
@@ -962,21 +1090,20 @@ try {
         .score-value {
             position: relative;
             font-weight: 700;
-            font-size: 1rem;
+            font-size: 0.9rem;
             color: var(--text-dark);
         }
 
         .score-label {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
-        .member-actions {
-            display: flex;
-            gap: 0.5rem;
+        /* Table */
+        .table-wrapper {
+            overflow-x: auto;
         }
 
-        /* Tables */
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -996,127 +1123,70 @@ try {
             font-size: 0.75rem;
         }
 
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
+        .table tbody tr:hover {
+            background: var(--light-blue);
         }
 
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.85rem;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.85rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
-        }
-
-        textarea.form-control {
-            min-height: 100px;
-            resize: vertical;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-
-        /* Alerts */
-        .alert {
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left-color: var(--success);
-        }
-
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border-left-color: var(--danger);
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 1.5rem;
-        }
-
-        .tab {
-            padding: 0.75rem 1.5rem;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--dark-gray);
-            font-weight: 500;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .tab.active {
-            color: var(--primary-blue);
-            border-bottom-color: var(--primary-blue);
-        }
-
-        .tab:hover {
-            color: var(--primary-blue);
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Progress Bars */
+        /* Progress Bar */
         .progress-bar {
             width: 100%;
-            height: 8px;
+            height: 6px;
             background: var(--medium-gray);
-            border-radius: 4px;
+            border-radius: 3px;
             overflow: hidden;
-            margin: 0.5rem 0;
+            margin: 0.5rem 0 0.25rem;
         }
 
         .progress-fill {
             height: 100%;
             background: var(--success);
+            border-radius: 3px;
             transition: width 0.3s ease;
         }
 
-        .progress-fill.warning { background: var(--warning); }
-        .progress-fill.danger { background: var(--danger); }
+        .progress-fill.warning {
+            background: var(--warning);
+        }
+
+        .progress-fill.danger {
+            background: var(--danger);
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-completed {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-in-progress {
+            background: #cce7ff;
+            color: var(--primary-blue);
+        }
 
         /* Activity Feed */
+        .activity-feed {
+            display: flex;
+            flex-direction: column;
+        }
+
         .activity-item {
             display: flex;
             align-items: flex-start;
-            gap: 1rem;
-            padding: 1rem;
+            gap: 0.75rem;
+            padding: 0.75rem;
             border-bottom: 1px solid var(--medium-gray);
         }
 
@@ -1143,133 +1213,251 @@ try {
 
         .activity-title {
             font-weight: 600;
+            font-size: 0.8rem;
             color: var(--text-dark);
             margin-bottom: 0.25rem;
         }
 
         .activity-meta {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
-
-        .activity-status {
-            padding: 0.25rem 0.5rem;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-completed { background: #d4edda; color: var(--success); }
-        .status-pending { background: #fff3cd; color: var(--warning); }
-        .status-in-progress { background: #cce7ff; color: var(--primary-blue); }
 
         /* Modal */
         .modal {
             display: none;
             position: fixed;
-            z-index: 1000;
-            left: 0;
             top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
         }
 
         .modal-content {
-            background-color: var(--white);
-            margin: 5% auto;
-            padding: 0;
+            background: var(--white);
             border-radius: var(--border-radius);
-            width: 90%;
-            max-width: 600px;
             box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 550px;
             max-height: 90vh;
             overflow-y: auto;
         }
 
         .modal-header {
-            padding: 1.5rem;
+            padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
         }
 
         .modal-header h3 {
-            margin: 0;
-            color: var(--text-dark);
-        }
-
-        .close {
-            color: var(--dark-gray);
-            font-size: 1.5rem;
-            font-weight: bold;
-            cursor: pointer;
-            background: none;
-            border: none;
-        }
-
-        .close:hover {
-            color: var(--danger);
+            font-size: 1rem;
+            font-weight: 600;
         }
 
         .modal-body {
-            padding: 1.5rem;
+            padding: 1.25rem;
         }
 
         .modal-footer {
-            padding: 1rem 1.5rem;
+            padding: 1rem 1.25rem;
             border-top: 1px solid var(--medium-gray);
             display: flex;
             justify-content: flex-end;
             gap: 0.75rem;
         }
 
+        .close-modal {
+            background: none;
+            border: none;
+            font-size: 1.25rem;
+            cursor: pointer;
+            color: var(--dark-gray);
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .form-control, .form-select {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
+        }
+
+        textarea.form-control {
+            resize: vertical;
+        }
+
+        /* Alert */
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
+            }
+
             .committee-grid {
-                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            }
-            
-            .form-row {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .committee-grid {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .committee-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tabs {
+                justify-content: center;
+            }
+
+            .tab {
+                padding: 0.5rem 1rem;
+                font-size: 0.75rem;
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
         }
 
@@ -1277,25 +1465,51 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .member-actions {
-                flex-direction: column;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - General Secretary</h1>
                 </div>
@@ -1305,8 +1519,14 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1332,7 +1552,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1344,27 +1567,38 @@ try {
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="students.php">
                         <i class="fas fa-user-graduate"></i>
                         <span>Student Management</span>
+                        <?php if ($new_students > 0): ?>
+                            <span class="menu-badge"><?php echo $new_students; ?> new</span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="meetings.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Meetings & Attendance</span>
+                        <?php if ($upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="meeting_minutes.php">
                         <i class="fas fa-clipboard-list"></i>
                         <span>Meeting Minutes</span>
+                        <?php if ($pending_minutes > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_minutes; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="committee.php" class="active">
                         <i class="fas fa-users"></i>
@@ -1375,12 +1609,18 @@ try {
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Reports & Analytics</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1393,14 +1633,17 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <!-- Page Header -->
+        <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div class="page-title">
-                    <h1>Committee Management Control Room</h1>
+                    <h1>Committee Management Control Room 👥</h1>
                     <p>Manage committee members and track their performance</p>
                 </div>
-
+                <div>
+                    <button class="btn btn-primary" onclick="openAddMemberModal()">
+                        <i class="fas fa-user-plus"></i> Add Committee Member
+                    </button>
+                </div>
             </div>
 
             <!-- Success/Error Messages -->
@@ -1414,120 +1657,131 @@ try {
             <!-- Statistics -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-number"><?php echo count($committee_members); ?></div>
-                    <div class="stat-label">Total Committee Members</div>
+                    <div class="stat-icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number"><?php echo count($committee_members); ?></div>
+                        <div class="stat-label">Total Committee Members</div>
+                    </div>
                 </div>
                 <div class="stat-card success">
-                    <div class="stat-number">
-                        <?php 
-                        $active_count = array_reduce($committee_members, function($carry, $member) {
-                            return $carry + ($member['status'] === 'active' ? 1 : 0);
-                        }, 0);
-                        echo $active_count;
-                        ?>
+                    <div class="stat-icon">
+                        <i class="fas fa-user-check"></i>
                     </div>
-                    <div class="stat-label">Active Members</div>
+                    <div class="stat-content">
+                        <div class="stat-number">
+                            <?php 
+                            $active_count = array_reduce($committee_members, function($carry, $member) {
+                                return $carry + ($member['status'] === 'active' ? 1 : 0);
+                            }, 0);
+                            echo $active_count;
+                            ?>
+                        </div>
+                        <div class="stat-label">Active Members</div>
+                    </div>
                 </div>
                 <div class="stat-card info">
-                    <div class="stat-number"><?php echo count($committee_roles); ?></div>
-                    <div class="stat-label">Available Roles</div>
+                    <div class="stat-icon">
+                        <i class="fas fa-tasks"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number"><?php echo count($committee_roles); ?></div>
+                        <div class="stat-label">Available Roles</div>
+                    </div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-number">
-                        <?php
-                        $avg_performance = array_reduce($performance_data, function($carry, $data) {
-                            return $carry + $data['overall_score'];
-                        }, 0) / max(count($performance_data), 1);
-                        echo round($avg_performance, 1) . '%';
-                        ?>
+                    <div class="stat-icon">
+                        <i class="fas fa-chart-line"></i>
                     </div>
-                    <div class="stat-label">Average Performance</div>
+                    <div class="stat-content">
+                        <div class="stat-number">
+                            <?php
+                            $avg_performance = array_reduce($performance_data, function($carry, $data) {
+                                return $carry + $data['overall_score'];
+                            }, 0) / max(count($performance_data), 1);
+                            echo round($avg_performance, 1) . '%';
+                            ?>
+                        </div>
+                        <div class="stat-label">Average Performance</div>
+                    </div>
                 </div>
             </div>
 
             <!-- Tabs -->
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('members')">Committee Members</button>
-                <button class="tab" onclick="switchTab('performance')">Performance Tracking</button>
-                <button class="tab" onclick="switchTab('activities')">Recent Activities</button>
+                <button class="tab active" onclick="switchTab(event, 'members')">Committee Members</button>
+                <button class="tab" onclick="switchTab(event, 'performance')">Performance Tracking</button>
+                <button class="tab" onclick="switchTab(event, 'activities')">Recent Activities</button>
             </div>
 
             <!-- Committee Members Tab -->
             <div id="members-tab" class="tab-content active">
-                <div class="committee-grid">
-                    <?php foreach ($committee_members as $member): ?>
-                        <?php 
-                        $performance = $performance_data[$member['id']] ?? ['overall_score' => 0];
-                        $score_percent = min($performance['overall_score'], 100);
-                        $score_color = $score_percent >= 80 ? 'success' : ($score_percent >= 60 ? 'warning' : 'danger');
-                        ?>
-                        <div class="member-card">
-                            <div class="member-header">
-                                <div class="member-avatar">
-                                    <?php if (!empty($member['avatar_url'])): ?>
-                                        <img src="../<?php echo htmlspecialchars($member['avatar_url']); ?>" alt="Avatar">
-                                    <?php else: ?>
-                                        <?php echo strtoupper(substr($member['name'] ?? 'C', 0, 1)); ?>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
-                                <div class="member-role"><?php echo htmlspecialchars($committee_roles[$member['role']] ?? $member['role']); ?></div>
-                            </div>
-                            <div class="member-body">
-                                <div class="member-info">
-                                    <div class="info-item">
-                                        <span class="info-label">Registration No:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['reg_number']); ?></span>
-                                    </div>
-                                    <div class="info-item">
-                                        <span class="info-label">Email:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['email']); ?></span>
-                                    </div>
-                                    <div class="info-item">
-                                        <span class="info-label">Phone:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['phone']); ?></span>
-                                    </div>
-                                    <?php if ($member['department_name']): ?>
-                                    <div class="info-item">
-                                        <span class="info-label">Department:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['department_name']); ?></span>
-                                    </div>
-                                    <?php endif; ?>
-                                    <?php if ($member['program_name']): ?>
-                                    <div class="info-item">
-                                        <span class="info-label">Program:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['program_name']); ?></span>
-                                    </div>
-                                    <?php endif; ?>
-                                    <div class="info-item">
-                                        <span class="info-label">Academic Year:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['academic_year']); ?></span>
-                                    </div>
-                                </div>
-
-                                <div class="performance-score">
-                                    <div class="score-circle" style="--score-percent: <?php echo $score_percent; ?>%">
-                                        <span class="score-value"><?php echo $score_percent; ?>%</span>
-                                    </div>
-                                    <div class="score-label">Performance Score</div>
-                                </div>
-
-
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-
                 <?php if (empty($committee_members)): ?>
                     <div class="card">
-                        <div class="card-body" style="text-align: center; padding: 3rem;">
-                            <i class="fas fa-users" style="font-size: 3rem; color: var(--dark-gray); margin-bottom: 1rem;"></i>
+                        <div class="card-body empty-state">
+                            <i class="fas fa-users"></i>
                             <h3>No Committee Members</h3>
                             <p>Start by adding committee members to manage the student union.</p>
                             <button class="btn btn-primary" onclick="openAddMemberModal()">
                                 <i class="fas fa-user-plus"></i> Add First Member
                             </button>
                         </div>
+                    </div>
+                <?php else: ?>
+                    <div class="committee-grid">
+                        <?php foreach ($committee_members as $member): ?>
+                            <?php 
+                            $performance = $performance_data[$member['id']] ?? ['overall_score' => 0];
+                            $score_percent = min($performance['overall_score'], 100);
+                            ?>
+                            <div class="member-card">
+                                <div class="member-header">
+                                    <div class="member-avatar">
+                                        <?php if (!empty($member['avatar_url'])): ?>
+                                            <img src="../<?php echo htmlspecialchars($member['avatar_url']); ?>" alt="Avatar">
+                                        <?php else: ?>
+                                            <?php echo strtoupper(substr($member['name'] ?? 'C', 0, 1)); ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
+                                    <div class="member-role"><?php echo htmlspecialchars($committee_roles[$member['role']] ?? $member['role']); ?></div>
+                                </div>
+                                <div class="member-body">
+                                    <div class="member-info">
+                                        <div class="info-item">
+                                            <span class="info-label">Reg Number:</span>
+                                            <span class="info-value"><?php echo htmlspecialchars($member['reg_number']); ?></span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">Email:</span>
+                                            <span class="info-value"><?php echo htmlspecialchars($member['email']); ?></span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">Phone:</span>
+                                            <span class="info-value"><?php echo htmlspecialchars($member['phone']); ?></span>
+                                        </div>
+                                        <?php if ($member['department_name']): ?>
+                                        <div class="info-item">
+                                            <span class="info-label">Department:</span>
+                                            <span class="info-value"><?php echo htmlspecialchars($member['department_name']); ?></span>
+                                        </div>
+                                        <?php endif; ?>
+                                        <div class="info-item">
+                                            <span class="info-label">Academic Year:</span>
+                                            <span class="info-value"><?php echo htmlspecialchars($member['academic_year']); ?></span>
+                                        </div>
+                                    </div>
+
+                                    <div class="performance-score">
+                                        <div class="score-circle" style="--score-percent: <?php echo $score_percent; ?>%">
+                                            <span class="score-value"><?php echo $score_percent; ?>%</span>
+                                        </div>
+                                        <div class="score-label">Performance Score</div>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
             </div>
@@ -1540,7 +1794,7 @@ try {
                     </div>
                     <div class="card-body">
                         <?php if (!empty($committee_members)): ?>
-                            <div style="overflow-x: auto;">
+                            <div class="table-wrapper">
                                 <table class="table">
                                     <thead>
                                         <tr>
@@ -1550,9 +1804,8 @@ try {
                                             <th>Ticket Resolution</th>
                                             <th>Report Submission</th>
                                             <th>Overall Score</th>
-                                            <th>Performance</th>
-                                        </tr>
-                                    </thead>
+                                            <th>Rating</th>
+                                        </thead>
                                     <tbody>
                                         <?php foreach ($committee_members as $member): ?>
                                             <?php 
@@ -1561,13 +1814,12 @@ try {
                                             $tickets = $performance['tickets'] ?? [];
                                             $reports = $performance['reports'] ?? [];
                                             $overall_score = $performance['overall_score'] ?? 0;
+                                            $report_rate = $reports && $reports['total_reports'] > 0 ? round(($reports['submitted_reports'] / $reports['total_reports']) * 100, 2) : 0;
                                             ?>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($member['name']); ?></strong>
-                                                </td>
+                                                <td><strong><?php echo htmlspecialchars($member['name']); ?></strong></td>
                                                 <td><?php echo htmlspecialchars($committee_roles[$member['role']] ?? $member['role']); ?></td>
-                                                <td>
+                                                <td style="min-width: 120px;">
                                                     <?php if ($attendance && $attendance['total_meetings'] > 0): ?>
                                                         <?php echo $attendance['meetings_attended']; ?>/<?php echo $attendance['total_meetings']; ?>
                                                         (<?php echo $attendance['attendance_rate']; ?>%)
@@ -1579,7 +1831,7 @@ try {
                                                         <span style="color: var(--dark-gray);">No data</span>
                                                     <?php endif; ?>
                                                 </td>
-                                                <td>
+                                                <td style="min-width: 120px;">
                                                     <?php if ($tickets && $tickets['total_tickets'] > 0): ?>
                                                         <?php echo $tickets['resolved_tickets']; ?>/<?php echo $tickets['total_tickets']; ?>
                                                         (<?php echo $tickets['resolution_rate']; ?>%)
@@ -1591,23 +1843,21 @@ try {
                                                         <span style="color: var(--dark-gray);">No data</span>
                                                     <?php endif; ?>
                                                 </td>
-                                                <td>
+                                                <td style="min-width: 120px;">
                                                     <?php if ($reports && $reports['total_reports'] > 0): ?>
                                                         <?php echo $reports['submitted_reports']; ?>/<?php echo $reports['total_reports']; ?>
-                                                        (<?php echo round(($reports['submitted_reports'] / $reports['total_reports']) * 100, 2); ?>%)
+                                                        (<?php echo $report_rate; ?>%)
                                                         <div class="progress-bar">
-                                                            <div class="progress-fill <?php echo ($reports['submitted_reports'] / $reports['total_reports'] * 100) >= 80 ? '' : (($reports['submitted_reports'] / $reports['total_reports'] * 100) >= 60 ? 'warning' : 'danger'); ?>" 
-                                                                 style="width: <?php echo ($reports['submitted_reports'] / $reports['total_reports'] * 100); ?>%"></div>
+                                                            <div class="progress-fill <?php echo $report_rate >= 80 ? '' : ($report_rate >= 60 ? 'warning' : 'danger'); ?>" 
+                                                                 style="width: <?php echo $report_rate; ?>%"></div>
                                                         </div>
                                                     <?php else: ?>
                                                         <span style="color: var(--dark-gray);">No data</span>
                                                     <?php endif; ?>
                                                 </td>
+                                                <td><strong><?php echo $overall_score; ?>%</strong></td>
                                                 <td>
-                                                    <strong><?php echo $overall_score; ?>%</strong>
-                                                </td>
-                                                <td>
-                                                    <span class="activity-status status-<?php echo $overall_score >= 80 ? 'completed' : ($overall_score >= 60 ? 'in-progress' : 'pending'); ?>">
+                                                    <span class="status-badge <?php echo $overall_score >= 80 ? 'status-completed' : ($overall_score >= 60 ? 'status-in-progress' : 'status-pending'); ?>">
                                                         <?php echo $overall_score >= 80 ? 'Excellent' : ($overall_score >= 60 ? 'Good' : 'Needs Improvement'); ?>
                                                     </span>
                                                 </td>
@@ -1617,8 +1867,8 @@ try {
                                 </table>
                             </div>
                         <?php else: ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-chart-bar" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-chart-bar"></i>
                                 <p>No performance data available. Add committee members to start tracking performance.</p>
                             </div>
                         <?php endif; ?>
@@ -1658,15 +1908,15 @@ try {
                                                 <?php echo date('M j, Y g:i A', strtotime($activity['date'])); ?>
                                             </div>
                                         </div>
-                                        <div class="activity-status status-<?php echo str_replace('_', '-', $activity['status']); ?>">
+                                        <div class="status-badge <?php echo str_replace('_', '-', $activity['status']) === 'completed' ? 'status-completed' : (str_replace('_', '-', $activity['status']) === 'submitted' ? 'status-in-progress' : 'status-pending'); ?>">
                                             <?php echo ucfirst(str_replace('_', ' ', $activity['status'])); ?>
                                         </div>
                                     </div>
                                 <?php endforeach; ?>
                             </div>
                         <?php else: ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-clock" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-clock"></i>
                                 <p>No recent activities found.</p>
                             </div>
                         <?php endif; ?>
@@ -1681,18 +1931,18 @@ try {
         <div class="modal-content">
             <div class="modal-header">
                 <h3><i class="fas fa-user-plus"></i> Add Committee Member</h3>
-                <button class="close">&times;</button>
+                <button class="close-modal" onclick="closeModal('addMemberModal')">&times;</button>
             </div>
             <form method="POST" id="addMemberForm">
                 <input type="hidden" name="action" value="add_member">
                 <div class="modal-body">
                     <div class="form-group">
-                        <label class="form-label" for="user_id">Select Student *</label>
-                        <select class="form-control" id="user_id" name="user_id" required>
+                        <label class="form-label">Select Student *</label>
+                        <select class="form-select" name="user_id" required>
                             <option value="">Select a student</option>
                             <?php foreach ($available_students as $student): ?>
                                 <option value="<?php echo $student['id']; ?>">
-                                    <?php echo htmlspecialchars($student['full_name'] . ' (' . $student['reg_number'] . ') - ' . $student['department_name']); ?>
+                                    <?php echo htmlspecialchars($student['full_name'] . ' (' . $student['reg_number'] . ') - ' . ($student['department_name'] ?? 'No Department')); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -1702,8 +1952,8 @@ try {
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="role">Committee Role *</label>
-                        <select class="form-control" id="role" name="role" required>
+                        <label class="form-label">Committee Role *</label>
+                        <select class="form-select" name="role" required>
                             <option value="">Select a role</option>
                             <?php foreach ($committee_roles as $key => $value): ?>
                                 <option value="<?php echo $key; ?>"><?php echo htmlspecialchars($value); ?></option>
@@ -1712,90 +1962,26 @@ try {
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="bio">Bio/Description</label>
-                        <textarea class="form-control" id="bio" name="bio" rows="3" placeholder="Brief description about the member..."></textarea>
+                        <label class="form-label">Bio/Description</label>
+                        <textarea class="form-control" name="bio" rows="3" placeholder="Brief description about the member..."></textarea>
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="portfolio_description">Portfolio Description</label>
-                        <textarea class="form-control" id="portfolio_description" name="portfolio_description" rows="3" placeholder="Description of their responsibilities..."></textarea>
+                        <label class="form-label">Portfolio Description</label>
+                        <textarea class="form-control" name="portfolio_description" rows="3" placeholder="Description of their responsibilities..."></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
                     <button type="submit" class="btn btn-primary">
                         <i class="fas fa-user-plus"></i> Add to Committee
                     </button>
-                    <button type="button" class="btn btn-outline close-modal">Cancel</button>
+                    <button type="button" class="btn btn-outline" onclick="closeModal('addMemberModal')">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
     <script>
-        // Tab switching
-        function switchTab(tabName) {
-            // Hide all tabs
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // Show selected tab
-            document.getElementById(tabName + '-tab').classList.add('active');
-            event.target.classList.add('active');
-        }
-
-        // Modal functions
-        function openAddMemberModal() {
-            document.getElementById('addMemberModal').style.display = 'block';
-        }
-
-        function closeAllModals() {
-            document.querySelectorAll('.modal').forEach(modal => {
-                modal.style.display = 'none';
-            });
-        }
-
-        function editMember(memberId) {
-            // In a real implementation, this would open an edit modal
-            // For now, we'll show an alert
-            alert('Edit functionality for member ID: ' + memberId + ' would open here.');
-        }
-
-        function viewPerformance(memberId) {
-            // In a real implementation, this would open a detailed performance view
-            alert('Detailed performance view for member ID: ' + memberId + ' would open here.');
-        }
-
-        function generateCommitteeReport() {
-            alert('Committee report generation would start here. This would generate a PDF report of all committee members and their performance.');
-        }
-
-        // Event listeners
-        document.addEventListener('DOMContentLoaded', function() {
-            // Close modals
-            document.querySelectorAll('.close, .close-modal').forEach(btn => {
-                btn.addEventListener('click', closeAllModals);
-            });
-            
-            // Close modal when clicking outside
-            window.addEventListener('click', function(event) {
-                if (event.target.classList.contains('modal')) {
-                    closeAllModals();
-                }
-            });
-            
-            // Auto-refresh performance data every 2 minutes
-            setInterval(() => {
-                if (!document.querySelector('.modal[style*="display: block"]')) {
-                    // In a real implementation, this would refresh the performance data
-                    console.log('Refreshing performance data...');
-                }
-            }, 120000);
-        });
-
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
@@ -1813,10 +1999,99 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars</i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
+        // Tab switching
+        function switchTab(event, tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            if (event && event.currentTarget) {
+                event.currentTarget.classList.add('active');
+            }
+        }
+
+        // Modal functions
+        function openAddMemberModal() {
+            document.getElementById('addMemberModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
         // Form validation
         document.getElementById('addMemberForm')?.addEventListener('submit', function(e) {
-            const userId = document.getElementById('user_id').value;
-            const role = document.getElementById('role').value;
+            const userId = this.querySelector('select[name="user_id"]').value;
+            const role = this.querySelector('select[name="role"]').value;
             
             if (!userId || !role) {
                 e.preventDefault();
@@ -1824,15 +2099,24 @@ try {
             }
         });
 
+        // Close modal when clicking outside
+        window.addEventListener('click', function(event) {
+            const modal = document.getElementById('addMemberModal');
+            if (event.target === modal) {
+                closeModal('addMemberModal');
+            }
+        });
+
         // Performance score color coding
         document.querySelectorAll('.score-circle').forEach(circle => {
-            const score = parseInt(circle.querySelector('.score-value').textContent);
+            const score = parseInt(circle.querySelector('.score-value')?.textContent || '0');
+            const scorePercent = score;
             if (score >= 80) {
-                circle.style.background = 'conic-gradient(var(--success) 0% ' + score + '%, var(--light-gray) ' + score + '% 100%)';
+                circle.style.background = 'conic-gradient(var(--success) 0% ' + scorePercent + '%, var(--light-gray) ' + scorePercent + '% 100%)';
             } else if (score >= 60) {
-                circle.style.background = 'conic-gradient(var(--warning) 0% ' + score + '%, var(--light-gray) ' + score + '% 100%)';
+                circle.style.background = 'conic-gradient(var(--warning) 0% ' + scorePercent + '%, var(--light-gray) ' + scorePercent + '% 100%)';
             } else {
-                circle.style.background = 'conic-gradient(var(--danger) 0% ' + score + '%, var(--light-gray) ' + score + '% 100%)';
+                circle.style.background = 'conic-gradient(var(--danger) 0% ' + scorePercent + '%, var(--light-gray) ' + scorePercent + '% 100%)';
             }
         });
     </script>

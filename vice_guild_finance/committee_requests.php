@@ -996,47 +996,204 @@ if ($action === 'view' && $request_id) {
             border-left-color: #17a2b8;
         }
 
-        /* Responsive */
+        /* ── Mobile Nav Overlay ── */
+        .mobile-nav-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 199;
+            backdrop-filter: blur(2px);
+        }
+        .mobile-nav-overlay.active { display: block; }
+
+        /* ── Hamburger Button ── */
+        .hamburger-btn {
+            display: none;
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: var(--light-gray);
+            border-radius: 50%;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-dark);
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+        .hamburger-btn:hover {
+            background: var(--finance-primary);
+            color: white;
+        }
+
+        /* ── Sidebar Drawer ── */
+        .sidebar { transition: transform 0.3s ease; }
+
+        /* ── Tablet: details grid collapses ── */
         @media (max-width: 1024px) {
             .details-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .form-row {
                 grid-template-columns: 1fr;
             }
         }
 
-        @media (max-width: 768px) {
+        /* ── Drawer threshold ── */
+        @media (max-width: 900px) {
             .dashboard-container {
                 grid-template-columns: 1fr;
             }
-            
+
             .sidebar {
-                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 260px;
+                height: 100vh;
+                z-index: 200;
+                transform: translateX(-100%);
+                padding-top: 1rem;
+                box-shadow: var(--shadow-lg);
             }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
+
+            .sidebar.open {
+                transform: translateX(0);
             }
-            
-            .status-cards {
-                grid-template-columns: repeat(2, 1fr);
+
+            .hamburger-btn {
+                display: flex;
+            }
+
+            .main-content {
+                height: auto;
+                min-height: calc(100vh - 80px);
             }
         }
 
-        @media (max-width: 480px) {
-            .status-cards {
+        /* ── Mobile ── */
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            /* Page header stacks */
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.75rem;
+            }
+
+            /* Filters collapse to 1-col */
+            .filters-form {
                 grid-template-columns: 1fr;
             }
-            
+
+            /* Status cards 2-col */
+            .status-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            /* Table scrolls horizontally */
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .table-container .table {
+                white-space: nowrap;
+            }
+
+            /* Request details header meta wraps */
             .request-meta {
-                flex-direction: column;
                 gap: 1rem;
             }
-            
+
+            /* Approval actions form rows collapse */
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            /* Action button groups wrap */
+            .action-buttons {
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
+
+            /* Details body padding */
+            .details-body {
+                padding: 1rem;
+            }
+
+            /* Approval actions padding */
+            .approval-actions {
+                padding: 1rem;
+            }
+        }
+
+        /* ── Small phones ── */
+        @media (max-width: 480px) {
+            .status-cards {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 0.75rem;
+            }
+
+            .status-count {
+                font-size: 1.5rem;
+            }
+
+            .request-meta {
+                flex-direction: column;
+                gap: 0.75rem;
+            }
+
             .action-buttons {
                 flex-direction: column;
+            }
+
+            .action-buttons .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .header {
+                height: 68px;
+            }
+
+            .logos .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .details-header {
+                padding: 1rem;
+            }
+
+            .details-header h2 {
+                font-size: 1.1rem;
             }
         }
     </style>
@@ -1046,6 +1203,9 @@ if ($action === 'view' && $request_id) {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1081,6 +1241,9 @@ if ($action === 'view' && $request_id) {
             </div>
         </div>
     </header>
+
+    <!-- Mobile Nav Overlay -->
+    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
@@ -1667,6 +1830,37 @@ if ($action === 'view' && $request_id) {
     </div>
 
     <script>
+        // ── Mobile Nav (hamburger sidebar) ──
+        (function() {
+            const hamburgerBtn = document.getElementById('hamburgerBtn');
+            const navSidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('mobileNavOverlay');
+
+            function openNav() {
+                navSidebar.classList.add('open');
+                overlay.classList.add('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeNav() {
+                navSidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+
+            hamburgerBtn.addEventListener('click', () => {
+                navSidebar.classList.contains('open') ? closeNav() : openNav();
+            });
+
+            overlay.addEventListener('click', closeNav);
+
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 900) closeNav();
+            });
+        })();
+
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;

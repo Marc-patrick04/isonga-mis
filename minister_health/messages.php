@@ -24,29 +24,29 @@ try {
     // Health-related tickets
     $stmt = $pdo->prepare("SELECT COUNT(*) as health_tickets FROM tickets WHERE category_id = 4 AND status IN ('open', 'in_progress')");
     $stmt->execute();
-    $health_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['health_tickets'];
+    $health_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['health_tickets'] ?? 0;
     
     // Pending hostel requests
     $stmt = $pdo->prepare("SELECT COUNT(*) as pending_hostel FROM tickets WHERE category_id = 2 AND status IN ('open', 'in_progress')");
     $stmt->execute();
-    $pending_hostel = $stmt->fetch(PDO::FETCH_ASSOC)['pending_hostel'];
+    $pending_hostel = $stmt->fetch(PDO::FETCH_ASSOC)['pending_hostel'] ?? 0;
     
     // Health campaigns
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as health_campaigns 
         FROM events 
-        WHERE category_id IN (SELECT id FROM event_categories WHERE name LIKE '%health%' OR name LIKE '%medical%')
-        AND event_date >= CURDATE()
+        WHERE category_id IN (SELECT id FROM event_categories WHERE name ILIKE '%health%' OR name ILIKE '%medical%')
+        AND event_date >= CURRENT_DATE
     ");
     $stmt->execute();
-    $health_campaigns = $stmt->fetch(PDO::FETCH_ASSOC)['health_campaigns'];
+    $health_campaigns = $stmt->fetch(PDO::FETCH_ASSOC)['health_campaigns'] ?? 0;
     
     // Pending reports
     $pending_reports = 0;
     try {
         $stmt = $pdo->prepare("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted' AND user_id = ?");
         $stmt->execute([$user_id]);
-        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'];
+        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     } catch (PDOException $e) {
         $pending_reports = 0;
     }
@@ -61,7 +61,7 @@ try {
             WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
         ");
         $stmt->execute([$user_id]);
-        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'];
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
     } catch (PDOException $e) {
         $unread_messages = 0;
     }
@@ -99,12 +99,13 @@ try {
 
 // Get committee members for new conversation
 try {
-    $members_stmt = $pdo->query("
+    $members_stmt = $pdo->prepare("
         SELECT id, full_name, role, department_id 
         FROM users 
         WHERE status = 'active' AND role != 'admin' AND role != 'student'
         ORDER BY full_name
     ");
+    $members_stmt->execute();
     $committee_members = $members_stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $committee_members = [];
@@ -123,13 +124,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($message_content) && $conversation_id) {
                     // Insert message into conversation_messages table
                     $stmt = $pdo->prepare("
-                        INSERT INTO conversation_messages (conversation_id, sender_id, content) 
-                        VALUES (?, ?, ?)
+                        INSERT INTO conversation_messages (conversation_id, sender_id, content, created_at) 
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$conversation_id, $user_id, $message_content]);
                     
                     // Update conversation updated_at
-                    $update_stmt = $pdo->prepare("UPDATE conversations SET updated_at = NOW() WHERE id = ?");
+                    $update_stmt = $pdo->prepare("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $update_stmt->execute([$conversation_id]);
                     
                     $_SESSION['success'] = "Message sent successfully!";
@@ -147,8 +148,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($participants)) {
                     // Create conversation
                     $stmt = $pdo->prepare("
-                        INSERT INTO conversations (title, created_by, conversation_type) 
-                        VALUES (?, ?, 'group')
+                        INSERT INTO conversations (title, created_by, conversation_type, created_at, updated_at) 
+                        VALUES (?, ?, 'group', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$conversation_title, $user_id]);
                     $new_conversation_id = $pdo->lastInsertId();
@@ -157,8 +158,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $all_participants = array_unique(array_merge($participants, [$user_id]));
                     
                     $participant_stmt = $pdo->prepare("
-                        INSERT INTO conversation_participants (conversation_id, user_id, role) 
-                        VALUES (?, ?, ?)
+                        INSERT INTO conversation_participants (conversation_id, user_id, role, joined_at) 
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     
                     foreach ($all_participants as $participant_id) {
@@ -246,7 +247,7 @@ if (isset($_SESSION['error'])) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Messages - Minister of Health - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -273,6 +274,8 @@ if (isset($_SESSION['error'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -312,14 +315,11 @@ if (isset($_SESSION['error'])) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -329,7 +329,6 @@ if (isset($_SESSION['error'])) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -338,38 +337,44 @@ if (isset($_SESSION['error'])) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -377,22 +382,7 @@ if (isset($_SESSION['error'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -401,41 +391,32 @@ if (isset($_SESSION['error'])) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -445,50 +426,85 @@ if (isset($_SESSION['error'])) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -518,26 +534,20 @@ if (isset($_SESSION['error'])) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
-        }
-
-        .menu-badge {
-            background: var(--danger);
-            color: white;
-            border-radius: 10px;
-            padding: 0.1rem 0.4rem;
-            font-size: 0.7rem;
-            font-weight: 600;
-            margin-left: auto;
+            width: 20px;
         }
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         /* Toast Messages */
@@ -575,7 +585,7 @@ if (isset($_SESSION['error'])) {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
-
+            height: calc(100vh - 200px);
         }
 
         /* Conversations Sidebar */
@@ -583,6 +593,7 @@ if (isset($_SESSION['error'])) {
             border-right: 1px solid var(--medium-gray);
             display: flex;
             flex-direction: column;
+            background: var(--white);
         }
 
         .sidebar-header {
@@ -593,6 +604,7 @@ if (isset($_SESSION['error'])) {
         .sidebar-header h2 {
             margin-bottom: 1rem;
             color: var(--text-dark);
+            font-size: 1.1rem;
         }
 
         .action-buttons {
@@ -608,7 +620,7 @@ if (isset($_SESSION['error'])) {
             font-size: 0.8rem;
             font-weight: 500;
             transition: var(--transition);
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
         }
@@ -684,7 +696,7 @@ if (isset($_SESSION['error'])) {
         }
 
         .conversation-preview {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
             white-space: nowrap;
             overflow: hidden;
@@ -715,6 +727,7 @@ if (isset($_SESSION['error'])) {
         .chat-area {
             display: flex;
             flex-direction: column;
+            background: var(--white);
         }
 
         .chat-header {
@@ -726,11 +739,11 @@ if (isset($_SESSION['error'])) {
         .chat-title {
             font-weight: 600;
             color: var(--text-dark);
-            font-size: 1.1rem;
+            font-size: 1rem;
         }
 
         .chat-participants {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
             margin-top: 0.25rem;
         }
@@ -771,18 +784,24 @@ if (isset($_SESSION['error'])) {
             max-width: 85%;
         }
 
+        .dark-mode .message.announcement {
+            background: #2d2d2d;
+            border-left-color: var(--warning);
+        }
+
         .message-sender {
             font-weight: 600;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             margin-bottom: 0.25rem;
         }
 
         .message-content {
             line-height: 1.4;
+            word-wrap: break-word;
         }
 
         .message-time {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             opacity: 0.8;
             margin-top: 0.25rem;
             text-align: right;
@@ -801,7 +820,7 @@ if (isset($_SESSION['error'])) {
         .message-form {
             display: flex;
             gap: 0.75rem;
-            align-items: end;
+            align-items: flex-end;
         }
 
         .message-input {
@@ -813,6 +832,8 @@ if (isset($_SESSION['error'])) {
             font-family: inherit;
             font-size: 0.875rem;
             max-height: 120px;
+            background: var(--white);
+            color: var(--text-dark);
         }
 
         .message-input:focus {
@@ -881,25 +902,28 @@ if (isset($_SESSION['error'])) {
         }
 
         .modal-header {
-            padding: 1.5rem;
+            padding: 1rem 1.5rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
-            justify-content: between;
+            justify-content: space-between;
             align-items: center;
+            background: var(--light-green);
         }
 
         .modal-header h3 {
             color: var(--text-dark);
             margin: 0;
+            font-size: 1rem;
         }
 
         .close {
             color: var(--dark-gray);
-            float: right;
             font-size: 1.5rem;
             font-weight: bold;
             cursor: pointer;
             line-height: 1;
+            background: none;
+            border: none;
         }
 
         .close:hover {
@@ -928,6 +952,8 @@ if (isset($_SESSION['error'])) {
             border-radius: var(--border-radius);
             font-size: 0.875rem;
             font-family: inherit;
+            background: var(--white);
+            color: var(--text-dark);
         }
 
         .form-control:focus {
@@ -946,7 +972,7 @@ if (isset($_SESSION['error'])) {
             display: flex;
             align-items: center;
             gap: 1rem;
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             border-bottom: 1px solid var(--medium-gray);
         }
 
@@ -957,6 +983,7 @@ if (isset($_SESSION['error'])) {
         .participant-item input[type="checkbox"] {
             width: 18px;
             height: 18px;
+            cursor: pointer;
         }
 
         .participant-info {
@@ -969,7 +996,7 @@ if (isset($_SESSION['error'])) {
         }
 
         .participant-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -981,50 +1008,141 @@ if (isset($_SESSION['error'])) {
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .messages-container {
                 grid-template-columns: 300px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .messages-container {
                 grid-template-columns: 1fr;
-
+                height: calc(100vh - 160px);
             }
-            
+
             .conversations-sidebar {
                 display: none;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .conversations-sidebar.mobile-visible {
+                display: flex;
+                position: absolute;
+                width: 100%;
+                height: 100%;
+                z-index: 10;
+                background: var(--white);
             }
-            
-            .user-details {
-                display: none;
+        }
+
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .message {
+                max-width: 85%;
+            }
+
+            .modal-content {
+                width: 95%;
+                margin: 10% auto;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Minister of Health</h1>
+                    <h1>Isonga - Health Communications</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -1032,7 +1150,7 @@ if (isset($_SESSION['error'])) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1053,7 +1171,7 @@ if (isset($_SESSION['error'])) {
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-                    <i class="fas fa-sign-out-alt"></i>
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1062,7 +1180,10 @@ if (isset($_SESSION['error'])) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-              <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1074,18 +1195,16 @@ if (isset($_SESSION['error'])) {
                     <a href="health_tickets.php">
                         <i class="fas fa-heartbeat"></i>
                         <span>Health Issues</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="hostels.php">
                         <i class="fas fa-bed"></i>
                         <span>Hostel Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="action-funding.php" >
+                    <a href="action-funding.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1094,7 +1213,6 @@ if (isset($_SESSION['error'])) {
                     <a href="campaigns.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Health Campaigns</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1129,12 +1247,13 @@ if (isset($_SESSION['error'])) {
                 </li>
             </ul>
         </nav>
+
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Success/Error Messages -->
             <?php if (isset($success_message)): ?>
                 <div class="toast success show" id="toast">
-                    <?php echo htmlspecialchars($success_message); ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($success_message); ?>
                 </div>
                 <script>
                     setTimeout(() => {
@@ -1144,12 +1263,12 @@ if (isset($_SESSION['error'])) {
             <?php endif; ?>
 
             <?php if (isset($error_message)): ?>
-                <div class="toast error show" id="toast">
-                    <?php echo htmlspecialchars($error_message); ?>
+                <div class="toast error show" id="toastError">
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($error_message); ?>
                 </div>
                 <script>
                     setTimeout(() => {
-                        document.getElementById('toast')?.classList.remove('show');
+                        document.getElementById('toastError')?.classList.remove('show');
                     }, 5000);
                 </script>
             <?php endif; ?>
@@ -1157,9 +1276,9 @@ if (isset($_SESSION['error'])) {
             <!-- Messages Container -->
             <div class="messages-container">
                 <!-- Conversations Sidebar -->
-                <div class="conversations-sidebar">
+                <div class="conversations-sidebar" id="conversationsSidebar">
                     <div class="sidebar-header">
-                        <h2>Health Communications</h2>
+                        <h2><i class="fas fa-comments"></i> Health Communications</h2>
                         <div class="action-buttons">
                             <button class="btn btn-primary" id="newConversationBtn">
                                 <i class="fas fa-plus"></i> New Chat
@@ -1180,36 +1299,36 @@ if (isset($_SESSION['error'])) {
                                      data-conversation-id="<?php echo $conv['id']; ?>">
                                     <div class="conversation-avatar">
                                         <?php 
-                                        if ($conv['conversation_type'] === 'announcement') {
+                                        if (($conv['conversation_type'] ?? 'direct') === 'announcement') {
                                             echo '<i class="fas fa-bullhorn"></i>';
-                                        } else if ($conv['conversation_type'] === 'group') {
+                                        } else if (($conv['conversation_type'] ?? 'direct') === 'group') {
                                             echo '<i class="fas fa-users"></i>';
                                         } else {
-                                            echo strtoupper(substr($conv['title'], 0, 1));
+                                            echo '<i class="fas fa-user"></i>';
                                         }
                                         ?>
                                     </div>
                                     <div class="conversation-info">
                                         <div class="conversation-title">
-                                            <?php echo htmlspecialchars($conv['title']); ?>
-                                            <?php if ($conv['conversation_type'] === 'announcement'): ?>
+                                            <?php echo htmlspecialchars($conv['title'] ?? 'Conversation'); ?>
+                                            <?php if (($conv['conversation_type'] ?? '') === 'announcement'): ?>
                                                 <i class="fas fa-bullhorn" style="margin-left: 0.25rem; color: var(--warning);"></i>
                                             <?php endif; ?>
                                         </div>
                                         <div class="conversation-preview">
                                             <?php 
-                                            if ($conv['last_sender_id'] == $user_id) {
+                                            if (($conv['last_sender_id'] ?? 0) == $user_id) {
                                                 echo 'You: ';
-                                            } else if ($conv['last_sender_name']) {
+                                            } else if (!empty($conv['last_sender_name'])) {
                                                 echo htmlspecialchars($conv['last_sender_name']) . ': ';
                                             }
-                                            echo htmlspecialchars($conv['last_message'] ?? 'No messages yet');
+                                            echo htmlspecialchars(substr($conv['last_message'] ?? 'No messages yet', 0, 50));
                                             ?>
                                         </div>
                                     </div>
                                     <div class="conversation-meta">
-                                        <div><?php echo $conv['last_message_time'] ? date('M j', strtotime($conv['last_message_time'])) : ''; ?></div>
-                                        <?php if ($conv['unread_count'] > 0): ?>
+                                        <div><?php echo !empty($conv['last_message_time']) ? date('M j', strtotime($conv['last_message_time'])) : ''; ?></div>
+                                        <?php if (($conv['unread_count'] ?? 0) > 0): ?>
                                             <div class="unread-badge"><?php echo $conv['unread_count']; ?></div>
                                         <?php endif; ?>
                                     </div>
@@ -1225,10 +1344,14 @@ if (isset($_SESSION['error'])) {
                         <div class="chat-header">
                             <div>
                                 <div class="chat-title">
-                                    <?php echo htmlspecialchars($current_conversation['title'] ?? 'Untitled Conversation'); ?>
+                                    <i class="fas fa-<?php 
+                                        echo ($current_conversation['conversation_type'] ?? 'direct') === 'announcement' ? 'bullhorn' : 
+                                             (($current_conversation['conversation_type'] ?? 'direct') === 'group' ? 'users' : 'user');
+                                    ?>"></i>
+                                    <?php echo htmlspecialchars($current_conversation['title'] ?? 'Conversation'); ?>
                                     <?php if (($current_conversation['conversation_type'] ?? '') === 'announcement'): ?>
                                         <span style="color: var(--warning); margin-left: 0.5rem;">
-                                            <i class="fas fa-bullhorn"></i> Announcement
+                                            (Announcement)
                                         </span>
                                     <?php endif; ?>
                                 </div>
@@ -1244,35 +1367,42 @@ if (isset($_SESSION['error'])) {
                         </div>
 
                         <div class="messages-area" id="messagesArea">
-                            <?php foreach ($conversation_messages as $message): ?>
-                                <div class="message <?php 
-                                    echo $message['sender_id'] == $user_id ? 'sent' : 'received';
-                                    echo ($current_conversation['conversation_type'] ?? '') === 'announcement' ? ' announcement' : '';
-                                ?>">
-                                    <?php if ($message['sender_id'] != $user_id && ($current_conversation['conversation_type'] ?? '') !== 'direct'): ?>
-                                        <div class="message-sender">
-                                            <?php echo htmlspecialchars($message['sender_name']); ?>
-                                            <?php if (($current_conversation['conversation_type'] ?? '') === 'announcement'): ?>
-                                                <span style="color: var(--warning); margin-left: 0.5rem;">
-                                                    <i class="fas fa-bullhorn"></i> Announcement
-                                                </span>
+                            <?php if (empty($conversation_messages)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-comment-dots"></i>
+                                    <p>No messages yet. Start the conversation!</p>
+                                </div>
+                            <?php else: ?>
+                                <?php foreach ($conversation_messages as $message): ?>
+                                    <div class="message <?php 
+                                        echo $message['sender_id'] == $user_id ? 'sent' : 'received';
+                                        echo ($current_conversation['conversation_type'] ?? '') === 'announcement' ? ' announcement' : '';
+                                    ?>">
+                                        <?php if ($message['sender_id'] != $user_id && ($current_conversation['conversation_type'] ?? '') !== 'direct'): ?>
+                                            <div class="message-sender">
+                                                <?php echo htmlspecialchars($message['sender_name']); ?>
+                                                <?php if (($current_conversation['conversation_type'] ?? '') === 'announcement'): ?>
+                                                    <span style="color: var(--warning); margin-left: 0.5rem;">
+                                                        <i class="fas fa-bullhorn"></i> Announcement
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                        <div class="message-content">
+                                            <?php echo nl2br(htmlspecialchars($message['content'])); ?>
+                                        </div>
+                                        <div class="message-time">
+                                            <?php echo date('g:i A', strtotime($message['created_at'])); ?>
+                                            <?php if ($message['sender_id'] == $user_id): ?>
+                                                <i class="fas fa-check-double" style="margin-left: 0.25rem; opacity: 0.7;"></i>
                                             <?php endif; ?>
                                         </div>
-                                    <?php endif; ?>
-                                    <div class="message-content">
-                                        <?php echo nl2br(htmlspecialchars($message['content'])); ?>
                                     </div>
-                                    <div class="message-time">
-                                        <?php echo date('g:i A', strtotime($message['created_at'])); ?>
-                                        <?php if ($message['sender_id'] == $user_id): ?>
-                                            <i class="fas fa-check-double" style="margin-left: 0.25rem; opacity: 0.7;"></i>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </div>
 
-                        <?php if (($current_conversation['conversation_type'] ?? '') !== 'announcement'): ?>
+                        <?php if (($current_conversation['conversation_type'] ?? 'direct') !== 'announcement'): ?>
                             <div class="message-input-area">
                                 <form class="message-form" method="POST">
                                     <input type="hidden" name="conversation_id" value="<?php echo $conversation_id; ?>">
@@ -1315,11 +1445,11 @@ if (isset($_SESSION['error'])) {
     <div id="newConversationModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>New Health Conversation</h3>
-                <span class="close">&times;</span>
+                <h3><i class="fas fa-plus-circle"></i> New Health Conversation</h3>
+                <button class="close" onclick="closeModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <form method="POST">
+                <form method="POST" id="newConversationForm">
                     <input type="hidden" name="action" value="create_conversation">
                     
                     <div class="form-group">
@@ -1338,10 +1468,7 @@ if (isset($_SESSION['error'])) {
                                     <div class="participant-info">
                                         <div class="participant-name"><?php echo htmlspecialchars($member['full_name']); ?></div>
                                         <div class="participant-role">
-                                            <?php echo str_replace('_', ' ', $member['role']); ?>
-                                            <?php if ($member['department_id']): ?>
-                                                • Department <?php echo htmlspecialchars($member['department_id']); ?>
-                                            <?php endif; ?>
+                                            <?php echo ucfirst(str_replace('_', ' ', $member['role'])); ?>
                                         </div>
                                     </div>
                                 </div>
@@ -1351,7 +1478,7 @@ if (isset($_SESSION['error'])) {
                     
                     <div class="modal-actions">
                         <button type="submit" class="btn btn-primary">Create Conversation</button>
-                        <button type="button" class="btn btn-secondary close-modal">Cancel</button>
+                        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -1359,72 +1486,141 @@ if (isset($_SESSION['error'])) {
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Modal elements
-            const conversationModal = document.getElementById('newConversationModal');
-            const messagesArea = document.getElementById('messagesArea');
-            const messageInput = document.querySelector('.message-input');
+        // Dark Mode Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const body = document.body;
 
-            // Open modal buttons
-            document.getElementById('newConversationBtn')?.addEventListener('click', () => conversationModal.style.display = 'block');
-            document.getElementById('newConversationBtn2')?.addEventListener('click', () => conversationModal.style.display = 'block');
+        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        if (savedTheme === 'dark') {
+            body.classList.add('dark-mode');
+            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        }
 
-            // Close modals
-            document.querySelectorAll('.close, .close-modal').forEach(btn => {
-                btn.addEventListener('click', closeModals);
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
             });
-
-            window.addEventListener('click', function(event) {
-                if (event.target.classList.contains('modal')) {
-                    closeModals();
-                }
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             });
+        }
 
-            // Conversation item clicks
-            document.querySelectorAll('.conversation-item').forEach(item => {
-                item.addEventListener('click', function() {
-                    const conversationId = this.getAttribute('data-conversation-id');
-                    window.location.href = `messages.php?conversation=${conversationId}`;
-                });
-            });
-
-            // Auto-resize textarea
-            if (messageInput) {
-                messageInput.addEventListener('input', function() {
-                    this.style.height = 'auto';
-                    this.style.height = (this.scrollHeight) + 'px';
-                });
-            }
-
-            // Auto-scroll to bottom of messages
-            if (messagesArea) {
-                messagesArea.scrollTop = messagesArea.scrollHeight;
-            }
-
-            // Dark mode toggle
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            if (themeToggle) {
-                const savedTheme = localStorage.getItem('theme') || 'light';
-                if (savedTheme === 'dark') {
-                    body.classList.add('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                }
-
-                themeToggle.addEventListener('click', () => {
-                    body.classList.toggle('dark-mode');
-                    const isDark = body.classList.contains('dark-mode');
-                    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                    themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-                });
-            }
-
-            // Functions
-            function closeModals() {
-                conversationModal.style.display = 'none';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             }
         });
+
+        // Modal elements
+        const conversationModal = document.getElementById('newConversationModal');
+        const messagesArea = document.getElementById('messagesArea');
+        const messageInput = document.querySelector('.message-input');
+
+        // Open modal buttons
+        document.getElementById('newConversationBtn')?.addEventListener('click', () => {
+            conversationModal.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        });
+        document.getElementById('newConversationBtn2')?.addEventListener('click', () => {
+            conversationModal.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        });
+
+        // Close modal function
+        function closeModal() {
+            conversationModal.style.display = 'none';
+            document.body.style.overflow = '';
+        }
+
+        // Close modal when clicking outside
+        window.addEventListener('click', function(event) {
+            if (event.target === conversationModal) {
+                closeModal();
+            }
+        });
+
+        // Conversation item clicks
+        document.querySelectorAll('.conversation-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const conversationId = this.getAttribute('data-conversation-id');
+                window.location.href = `messages.php?conversation=${conversationId}`;
+            });
+        });
+
+        // Auto-resize textarea
+        if (messageInput) {
+            messageInput.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+            });
+        }
+
+        // Auto-scroll to bottom of messages
+        if (messagesArea) {
+            messagesArea.scrollTop = messagesArea.scrollHeight;
+        }
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+            });
+        });
+
+        // Auto-refresh messages every 30 seconds
+        if (window.location.href.includes('conversation=')) {
+            setInterval(() => {
+                window.location.reload();
+            }, 30000);
+        }
     </script>
 </body>
 </html>

@@ -55,7 +55,7 @@ try {
     $stmt = $pdo->query("
         SELECT COUNT(*) as upcoming_events 
         FROM events 
-        WHERE event_date >= CURDATE()
+        WHERE event_date >= CURRENT_DATE
         AND status = 'published'
     ");
     $upcoming_events = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_events'] ?? 0;
@@ -90,7 +90,7 @@ try {
         SELECT e.*, ec.name as category_name
         FROM events e
         LEFT JOIN event_categories ec ON e.category_id = ec.id
-        WHERE e.event_date >= CURDATE()
+        WHERE e.event_date >= CURRENT_DATE
         AND e.status = 'published'
         ORDER BY e.event_date ASC, e.start_time ASC
         LIMIT 5
@@ -128,6 +128,15 @@ try {
     $stmt->execute([$user_id]);
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     
+    // Pending tickets for this minister
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    
     // News statistics by category
     $stmt = $pdo->query("
         SELECT 
@@ -141,38 +150,24 @@ try {
     ");
     $news_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Event statistics by category
-    $stmt = $pdo->query("
-        SELECT 
-            ec.name as category_name,
-            COUNT(*) as event_count
-        FROM events e
-        LEFT JOIN event_categories ec ON e.category_id = ec.id
-        WHERE e.status = 'published'
-        GROUP BY e.category_id, ec.name
-        ORDER BY event_count DESC
-    ");
-    $event_stats = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
 } catch (PDOException $e) {
     // Handle general error
     error_log("Minister of Public Relations dashboard statistics error: " . $e->getMessage());
     $total_announcements = $total_news = $total_events = $total_gallery = 0;
-    $total_committee = $total_associations = $upcoming_events = $unread_messages = 0;
+    $total_committee = $total_associations = $upcoming_events = $unread_messages = $pending_tickets = 0;
     $recent_announcements = $recent_news = $upcoming_events_list = $active_associations = $recent_activities = [];
-    $news_stats = $event_stats = [];
+    $news_stats = [];
 }
-$total_students = 0; 
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Minister of Public Relations & Associations Dashboard - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-blue: #3B82F6;
@@ -194,6 +189,8 @@ $total_students = 0;
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -232,14 +229,11 @@ $total_students = 0;
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -249,7 +243,6 @@ $total_students = 0;
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -258,38 +251,44 @@ $total_students = 0;
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -297,22 +296,7 @@ $total_students = 0;
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -321,41 +305,32 @@ $total_students = 0;
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -365,50 +340,85 @@ $total_students = 0;
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -438,9 +448,7 @@ $total_students = 0;
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -455,9 +463,15 @@ $total_students = 0;
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -489,7 +503,7 @@ $total_students = 0;
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -514,13 +528,14 @@ $total_students = 0;
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -535,7 +550,7 @@ $total_students = 0;
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -548,7 +563,7 @@ $total_students = 0;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -556,7 +571,7 @@ $total_students = 0;
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -572,6 +587,9 @@ $total_students = 0;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -580,6 +598,9 @@ $total_students = 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -613,6 +634,10 @@ $total_students = 0;
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -632,8 +657,13 @@ $total_students = 0;
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -642,22 +672,22 @@ $total_students = 0;
 
         .status-upcoming {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         /* Activity List */
@@ -711,7 +741,7 @@ $total_students = 0;
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
-            margin-top: 1.5rem;
+            margin-top: 0;
         }
 
         .action-btn {
@@ -727,6 +757,7 @@ $total_students = 0;
             color: var(--text-dark);
             transition: var(--transition);
             text-align: center;
+            cursor: pointer;
         }
 
         .action-btn:hover {
@@ -752,6 +783,9 @@ $total_students = 0;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -776,7 +810,7 @@ $total_students = 0;
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 0.75rem;
-            margin-top: 1rem;
+            margin-top: 0;
         }
 
         .association-stat {
@@ -820,40 +854,124 @@ $total_students = 0;
             justify-content: space-between;
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .content-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .quick-actions {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .association-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -861,21 +979,59 @@ $total_students = 0;
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .quick-actions {
+                grid-template-columns: 1fr;
+            }
+
+            .association-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Public Relations & Associations</h1>
                 </div>
@@ -885,7 +1041,7 @@ $total_students = 0;
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -915,7 +1071,10 @@ $total_students = 0;
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" class="active">
@@ -927,64 +1086,58 @@ $total_students = 0;
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
-                        <?php 
-                        // Get pending tickets count for this minister
-                        try {
-                            $stmt = $pdo->prepare("
-                                SELECT COUNT(*) as pending_tickets 
-                                FROM tickets 
-                                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-                            ");
-                            $stmt->execute([$user_id]);
-                            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-                            
-                            if ($pending_tickets > 0): ?>
-                                <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-                            <?php endif;
-                        } catch (PDOException $e) {
-                            // Skip badge if error
-                        }
-                        ?>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="announcements.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
-                        <span class="member-count"><?php echo $total_announcements; ?></span>
+                        <?php if ($total_announcements > 0): ?>
+                            <span class="menu-badge"><?php echo $total_announcements; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
-                        <span class="member-count"><?php echo $total_news; ?></span>
+                        <?php if ($total_news > 0): ?>
+                            <span class="menu-badge"><?php echo $total_news; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="events.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
-                        <span class="member-count"><?php echo $total_events; ?></span>
+                        <?php if ($total_events > 0): ?>
+                            <span class="menu-badge"><?php echo $total_events; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
-                        <span class="member-count"><?php echo $total_gallery; ?></span>
+                        <?php if ($total_gallery > 0): ?>
+                            <span class="menu-badge"><?php echo $total_gallery; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="associations.php">
                         <i class="fas fa-church"></i>
                         <span>Associations</span>
-                        <span class="member-count"><?php echo $total_associations; ?></span>
+                        <?php if ($total_associations > 0): ?>
+                            <span class="menu-badge"><?php echo $total_associations; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="committee_budget_requests.php" >
+                    <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1020,7 +1173,7 @@ $total_students = 0;
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Welcome, Public Relations Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 📢</h1>
@@ -1042,7 +1195,7 @@ $total_students = 0;
                         <i class="fas fa-bullhorn"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_announcements; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_announcements); ?></div>
                         <div class="stat-label">Announcements</div>
                     </div>
                 </div>
@@ -1051,7 +1204,7 @@ $total_students = 0;
                         <i class="fas fa-newspaper"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_news; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_news); ?></div>
                         <div class="stat-label">News Articles</div>
                     </div>
                 </div>
@@ -1060,7 +1213,7 @@ $total_students = 0;
                         <i class="fas fa-calendar-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_events; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_events); ?></div>
                         <div class="stat-label">Total Events</div>
                     </div>
                 </div>
@@ -1069,20 +1222,20 @@ $total_students = 0;
                         <i class="fas fa-images"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_gallery; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_gallery); ?></div>
                         <div class="stat-label">Gallery Images</div>
                     </div>
                 </div>
             </div>
 
             <!-- Additional Stats Grid -->
-            <div class="stats-grid" style="margin-top: 1rem;">
+            <div class="stats-grid" style="margin-top: 0;">
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_committee; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_committee); ?></div>
                         <div class="stat-label">Committee Members</div>
                     </div>
                 </div>
@@ -1091,7 +1244,7 @@ $total_students = 0;
                         <i class="fas fa-church"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_associations; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_associations); ?></div>
                         <div class="stat-label">Student Associations</div>
                     </div>
                 </div>
@@ -1100,7 +1253,7 @@ $total_students = 0;
                         <i class="fas fa-calendar-check"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_events; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_events); ?></div>
                         <div class="stat-label">Upcoming Events</div>
                     </div>
                 </div>
@@ -1127,7 +1280,7 @@ $total_students = 0;
                     <!-- Recent Announcements -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Recent Announcements</h3>
+                            <h3><i class="fas fa-bullhorn"></i> Recent Announcements</h3>
                             <div class="card-header-actions">
                                 <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                                     <i class="fas fa-sync-alt"></i>
@@ -1138,55 +1291,57 @@ $total_students = 0;
                             </div>
                         </div>
                         <div class="card-body">
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Title</th>
-                                        <th>Author</th>
-                                        <th>Date</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php if (empty($recent_announcements)): ?>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td colspan="4" style="text-align: center; color: var(--dark-gray); padding: 2rem;">No announcements found</td>
+                                            <th>Title</th>
+                                            <th>Author</th>
+                                            <th>Date</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php else: ?>
-                                        <?php foreach ($recent_announcements as $announcement): ?>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($recent_announcements)): ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($announcement['title']); ?></td>
-                                                <td>
-                                                    <?php 
-                                                    // Get author name
-                                                    try {
-                                                        $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
-                                                        $stmt->execute([$announcement['author_id']]);
-                                                        $author = $stmt->fetch(PDO::FETCH_ASSOC);
-                                                        echo htmlspecialchars($author['full_name'] ?? 'Unknown');
-                                                    } catch (PDOException $e) {
-                                                        echo 'Unknown';
-                                                    }
-                                                    ?>
-                                                </td>
-                                                <td><?php echo date('M j, Y', strtotime($announcement['created_at'])); ?></td>
-                                                <td>
-                                                    <a href="announcements.php?action=view&id=<?php echo $announcement['id']; ?>" class="card-header-btn" title="View">
-                                                        <i class="fas fa-eye"></i>
-                                                    </a>
-                                                </td>
+                                                <td colspan="4" class="empty-state">No announcements found</td>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </tbody>
-                            </table>
+                                        <?php else: ?>
+                                            <?php foreach ($recent_announcements as $announcement): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($announcement['title']); ?></td>
+                                                    <td>
+                                                        <?php 
+                                                        // Get author name
+                                                        try {
+                                                            $stmt = $pdo->prepare("SELECT full_name FROM users WHERE id = ?");
+                                                            $stmt->execute([$announcement['author_id']]);
+                                                            $author = $stmt->fetch(PDO::FETCH_ASSOC);
+                                                            echo htmlspecialchars($author['full_name'] ?? 'Unknown');
+                                                        } catch (PDOException $e) {
+                                                            echo 'Unknown';
+                                                        }
+                                                        ?>
+                                                    </td>
+                                                    <td><?php echo date('M j, Y', strtotime($announcement['created_at'])); ?></td>
+                                                    <td>
+                                                        <a href="announcements.php?action=view&id=<?php echo $announcement['id']; ?>" class="card-header-btn" title="View">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Upcoming Events -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Upcoming Events</h3>
+                            <h3><i class="fas fa-calendar-alt"></i> Upcoming Events</h3>
                             <div class="card-header-actions">
                                 <a href="events.php" class="card-header-btn" title="View All">
                                     <i class="fas fa-external-link-alt"></i>
@@ -1195,34 +1350,36 @@ $total_students = 0;
                         </div>
                         <div class="card-body">
                             <?php if (empty($upcoming_events_list)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-alt" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-alt"></i>
                                     <p>No upcoming events</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Event</th>
-                                            <th>Category</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($upcoming_events_list as $event): ?>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($event['title']); ?></td>
-                                                <td><?php echo htmlspecialchars($event['category_name']); ?></td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($event['event_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($event['start_time'])); ?></small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($event['location']); ?></td>
+                                                <th>Event</th>
+                                                <th>Category</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($upcoming_events_list as $event): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($event['title']); ?></td>
+                                                    <td><?php echo htmlspecialchars($event['category_name']); ?></td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($event['event_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($event['start_time'])); ?></small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($event['location']); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -1230,11 +1387,12 @@ $total_students = 0;
                     <!-- Active Associations -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Active Student Associations</h3>
+                            <h3><i class="fas fa-church"></i> Active Student Associations</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($active_associations)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-users"></i>
                                     <p>No active associations</p>
                                 </div>
                             <?php else: ?>
@@ -1242,9 +1400,9 @@ $total_students = 0;
                                     <?php foreach ($active_associations as $association): ?>
                                         <div class="association-stat">
                                             <div class="association-name"><?php echo htmlspecialchars($association['name']); ?></div>
-                                            <div class="association-count"><?php echo $association['members_count']; ?> members</div>
+                                            <div class="association-count"><?php echo number_format($association['members_count']); ?> members</div>
                                             <div style="font-size: 0.6rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                <?php echo htmlspecialchars($association['category']); ?>
+                                                <?php echo ucfirst($association['category']); ?>
                                             </div>
                                         </div>
                                     <?php endforeach; ?>
@@ -1279,12 +1437,12 @@ $total_students = 0;
                     <!-- Recent Activities -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Recent System Activities</h3>
+                            <h3><i class="fas fa-history"></i> Recent System Activities</h3>
                         </div>
                         <div class="card-body">
                             <ul class="activity-list">
                                 <?php if (empty($recent_activities)): ?>
-                                    <li style="text-align: center; color: var(--dark-gray); padding: 2rem;">No recent activities</li>
+                                    <li class="empty-state" style="list-style: none;">No recent activities</li>
                                 <?php else: ?>
                                     <?php foreach ($recent_activities as $activity): ?>
                                         <li class="activity-item">
@@ -1309,11 +1467,12 @@ $total_students = 0;
                     <!-- News Categories Overview -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>News by Category</h3>
+                            <h3><i class="fas fa-chart-pie"></i> News by Category</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($news_stats)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-chart-line"></i>
                                     <p>No news data available</p>
                                 </div>
                             <?php else: ?>
@@ -1325,18 +1484,16 @@ $total_students = 0;
                                             </div>
                                             <div style="text-align: right;">
                                                 <div style="font-size: 0.8rem; font-weight: 600;">
-                                                    <?php echo $news['news_count']; ?> articles
+                                                    <?php echo number_format($news['news_count']); ?> articles
                                                 </div>
                                             </div>
                                         </div>
-                                        <div class="attendance-progress">
-                                            <div class="progress-bar">
-                                                <div class="progress-fill" style="width: <?php echo min(100, ($news['news_count'] / $total_news) * 100); ?>%"></div>
-                                            </div>
-                                            <div class="progress-text">
-                                                <span>Percentage</span>
-                                                <span><?php echo min(100, round(($news['news_count'] / $total_news) * 100)); ?>%</span>
-                                            </div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" style="width: <?php echo $total_news > 0 ? min(100, ($news['news_count'] / $total_news) * 100) : 0; ?>%"></div>
+                                        </div>
+                                        <div class="progress-text">
+                                            <span>Percentage</span>
+                                            <span><?php echo $total_news > 0 ? min(100, round(($news['news_count'] / $total_news) * 100)) : 0; ?>%</span>
                                         </div>
                                     </div>
                                 <?php endforeach; ?>
@@ -1347,40 +1504,25 @@ $total_students = 0;
                     <!-- Quick Stats -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Public Relations Overview</h3>
+                            <h3><i class="fas fa-chart-line"></i> Public Relations Overview</h3>
                         </div>
                         <div class="card-body">
                             <div style="display: grid; gap: 1rem;">
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Unread Messages</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $unread_messages; ?></strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($unread_messages); ?></strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Pending Tickets</span>
-                                    <strong style="color: var(--text-dark);">
-                                        <?php 
-                                        try {
-                                            $stmt = $pdo->prepare("
-                                                SELECT COUNT(*) as pending_tickets 
-                                                FROM tickets 
-                                                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-                                            ");
-                                            $stmt->execute([$user_id]);
-                                            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-                                            echo $pending_tickets;
-                                        } catch (PDOException $e) {
-                                            echo '0';
-                                        }
-                                        ?>
-                                    </strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($pending_tickets); ?></strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Active Associations</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_associations; ?> groups</strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($total_associations); ?> groups</strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Events This Month</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $upcoming_events; ?> events</strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($upcoming_events); ?> events</strong>
                                 </div>
                             </div>
                         </div>
@@ -1389,11 +1531,12 @@ $total_students = 0;
                     <!-- Recent News -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Recent News</h3>
+                            <h3><i class="fas fa-newspaper"></i> Recent News</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($recent_news)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-newspaper"></i>
                                     <p>No recent news</p>
                                 </div>
                             <?php else: ?>
@@ -1428,7 +1571,6 @@ $total_students = 0;
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1442,17 +1584,67 @@ $total_students = 0;
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh dashboard every 3 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Public Relations Dashboard auto-refresh triggered');
-        }, 180000);
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars</i>';
+                document.body.style.overflow = '';
+            }
+        });
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
             });
         });
     </script>

@@ -29,29 +29,35 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 $message = '';
 $message_type = '';
 
-// Create documents table if it doesn't exist
+// Create documents table if it doesn't exist (PostgreSQL compatible)
 try {
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS financial_documents (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            document_type ENUM('receipt', 'invoice', 'contract', 'approval_letter', 'budget_report', 'financial_statement', 'meeting_minutes', 'other') NOT NULL,
-            title VARCHAR(255) NOT NULL,
-            description TEXT,
-            file_path VARCHAR(500) NOT NULL,
-            file_size INT,
-            file_type VARCHAR(100),
-            reference_number VARCHAR(100),
-            amount DECIMAL(15,2),
-            related_to ENUM('transaction', 'budget_request', 'student_aid', 'mission_allowance', 'committee_request', 'rental', 'other'),
-            related_id INT,
-            academic_year VARCHAR(20),
-            uploaded_by INT,
-            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            is_archived BOOLEAN DEFAULT FALSE,
-            FOREIGN KEY (uploaded_by) REFERENCES users(id)
-        )
-    ");
+    // Check if table exists
+    $stmt = $pdo->query("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'financial_documents')");
+    $tableExists = $stmt->fetchColumn();
+    
+    if (!$tableExists) {
+        $pdo->exec("
+            CREATE TABLE financial_documents (
+                id SERIAL PRIMARY KEY,
+                document_type VARCHAR(50) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                file_path VARCHAR(500) NOT NULL,
+                file_size BIGINT,
+                file_type VARCHAR(100),
+                reference_number VARCHAR(100),
+                amount DECIMAL(15,2),
+                related_to VARCHAR(50),
+                related_id INT,
+                academic_year VARCHAR(20),
+                uploaded_by INT,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_archived BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+        ");
+    }
 } catch (PDOException $e) {
     error_log("Documents table creation error: " . $e->getMessage());
 }
@@ -62,9 +68,9 @@ if ($action === 'upload_document' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $title = trim($_POST['title']);
     $description = trim($_POST['description']);
     $reference_number = trim($_POST['reference_number']);
-    $amount = $_POST['amount'] ?: null;
+    $amount = !empty($_POST['amount']) ? $_POST['amount'] : null;
     $related_to = $_POST['related_to'];
-    $related_id = $_POST['related_id'] ?: null;
+    $related_id = !empty($_POST['related_id']) ? $_POST['related_id'] : null;
     
     try {
         // Handle file upload
@@ -78,7 +84,8 @@ if ($action === 'upload_document' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             
             // Generate unique filename
             $fileExtension = pathinfo($_FILES['document_file']['name'], PATHINFO_EXTENSION);
-            $fileName = uniqid() . '_' . preg_replace('/[^a-zA-Z0-9]/', '_', $title) . '.' . $fileExtension;
+            $safeTitle = preg_replace('/[^a-zA-Z0-9]/', '_', $title);
+            $fileName = uniqid() . '_' . $safeTitle . '.' . $fileExtension;
             $filePath = $uploadDir . $fileName;
             
             // Validate file type
@@ -122,7 +129,8 @@ if ($action === 'upload_document' && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Failed to upload file. Please try again.');
             }
         } else {
-            throw new Exception('Please select a valid file to upload.');
+            $uploadError = $_FILES['document_file']['error'] ?? 'No file selected';
+            throw new Exception('Please select a valid file to upload. Error: ' . $uploadError);
         }
     } catch (Exception $e) {
         $message = "Error uploading document: " . $e->getMessage();
@@ -136,7 +144,7 @@ if ($action === 'update_document' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $title = trim($_POST['title']);
     $description = trim($_POST['description']);
     $reference_number = trim($_POST['reference_number']);
-    $amount = $_POST['amount'] ?: null;
+    $amount = !empty($_POST['amount']) ? $_POST['amount'] : null;
     
     try {
         $stmt = $pdo->prepare("
@@ -249,7 +257,7 @@ if ($archived_filter === 'true') {
 }
 
 if (!empty($search)) {
-    $query .= " AND (fd.title LIKE ? OR fd.description LIKE ? OR fd.reference_number LIKE ?)";
+    $query .= " AND (fd.title ILIKE ? OR fd.description ILIKE ? OR fd.reference_number ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -342,14 +350,12 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Official Documents - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Reuse all the CSS from dashboard.php */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -363,6 +369,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --finance-primary: #1976D2;
             --finance-secondary: #2196F3;
             --finance-accent: #0D47A1;
@@ -374,6 +381,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -389,11 +398,11 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --finance-primary: #2196F3;
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
         }
 
         * {
@@ -416,14 +425,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -433,7 +439,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -442,38 +447,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -481,22 +492,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -505,41 +501,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -549,57 +536,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -629,9 +644,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -644,6 +657,20 @@ try {
             margin-left: auto;
         }
 
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -663,14 +690,14 @@ try {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--finance-primary);
@@ -698,13 +725,13 @@ try {
         }
 
         .stat-icon {
-            width: 50px;
-            height: 50px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             flex-shrink: 0;
         }
 
@@ -733,7 +760,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -741,32 +768,22 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        .stat-trend {
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
             font-size: 0.75rem;
-            font-weight: 600;
-            margin-top: 0.25rem;
-        }
-
-        .trend-positive {
-            color: var(--success);
-        }
-
-        .trend-negative {
-            color: var(--danger);
+            font-weight: 500;
         }
 
         /* Content Grid */
         .content-grid {
             display: grid;
-            grid-template-columns: 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        @media (max-width: 992px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         .card {
@@ -815,177 +832,7 @@ try {
             padding: 1.25rem;
         }
 
-        /* Tables */
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8rem;
-        }
-
-        .table th, .table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.75rem;
-        }
-
-        .amount {
-            font-weight: 600;
-            font-family: 'Courier New', monospace;
-        }
-
-        /* Document type badges */
-        .type-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .type-receipt {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .type-invoice {
-            background: #cce7ff;
-            color: #004085;
-        }
-
-        .type-contract {
-            background: #e2e3e5;
-            color: #383d41;
-        }
-
-        .type-approval_letter {
-            background: #d1ecf1;
-            color: #0c5460;
-        }
-
-        .type-budget_report {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .type-financial_statement {
-            background: #f8d7da;
-            color: #721c24;
-        }
-
-        .type-meeting_minutes {
-            background: #d6d8d9;
-            color: #1b1e21;
-        }
-
-        .type-other {
-            background: #e2e3e5;
-            color: #383d41;
-        }
-
-        /* File icons */
-        .file-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            margin-right: 0.75rem;
-        }
-
-        .file-pdf {
-            background: #ffebee;
-            color: #f44336;
-        }
-
-        .file-doc {
-            background: #e3f2fd;
-            color: #2196f3;
-        }
-
-        .file-xls {
-            background: #e8f5e8;
-            color: #4caf50;
-        }
-
-        .file-img {
-            background: #fff3e0;
-            color: #ff9800;
-        }
-
-        .file-other {
-            background: #f3e5f5;
-            color: #9c27b0;
-        }
-
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--finance-primary);
-            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-file {
-            width: 100%;
-            padding: 0.75rem;
-            border: 2px dashed var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--light-gray);
-            text-align: center;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .form-file:hover {
-            border-color: var(--finance-primary);
-            background: var(--finance-light);
-        }
-
-        .form-file input {
-            display: none;
-        }
-
+        /* Buttons */
         .btn {
             padding: 0.75rem 1.5rem;
             border: none;
@@ -1030,13 +877,199 @@ try {
             font-size: 0.75rem;
         }
 
+        /* Quick Actions Grid */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 0.75rem;
+            background: var(--white);
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            text-decoration: none;
+            color: var(--text-dark);
+            transition: var(--transition);
+            text-align: center;
+        }
+
+        .action-btn:hover {
+            border-color: var(--finance-primary);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .action-btn i {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: var(--finance-primary);
+        }
+
+        .action-label {
+            font-weight: 600;
+            font-size: 0.7rem;
+        }
+
+        /* Document Cards Grid */
+        .documents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .document-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            transition: var(--transition);
+            border: 1px solid var(--medium-gray);
+        }
+
+        .document-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .document-header {
+            padding: 0.75rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .file-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            flex-shrink: 0;
+        }
+
+        .file-pdf {
+            background: #ffebee;
+            color: #f44336;
+        }
+
+        .file-doc {
+            background: #e3f2fd;
+            color: #2196f3;
+        }
+
+        .file-xls {
+            background: #e8f5e8;
+            color: #4caf50;
+        }
+
+        .file-img {
+            background: #fff3e0;
+            color: #ff9800;
+        }
+
+        .file-other {
+            background: #f3e5f5;
+            color: #9c27b0;
+        }
+
+        .document-info {
+            flex: 1;
+        }
+
+        .document-title {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--text-dark);
+            margin-bottom: 0.25rem;
+        }
+
+        .document-meta {
+            font-size: 0.7rem;
+            color: var(--dark-gray);
+        }
+
+        .document-body {
+            padding: 0.75rem;
+        }
+
+        .document-description {
+            color: var(--dark-gray);
+            font-size: 0.75rem;
+            margin-bottom: 0.75rem;
+            line-height: 1.4;
+        }
+
+        .document-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* Type Badges */
+        .type-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .type-receipt {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .type-invoice {
+            background: #cce7ff;
+            color: #004085;
+        }
+
+        .type-contract {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .type-approval_letter {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .type-budget_report {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .type-financial_statement {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .type-meeting_minutes {
+            background: #d6d8d9;
+            color: #1b1e21;
+        }
+
+        .type-other {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
         /* Filters */
         .filters {
             display: flex;
             gap: 1rem;
             margin-bottom: 1.5rem;
             flex-wrap: wrap;
-            align-items: center;
+            align-items: flex-end;
         }
 
         .filter-group {
@@ -1046,68 +1079,58 @@ try {
         }
 
         .filter-label {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 600;
             color: var(--text-dark);
         }
 
-        /* Document grid */
-        .documents-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .document-card {
-            background: var(--white);
+        .form-control, .form-select {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.8rem;
             transition: var(--transition);
         }
 
-        .document-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+        .form-control:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--finance-primary);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
         }
 
-        .document-header {
-            padding: 1rem;
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .table th, .table td {
+            padding: 0.75rem;
+            text-align: left;
             border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            align-items: center;
         }
 
-        .document-info {
-            flex: 1;
-        }
-
-        .document-title {
+        .table th {
+            background: var(--light-gray);
             font-weight: 600;
             color: var(--text-dark);
-            margin-bottom: 0.25rem;
-        }
-
-        .document-meta {
             font-size: 0.75rem;
-            color: var(--dark-gray);
         }
 
-        .document-body {
-            padding: 1rem;
+        .table tbody tr:hover {
+            background: var(--finance-light);
         }
 
-        .document-description {
-            color: var(--dark-gray);
-            font-size: 0.8rem;
-            margin-bottom: 1rem;
-            line-height: 1.4;
-        }
-
-        .document-actions {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
+        .amount {
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
         }
 
         /* Modal */
@@ -1186,78 +1209,146 @@ try {
             border-left-color: var(--danger);
         }
 
-        /* Charts */
-        .chart-container {
-            position: relative;
-            height: 200px;
-            margin-top: 1rem;
+        /* Form File */
+        .form-file {
+            width: 100%;
+            padding: 1.5rem;
+            border: 2px dashed var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--light-gray);
+            text-align: center;
+            cursor: pointer;
+            transition: var(--transition);
         }
 
-        /* File preview */
-        .file-preview {
+        .form-file:hover {
+            border-color: var(--finance-primary);
+            background: var(--finance-light);
+        }
+
+        .form-file input {
+            display: none;
+        }
+
+        /* Empty State */
+        .empty-state {
             text-align: center;
             padding: 2rem;
-            background: var(--light-gray);
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-        }
-
-        .file-preview i {
-            font-size: 3rem;
             color: var(--dark-gray);
-            margin-bottom: 1rem;
         }
 
-        .file-name {
-            font-weight: 600;
-            color: var(--text-dark);
+        .empty-state i {
+            font-size: 2rem;
             margin-bottom: 0.5rem;
-        }
-
-        .file-size {
-            font-size: 0.8rem;
-            color: var(--dark-gray);
+            opacity: 0.5;
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .documents-grid {
-                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .stats-grid {
-                grid-template-columns: 1fr 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
-            
-            .documents-grid {
-                grid-template-columns: 1fr;
-            }
-            
+
             .filters {
                 flex-direction: column;
                 align-items: stretch;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .filter-group {
+                width: 100%;
             }
-            
-            .user-details {
-                display: none;
+
+            .filter-group select, .filter-group input {
+                width: 100%;
+            }
+
+            .quick-actions {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .table-container {
+                overflow-x: auto;
             }
         }
 
@@ -1265,21 +1356,55 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
+            .quick-actions {
+                grid-template-columns: 1fr 1fr;
+            }
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Official Documents</h1>
                 </div>
@@ -1289,7 +1414,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
@@ -1316,7 +1444,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1400,11 +1531,11 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Official Documents Management 📄</h1>
-                    <p>Manage and organize all financial documents for <?php echo $current_academic_year; ?> academic year</p>
+                    <p>Manage and organize all financial documents for <?php echo htmlspecialchars($current_academic_year); ?> academic year</p>
                 </div>
             </div>
 
@@ -1422,11 +1553,8 @@ try {
                         <i class="fas fa-file-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_documents; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_documents); ?></div>
                         <div class="stat-label">Total Documents</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-chart-line"></i> Active
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card success">
@@ -1436,9 +1564,6 @@ try {
                     <div class="stat-content">
                         <div class="stat-number"><?php echo formatFileSize($total_storage); ?></div>
                         <div class="stat-label">Storage Used</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-hdd"></i> Managed
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card warning">
@@ -1455,9 +1580,6 @@ try {
                             ?>
                         </div>
                         <div class="stat-label">Receipts</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-file-invoice"></i> Financial Records
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card">
@@ -1467,9 +1589,6 @@ try {
                     <div class="stat-content">
                         <div class="stat-number"><?php echo count($documents_by_type); ?></div>
                         <div class="stat-label">Document Types</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-tags"></i> Categorized
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1481,16 +1600,23 @@ try {
                         <h3>Quick Actions</h3>
                     </div>
                     <div class="card-body">
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
-                            <button class="btn btn-primary" onclick="openModal('uploadDocumentModal')">
-                                <i class="fas fa-upload"></i> Upload New Document
+                        <div class="quick-actions">
+                            <button class="action-btn" onclick="openModal('uploadDocumentModal')">
+                                <i class="fas fa-upload"></i>
+                                <span class="action-label">Upload Document</span>
                             </button>
-                            <a href="?archived=true" class="btn btn-warning">
-                                <i class="fas fa-archive"></i> View Archived
+                            <a href="?archived=true" class="action-btn">
+                                <i class="fas fa-archive"></i>
+                                <span class="action-label">View Archived</span>
                             </a>
-                            <button class="btn btn-success" onclick="generateDocumentReport()">
-                                <i class="fas fa-download"></i> Generate Report
+                            <button class="action-btn" onclick="generateDocumentReport()">
+                                <i class="fas fa-download"></i>
+                                <span class="action-label">Generate Report</span>
                             </button>
+                            <a href="?archived=false" class="action-btn">
+                                <i class="fas fa-file-alt"></i>
+                                <span class="action-label">Active Documents</span>
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -1499,11 +1625,14 @@ try {
                 <div class="card">
                     <div class="card-header">
                         <h3>Recent Uploads</h3>
+                        <div class="card-header-actions">
+                            <span class="filter-label" style="margin-right: 0.5rem;">Latest 5</span>
+                        </div>
                     </div>
                     <div class="card-body">
                         <?php if (empty($recent_uploads)): ?>
-                            <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                <i class="fas fa-file-upload fa-2x" style="margin-bottom: 1rem;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-file-upload"></i>
                                 <p>No documents uploaded yet</p>
                             </div>
                         <?php else: ?>
@@ -1527,9 +1656,8 @@ try {
                                             <div class="document-description">
                                                 <?php echo htmlspecialchars($document['description'] ?: 'No description provided'); ?>
                                             </div>
-                                            <div class="document-meta" style="margin-bottom: 1rem;">
-                                                <div>Uploaded by: <?php echo htmlspecialchars($document['uploaded_by_name']); ?></div>
-                                                <div>Date: <?php echo date('M j, Y', strtotime($document['uploaded_at'])); ?></div>
+                                            <div class="document-meta" style="margin-bottom: 0.75rem;">
+                                                <div>Uploaded: <?php echo date('M j, Y', strtotime($document['uploaded_at'])); ?></div>
                                                 <div>Size: <?php echo formatFileSize($document['file_size']); ?></div>
                                             </div>
                                             <div class="document-actions">
@@ -1581,13 +1709,15 @@ try {
                 <div class="filter-group" style="flex: 1;">
                     <label class="filter-label">Search</label>
                     <input type="text" class="form-control" placeholder="Search by title, description, reference..." 
-                           value="<?php echo htmlspecialchars($search); ?>" id="searchInput" onkeyup="applyFilters()">
+                           value="<?php echo htmlspecialchars($search); ?>" id="searchInput" onkeyup="applyFiltersOnEnter(event)">
                 </div>
                 <div class="filter-group">
                     <label class="filter-label" style="visibility: hidden;">Actions</label>
-                    <button class="btn" onclick="resetFilters()">
-                        <i class="fas fa-redo"></i> Reset
-                    </button>
+                    <button class="btn btn-primary" onclick="applyFilters()">Search</button>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label" style="visibility: hidden;">Reset</label>
+                    <button class="btn" onclick="resetFilters()">Reset</button>
                 </div>
             </div>
 
@@ -1606,8 +1736,8 @@ try {
                 </div>
                 <div class="card-body">
                     <?php if (empty($documents)): ?>
-                        <div style="text-align: center; color: var(--dark-gray); padding: 3rem;">
-                            <i class="fas fa-folder-open fa-3x" style="margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state">
+                            <i class="fas fa-folder-open fa-3x"></i>
                             <h3 style="margin-bottom: 0.5rem;">No documents found</h3>
                             <p>Upload your first document to get started</p>
                             <button class="btn btn-primary" onclick="openModal('uploadDocumentModal')" style="margin-top: 1rem;">
@@ -1615,93 +1745,87 @@ try {
                             </button>
                         </div>
                     <?php else: ?>
-                        <table class="table">
-                            <thead>
-                                <tr>
-                                    <th>Document</th>
-                                    <th>Type</th>
-                                    <th>Description</th>
-                                    <th>Reference</th>
-                                    <th>Amount</th>
-                                    <th>Uploaded By</th>
-                                    <th>Date</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($documents as $document): ?>
+                        <div class="table-container">
+                            <table class="table">
+                                <thead>
                                     <tr>
-                                        <td>
-                                            <div style="display: flex; align-items: center;">
-                                                <div class="file-icon <?php echo getFileIconClass($document['file_type']); ?>">
-                                                    <i class="<?php echo getFileIcon($document['file_type']); ?>"></i>
-                                                </div>
-                                                <div>
-                                                    <strong><?php echo htmlspecialchars($document['title']); ?></strong>
-                                                    <br>
-                                                    <small style="color: var(--dark-gray);">
-                                                        <?php echo formatFileSize($document['file_size']); ?>
-                                                    </small>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <span class="type-badge type-<?php echo $document['document_type']; ?>">
-                                                <?php echo ucfirst(str_replace('_', ' ', $document['document_type'])); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <?php echo htmlspecialchars($document['description'] ?: '-'); ?>
-                                        </td>
-                                        <td>
-                                            <?php echo htmlspecialchars($document['reference_number'] ?: '-'); ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($document['amount']): ?>
-                                                <span class="amount">RWF <?php echo number_format($document['amount'], 2); ?></span>
-                                            <?php else: ?>
-                                                -
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php echo htmlspecialchars($document['uploaded_by_name']); ?>
-                                        </td>
-                                        <td>
-                                            <?php echo date('M j, Y', strtotime($document['uploaded_at'])); ?>
-                                            <br>
-                                            <small style="color: var(--dark-gray);">
-                                                <?php echo date('g:i A', strtotime($document['uploaded_at'])); ?>
-                                            </small>
-                                        </td>
-                                        <td>
-                                            <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
-                                                <a href="<?php echo $document['file_path']; ?>" target="_blank" class="btn btn-primary btn-sm">
-                                                    <i class="fas fa-eye"></i>
-                                                </a>
-                                                <a href="<?php echo $document['file_path']; ?>" download class="btn btn-success btn-sm">
-                                                    <i class="fas fa-download"></i>
-                                                </a>
-                                                <button class="btn btn-warning btn-sm" onclick="editDocument(<?php echo $document['id']; ?>)">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <?php if ($document['is_archived']): ?>
-                                                    <a href="?action=restore_document&id=<?php echo $document['id']; ?>" class="btn btn-success btn-sm">
-                                                        <i class="fas fa-undo"></i>
-                                                    </a>
-                                                <?php else: ?>
-                                                    <a href="?action=archive_document&id=<?php echo $document['id']; ?>" class="btn btn-warning btn-sm">
-                                                        <i class="fas fa-archive"></i>
-                                                    </a>
-                                                <?php endif; ?>
-                                                <a href="?action=delete_document&id=<?php echo $document['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this document? This action cannot be undone.')">
-                                                    <i class="fas fa-trash"></i>
-                                                </a>
-                                            </div>
-                                        </td>
+                                        <th>Document</th>
+                                        <th>Type</th>
+                                        <th>Reference</th>
+                                        <th>Amount</th>
+                                        <th>Uploaded By</th>
+                                        <th>Date</th>
+                                        <th>Actions</th>
                                     </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($documents as $document): ?>
+                                        <tr>
+                                            <td>
+                                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                                    <div class="file-icon <?php echo getFileIconClass($document['file_type']); ?>" style="width: 32px; height: 32px; font-size: 0.9rem;">
+                                                        <i class="<?php echo getFileIcon($document['file_type']); ?>"></i>
+                                                    </div>
+                                                    <div>
+                                                        <strong><?php echo htmlspecialchars($document['title']); ?></strong>
+                                                        <br>
+                                                        <small style="color: var(--dark-gray);">
+                                                            <?php echo formatFileSize($document['file_size']); ?>
+                                                        </small>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="type-badge type-<?php echo $document['document_type']; ?>">
+                                                    <?php echo ucfirst(str_replace('_', ' ', $document['document_type'])); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <?php echo htmlspecialchars($document['reference_number'] ?: '-'); ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($document['amount']): ?>
+                                                    <span class="amount">RWF <?php echo number_format($document['amount'], 0); ?></span>
+                                                <?php else: ?>
+                                                    -
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php echo htmlspecialchars($document['uploaded_by_name']); ?>
+                                            </td>
+                                            <td>
+                                                <?php echo date('M j, Y', strtotime($document['uploaded_at'])); ?>
+                                            </td>
+                                            <td>
+                                                <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
+                                                    <a href="<?php echo $document['file_path']; ?>" target="_blank" class="btn btn-primary btn-sm" title="View">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
+                                                    <a href="<?php echo $document['file_path']; ?>" download class="btn btn-success btn-sm" title="Download">
+                                                        <i class="fas fa-download"></i>
+                                                    </a>
+                                                    <button class="btn btn-warning btn-sm" onclick="editDocument(<?php echo $document['id']; ?>)" title="Edit">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <?php if ($document['is_archived']): ?>
+                                                        <a href="?action=restore_document&id=<?php echo $document['id']; ?>" class="btn btn-success btn-sm" title="Restore">
+                                                            <i class="fas fa-undo"></i>
+                                                        </a>
+                                                    <?php else: ?>
+                                                        <a href="?action=archive_document&id=<?php echo $document['id']; ?>" class="btn btn-warning btn-sm" title="Archive">
+                                                            <i class="fas fa-archive"></i>
+                                                        </a>
+                                                    <?php endif; ?>
+                                                    <a href="?action=delete_document&id=<?php echo $document['id']; ?>" class="btn btn-danger btn-sm" title="Delete" onclick="return confirm('Are you sure you want to delete this document? This action cannot be undone.')">
+                                                        <i class="fas fa-trash"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
                     <?php endif; ?>
                 </div>
             </div>
@@ -1719,7 +1843,7 @@ try {
                 <form method="POST" action="" enctype="multipart/form-data" id="uploadForm">
                     <input type="hidden" name="action" value="upload_document">
                     
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Document Type *</label>
                         <select class="form-select" name="document_type" required>
                             <option value="">Select Document Type</option>
@@ -1734,27 +1858,27 @@ try {
                         </select>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Document Title *</label>
                         <input type="text" class="form-control" name="title" required>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Description</label>
                         <textarea class="form-control" name="description" rows="3" placeholder="Brief description of the document..."></textarea>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Reference Number</label>
                         <input type="text" class="form-control" name="reference_number" placeholder="e.g., INV-001, RCPT-2024-001">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Amount (RWF)</label>
                         <input type="number" class="form-control" name="amount" step="0.01" min="0" placeholder="0.00">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Related To</label>
                         <select class="form-select" name="related_to">
                             <option value="other">Not Specific</option>
@@ -1767,12 +1891,12 @@ try {
                         </select>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Related Item ID (Optional)</label>
                         <input type="number" class="form-control" name="related_id" placeholder="ID of related transaction, request, etc.">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Document File *</label>
                         <div class="form-file" onclick="document.getElementById('fileInput').click()">
                             <i class="fas fa-cloud-upload-alt fa-2x" style="margin-bottom: 1rem; color: var(--dark-gray);"></i>
@@ -1805,22 +1929,22 @@ try {
                     <input type="hidden" name="action" value="update_document">
                     <input type="hidden" name="document_id" id="editDocumentId">
                     
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Document Title *</label>
                         <input type="text" class="form-control" name="title" id="editTitle" required>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Description</label>
                         <textarea class="form-control" name="description" id="editDescription" rows="3"></textarea>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Reference Number</label>
                         <input type="text" class="form-control" name="reference_number" id="editReferenceNumber">
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="margin-bottom: 1rem;">
                         <label class="form-label">Amount (RWF)</label>
                         <input type="number" class="form-control" name="amount" id="editAmount" step="0.01" min="0">
                     </div>
@@ -1851,6 +1975,67 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Filter functionality
         function applyFilters() {
             const type = document.getElementById('typeFilter').value;
@@ -1861,12 +2046,18 @@ try {
             let url = 'documents.php?';
             const params = [];
             
-            if (type !== 'all') params.push(`type=${type}`);
-            if (related !== 'all') params.push(`related_to=${related}`);
+            if (type !== 'all') params.push(`type=${encodeURIComponent(type)}`);
+            if (related !== 'all') params.push(`related_to=${encodeURIComponent(related)}`);
             if (search) params.push(`search=${encodeURIComponent(search)}`);
             if (archived === 'true') params.push(`archived=true`);
             
             window.location.href = url + params.join('&');
+        }
+
+        function applyFiltersOnEnter(event) {
+            if (event.key === 'Enter') {
+                applyFilters();
+            }
         }
 
         function resetFilters() {
@@ -1876,10 +2067,12 @@ try {
         // Modal functionality
         function openModal(modalId) {
             document.getElementById(modalId).classList.add('active');
+            document.body.style.overflow = 'hidden';
         }
 
         function closeModal(modalId) {
             document.getElementById(modalId).classList.remove('active');
+            document.body.style.overflow = '';
         }
 
         // File name display
@@ -1888,28 +2081,41 @@ try {
             document.getElementById('fileName').textContent = 'Selected: ' + fileName;
         }
 
-        // Edit document
+        // Edit document - fetch data via AJAX
         function editDocument(documentId) {
-            // In a real application, you would fetch document data via AJAX
-            // For now, we'll get it from the table row
-            const row = document.querySelector(`tr td .btn[onclick="editDocument(${documentId})"]`).closest('tr');
+            // Find the row containing this document
+            const rows = document.querySelectorAll('.table tbody tr');
+            let targetRow = null;
             
-            if (row) {
-                const cells = row.cells;
-                document.getElementById('editDocumentId').value = documentId;
-                document.getElementById('editTitle').value = cells[0].querySelector('strong').textContent;
-                document.getElementById('editDescription').value = cells[2].textContent.trim();
-                document.getElementById('editReferenceNumber').value = cells[3].textContent.trim();
-                
-                const amountText = cells[4].textContent.trim();
+            for (let row of rows) {
+                const editBtn = row.querySelector(`.btn-warning[onclick*="${documentId}"]`);
+                if (editBtn) {
+                    targetRow = row;
+                    break;
+                }
+            }
+            
+            if (targetRow) {
+                const cells = targetRow.cells;
+                const titleElement = cells[0].querySelector('strong');
+                const title = titleElement ? titleElement.textContent : '';
+                const description = ''; // Not in table, we'll use empty
+                const reference = cells[2].textContent.trim() !== '-' ? cells[2].textContent.trim() : '';
+                const amountText = cells[3].textContent.trim();
+                let amount = '';
                 if (amountText !== '-') {
-                    const amount = amountText.replace('RWF', '').replace(/,/g, '').trim();
-                    document.getElementById('editAmount').value = amount;
-                } else {
-                    document.getElementById('editAmount').value = '';
+                    amount = amountText.replace('RWF', '').replace(/,/g, '').trim();
                 }
                 
+                document.getElementById('editDocumentId').value = documentId;
+                document.getElementById('editTitle').value = title;
+                document.getElementById('editDescription').value = description;
+                document.getElementById('editReferenceNumber').value = reference;
+                document.getElementById('editAmount').value = amount;
+                
                 openModal('editDocumentModal');
+            } else {
+                alert('Could not load document details. Please try again.');
             }
         }
 
@@ -1924,6 +2130,7 @@ try {
             modals.forEach(modal => {
                 if (event.target === modal) {
                     modal.classList.remove('active');
+                    document.body.style.overflow = '';
                 }
             });
         });

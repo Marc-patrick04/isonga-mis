@@ -20,6 +20,20 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get unread messages count for badge
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Handle form actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -37,8 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO hostels 
-                        (name, gender, location, capacity, available_beds, description, amenities, warden_name, warden_contact, status, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                        (name, gender, location, capacity, available_beds, description, amenities, warden_name, warden_contact, status, created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$name, $gender, $location, $capacity, $capacity, $description, $amenities, $warden_name, $warden_contact, $user_id]);
                     
@@ -108,10 +122,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO hostel_rooms 
-                        (hostel_id, room_number, floor, capacity, available_beds, room_type, amenities, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'available')
+                        (hostel_id, room_number, floor, capacity, available_beds, room_type, amenities, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$hostel_id, $room_number, $floor, $capacity, $capacity, $room_type, $amenities]);
+                    
+                    // Update hostel available beds
+                    $stmt = $pdo->prepare("UPDATE hostels SET available_beds = available_beds + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+                    $stmt->execute([$capacity, $hostel_id]);
                     
                     $_SESSION['success_message'] = "Room added successfully!";
                 } catch (PDOException $e) {
@@ -146,18 +164,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $room_id = $_POST['room_id'];
                 
                 try {
-                    // Check if room has active allocations
-                    $stmt = $pdo->prepare("SELECT COUNT(*) as active_allocations FROM hostel_allocations WHERE room_id = ? AND status IN ('allocated', 'checked_in')");
+                    // Get room info before deletion
+                    $stmt = $pdo->prepare("SELECT hostel_id, capacity, available_beds FROM hostel_rooms WHERE id = ?");
                     $stmt->execute([$room_id]);
-                    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $room = $stmt->fetch(PDO::FETCH_ASSOC);
                     
-                    if ($result['active_allocations'] > 0) {
-                        $_SESSION['error_message'] = "Cannot delete room with active student allocations. Please reassign students first.";
-                    } else {
-                        $stmt = $pdo->prepare("DELETE FROM hostel_rooms WHERE id = ?");
+                    if ($room) {
+                        // Check if room has active allocations
+                        $stmt = $pdo->prepare("SELECT COUNT(*) as active_allocations FROM hostel_allocations WHERE room_id = ? AND status IN ('allocated', 'checked_in')");
                         $stmt->execute([$room_id]);
+                        $result = $stmt->fetch(PDO::FETCH_ASSOC);
                         
-                        $_SESSION['success_message'] = "Room deleted successfully!";
+                        if ($result['active_allocations'] > 0) {
+                            $_SESSION['error_message'] = "Cannot delete room with active student allocations. Please reassign students first.";
+                        } else {
+                            $stmt = $pdo->prepare("DELETE FROM hostel_rooms WHERE id = ?");
+                            $stmt->execute([$room_id]);
+                            
+                            // Update hostel available beds
+                            $stmt = $pdo->prepare("UPDATE hostels SET available_beds = available_beds - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+                            $stmt->execute([$room['capacity'], $room['hostel_id']]);
+                            
+                            $_SESSION['success_message'] = "Room deleted successfully!";
+                        }
+                    } else {
+                        $_SESSION['error_message'] = "Room not found.";
                     }
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error deleting room: " . $e->getMessage();
@@ -168,7 +199,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $student_id = $_POST['student_id'];
                 $hostel_id = $_POST['hostel_id'];
                 $room_id = $_POST['room_id'];
-                $bed_number = $_POST['bed_number'];
+                $bed_number = $_POST['bed_number'] ?: null;
                 $academic_year = $_POST['academic_year'];
                 $allocation_reason = $_POST['allocation_reason'];
                 
@@ -183,17 +214,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         // Create allocation
                         $stmt = $pdo->prepare("
                             INSERT INTO hostel_allocations 
-                            (student_id, hostel_id, room_id, bed_number, academic_year, allocation_date, allocation_reason, allocated_by, status)
-                            VALUES (?, ?, ?, ?, ?, CURDATE(), ?, ?, 'allocated')
+                            (student_id, hostel_id, room_id, bed_number, academic_year, allocation_date, allocation_reason, allocated_by, status, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, CURRENT_DATE, ?, ?, 'allocated', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ");
                         $stmt->execute([$student_id, $hostel_id, $room_id, $bed_number, $academic_year, $allocation_reason, $user_id]);
                         
                         // Update room available beds
-                        $stmt = $pdo->prepare("UPDATE hostel_rooms SET available_beds = available_beds - 1 WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE hostel_rooms SET available_beds = available_beds - 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([$room_id]);
                         
                         // Update hostel available beds
-                        $stmt = $pdo->prepare("UPDATE hostels SET available_beds = available_beds - 1 WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE hostels SET available_beds = available_beds - 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([$hostel_id]);
                         
                         $_SESSION['success_message'] = "Hostel allocated successfully!";
@@ -208,32 +239,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $status = $_POST['status'];
                 
                 try {
-                    $stmt = $pdo->prepare("
-                        UPDATE hostel_allocations 
-                        SET status = ?, 
-                            check_in_date = CASE WHEN ? = 'checked_in' THEN CURDATE() ELSE check_in_date END,
-                            check_out_date = CASE WHEN ? = 'checked_out' THEN CURDATE() ELSE check_out_date END
-                        WHERE id = ?
-                    ");
-                    $stmt->execute([$status, $status, $status, $allocation_id]);
-                    
-                    // If checking out, update available beds
                     if ($status === 'checked_out') {
-                        $stmt = $pdo->prepare("
-                            UPDATE hostel_rooms hr
-                            JOIN hostel_allocations ha ON hr.id = ha.room_id
-                            SET hr.available_beds = hr.available_beds + 1
-                            WHERE ha.id = ?
-                        ");
+                        // Get allocation details before updating
+                        $stmt = $pdo->prepare("SELECT room_id, hostel_id FROM hostel_allocations WHERE id = ?");
                         $stmt->execute([$allocation_id]);
+                        $allocation = $stmt->fetch(PDO::FETCH_ASSOC);
                         
+                        if ($allocation) {
+                            $stmt = $pdo->prepare("
+                                UPDATE hostel_allocations 
+                                SET status = ?, check_out_date = CURRENT_DATE, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            ");
+                            $stmt->execute([$status, $allocation_id]);
+                            
+                            // Update room available beds
+                            $stmt = $pdo->prepare("UPDATE hostel_rooms SET available_beds = available_beds + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+                            $stmt->execute([$allocation['room_id']]);
+                            
+                            // Update hostel available beds
+                            $stmt = $pdo->prepare("UPDATE hostels SET available_beds = available_beds + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+                            $stmt->execute([$allocation['hostel_id']]);
+                        }
+                    } else {
                         $stmt = $pdo->prepare("
-                            UPDATE hostels h
-                            JOIN hostel_allocations ha ON h.id = ha.hostel_id
-                            SET h.available_beds = h.available_beds + 1
-                            WHERE ha.id = ?
+                            UPDATE hostel_allocations 
+                            SET status = ?, 
+                                check_in_date = CASE WHEN ? = 'checked_in' THEN CURRENT_DATE ELSE check_in_date END,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
                         ");
-                        $stmt->execute([$allocation_id]);
+                        $stmt->execute([$status, $status, $allocation_id]);
                     }
                     
                     $_SESSION['success_message'] = "Allocation status updated successfully!";
@@ -249,13 +285,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $description = $_POST['description'];
                 $issue_type = $_POST['issue_type'];
                 $priority = $_POST['priority'];
-                $due_date = $_POST['due_date'];
+                $due_date = $_POST['due_date'] ?: null;
                 
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO hostel_maintenance 
-                        (hostel_id, room_id, title, description, issue_type, priority, reported_by, reporter_contact, due_date, reported_by_user)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (hostel_id, room_id, title, description, issue_type, priority, reported_by, reporter_contact, due_date, reported_by_user, created_at, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 'reported')
                     ");
                     $stmt->execute([
                         $hostel_id, 
@@ -264,8 +300,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $description, 
                         $issue_type, 
                         $priority, 
-                        $user['full_name'], 
-                        $user['phone'], 
+                        $user['full_name'] ?? $_SESSION['full_name'], 
+                        $user['phone'] ?? '', 
                         $due_date, 
                         $user_id
                     ]);
@@ -286,8 +322,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $pdo->prepare("
                         UPDATE hostel_maintenance 
                         SET status = ?, completion_notes = ?, actual_cost = ?, 
-                            completed_at = CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END,
-                            completed_by = CASE WHEN ? = 'completed' THEN ? ELSE NULL END
+                            completed_at = CASE WHEN ? = 'completed' THEN CURRENT_TIMESTAMP ELSE NULL END,
+                            completed_by = CASE WHEN ? = 'completed' THEN ? ELSE NULL END,
+                            updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                     ");
                     $stmt->execute([$status, $completion_notes, $actual_cost, $status, $status, $user_id, $maintenance_id]);
@@ -308,6 +345,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $hostel_filter = $_GET['hostel'] ?? 'all';
 $status_filter = $_GET['status'] ?? 'all';
 $gender_filter = $_GET['gender'] ?? 'all';
+$tab = $_GET['tab'] ?? 'overview';
 
 // Get hostels data
 try {
@@ -315,9 +353,9 @@ try {
     $stmt = $pdo->query("
         SELECT 
             COUNT(*) as total_hostels,
-            SUM(capacity) as total_capacity,
-            SUM(available_beds) as total_available,
-            SUM(capacity - available_beds) as total_occupied
+            COALESCE(SUM(capacity), 0) as total_capacity,
+            COALESCE(SUM(available_beds), 0) as total_available,
+            COALESCE(SUM(capacity - available_beds), 0) as total_occupied
         FROM hostels 
         WHERE status = 'active'
     ");
@@ -367,7 +405,7 @@ try {
     
     $allocations_params = [];
     
-    if ($hostel_filter !== 'all') {
+    if ($hostel_filter !== 'all' && is_numeric($hostel_filter)) {
         $allocations_query .= " AND ha.hostel_id = ?";
         $allocations_params[] = $hostel_filter;
     }
@@ -404,7 +442,7 @@ try {
     $maintenance_requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Available students for allocation (students without current hostel allocation)
-    $current_year = '2024-2025';
+    $current_year = date('Y') . '-' . (date('Y') + 1);
     $stmt = $pdo->prepare("
         SELECT u.id, u.reg_number, u.full_name, u.department_id, d.name as department_name, u.gender
         FROM users u
@@ -435,9 +473,9 @@ try {
         SELECT 
             h.gender,
             COUNT(*) as hostel_count,
-            SUM(h.capacity) as total_capacity,
-            SUM(h.available_beds) as available_beds,
-            SUM(h.capacity - h.available_beds) as occupied_beds
+            COALESCE(SUM(h.capacity), 0) as total_capacity,
+            COALESCE(SUM(h.available_beds), 0) as available_beds,
+            COALESCE(SUM(h.capacity - h.available_beds), 0) as occupied_beds
         FROM hostels h
         WHERE h.status = 'active'
         GROUP BY h.gender
@@ -458,11 +496,11 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Hostel Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-        <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-purple: #8B5CF6;
@@ -487,6 +525,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -528,14 +568,11 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -545,7 +582,6 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -554,38 +590,44 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -593,22 +635,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -617,41 +644,32 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -661,50 +679,85 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -734,9 +787,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -751,9 +802,15 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .page-header {
@@ -761,6 +818,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title {
@@ -815,6 +874,16 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             color: white;
         }
 
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+        }
+
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -828,7 +897,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-purple);
+            border-left: 4px solid var(--primary-purple);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -865,13 +934,14 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -886,7 +956,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -914,7 +984,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -922,7 +992,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -933,11 +1003,12 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             margin-bottom: 1.5rem;
-            overflow: hidden;
+            overflow-x: auto;
+            flex-wrap: wrap;
         }
 
         .tab {
-            padding: 1rem 1.5rem;
+            padding: 0.75rem 1.25rem;
             background: none;
             border: none;
             color: var(--dark-gray);
@@ -945,8 +1016,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             cursor: pointer;
             transition: var(--transition);
             font-size: 0.85rem;
-            flex: 1;
             text-align: center;
+            white-space: nowrap;
         }
 
         .tab:hover {
@@ -974,6 +1045,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -982,6 +1055,9 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-purple);
         }
 
         .card-header h3 {
@@ -1016,10 +1092,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         /* Tables */
         .table-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
+            overflow-x: auto;
         }
 
         .table {
@@ -1041,8 +1114,13 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-purple);
+        }
+
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -1051,41 +1129,76 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         .status-allocated {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-checked_in {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-checked_out {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .status-cancelled {
-            background: #e9ecef;
-            color: var(--dark-gray);
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-maintenance {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-full {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-closed {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        .status-available {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-occupied {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-reserved {
+            background: #cce7ff;
+            color: #004085;
         }
 
         .status-reported {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-in_progress {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .priority-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -1093,37 +1206,188 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         .priority-urgent {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-high {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
-        .action-btn {
-            padding: 0.25rem 0.5rem;
-            border: none;
-            background: none;
-            color: var(--primary-purple);
-            cursor: pointer;
-            border-radius: 4px;
+        /* Hostels Grid */
+        .hostels-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .hostel-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
             transition: var(--transition);
+        }
+
+        .hostel-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .hostel-header {
+            padding: 1rem;
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .hostel-name {
+            font-size: 1.1rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .hostel-location {
+            font-size: 0.75rem;
+            opacity: 0.9;
+        }
+
+        .hostel-body {
+            padding: 1rem;
+        }
+
+        .hostel-info {
+            display: grid;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             font-size: 0.8rem;
         }
 
-        .action-btn:hover {
-            background: var(--light-purple);
+        .info-label {
+            color: var(--dark-gray);
+        }
+
+        .info-value {
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--medium-gray);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--success);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.7rem;
+            color: var(--dark-gray);
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.25rem;
+        }
+
+        /* Rooms Grid */
+        .rooms-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .room-card {
+            background: var(--light-gray);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            border-left: 3px solid var(--primary-purple);
+        }
+
+        .room-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .room-number {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: var(--text-dark);
+        }
+
+        .room-type {
+            background: var(--primary-purple);
+            color: white;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .room-info {
+            display: grid;
+            gap: 0.4rem;
+            font-size: 0.75rem;
+        }
+
+        .room-info-item {
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .room-info-label {
+            color: var(--dark-gray);
+        }
+
+        .room-info-value {
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        /* Filters */
+        .filters-card {
+            background: var(--white);
+            padding: 1.25rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 1.5rem;
+        }
+
+        .filter-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
         }
 
         /* Forms */
@@ -1131,7 +1395,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 1rem;
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
         }
 
         .form-group {
@@ -1167,98 +1431,65 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             min-height: 100px;
         }
 
-        /* Hostel Cards */
-        .hostels-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .hostel-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
-            transition: var(--transition);
-        }
-
-        .hostel-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .hostel-header {
-            padding: 1.25rem;
-            background: var(--gradient-primary);
-            color: white;
-        }
-
-        .hostel-name {
-            font-size: 1.1rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-        }
-
-        .hostel-location {
-            font-size: 0.8rem;
-            opacity: 0.9;
-        }
-
-        .hostel-body {
-            padding: 1.25rem;
-        }
-
-        .hostel-info {
-            display: grid;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-        }
-
-        .info-item {
+        .form-actions {
             display: flex;
-            justify-content: space-between;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--medium-gray);
+        }
+
+        /* Checkbox Grid */
+        .checkbox-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .checkbox-item {
+            display: flex;
             align-items: center;
+            gap: 0.5rem;
         }
 
-        .info-label {
-            color: var(--dark-gray);
+        .checkbox-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .checkbox-item label {
             font-size: 0.8rem;
-        }
-
-        .info-value {
-            font-weight: 600;
             color: var(--text-dark);
-            font-size: 0.8rem;
+            cursor: pointer;
         }
 
-        .progress-bar {
-            height: 8px;
-            background: var(--medium-gray);
-            border-radius: 4px;
-            overflow: hidden;
-            margin: 0.5rem 0;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--success);
-            border-radius: 4px;
-            transition: width 0.3s ease;
-        }
-
-        .progress-text {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
+        /* Management Actions */
+        .management-actions {
             display: flex;
-            justify-content: space-between;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--medium-gray);
         }
 
-        /* Alert */
+        .action-small {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+        }
+
+        /* Alerts */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1280,29 +1511,20 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             border-left-color: var(--warning);
         }
 
-        /* Filters */
-        .filters-card {
-            background: var(--white);
-            padding: 1.25rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            margin-bottom: 1.5rem;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
         }
 
-        .filter-form {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            align-items: end;
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
         }
 
-        .filter-actions {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
-        /* Modal */
+        /* Modals */
         .modal {
             display: none;
             position: fixed;
@@ -1312,6 +1534,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
         }
 
         .modal-content {
@@ -1320,33 +1543,35 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             padding: 0;
             border-radius: var(--border-radius);
             width: 90%;
-            max-width: 600px;
+            max-width: 700px;
             max-height: 90vh;
             overflow-y: auto;
             box-shadow: var(--shadow-lg);
         }
 
         .modal-header {
-            padding: 1.25rem;
+            padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-purple);
         }
 
         .modal-header h3 {
             margin: 0;
+            font-size: 1rem;
             color: var(--text-dark);
         }
 
         .close {
             color: var(--dark-gray);
-            float: right;
             font-size: 1.5rem;
             font-weight: bold;
             cursor: pointer;
             background: none;
             border: none;
+            line-height: 1;
         }
 
         .close:hover {
@@ -1357,167 +1582,140 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             padding: 1.25rem;
         }
 
-        .checkbox-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 0.5rem;
-            margin: 1rem 0;
-        }
-
-        .checkbox-item {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .checkbox-item input[type="checkbox"] {
-            margin: 0;
-        }
-
-        .form-actions {
-            display: flex;
-            gap: 1rem;
-            justify-content: flex-end;
-            margin-top: 1.5rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--medium-gray);
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-2px);
-        }
-
-        .management-actions {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-        }
-
-        .action-small {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.75rem;
-        }
-
-        .rooms-section {
-            margin-top: 1.5rem;
-            padding-top: 1.5rem;
-            border-top: 1px solid var(--medium-gray);
-        }
-
-        .rooms-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-
-        .room-card {
-            background: var(--light-gray);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            border-left: 3px solid var(--primary-purple);
-        }
-
-        .room-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.5rem;
-        }
-
-        .room-number {
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .room-type {
-            background: var(--primary-purple);
-            color: white;
-            padding: 0.25rem 0.5rem;
-            border-radius: 12px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .room-info {
-            display: grid;
-            gap: 0.25rem;
-            font-size: 0.8rem;
-        }
-
-        .room-info-item {
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .room-info-label {
-            color: var(--dark-gray);
-        }
-
-        .room-info-value {
-            font-weight: 600;
-            color: var(--text-dark);
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .hostels-grid {
-                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-purple);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .hostels-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .hostels-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .rooms-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .checkbox-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .page-actions {
                 width: 100%;
                 justify-content: space-between;
             }
-            
+
             .tabs {
-                flex-direction: column;
+                flex-wrap: wrap;
+            }
+
+            .tab {
+                flex: 1;
+                min-width: 80px;
+                padding: 0.5rem;
+                font-size: 0.75rem;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1525,29 +1723,56 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .table {
-                font-size: 0.7rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .table th, .table td {
-                padding: 0.5rem;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
+            }
+
+            .checkbox-grid {
+                grid-template-columns: 1fr;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Hostel Management</h1>
                 </div>
@@ -1557,8 +1782,11 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1584,7 +1812,10 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1638,6 +1869,9 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1650,7 +1884,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div>
@@ -1673,14 +1907,14 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             <!-- Success/Error Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1692,7 +1926,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                         <i class="fas fa-building"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $hostel_stats['total_hostels']; ?></div>
+                        <div class="stat-number"><?php echo number_format($hostel_stats['total_hostels'] ?? 0); ?></div>
                         <div class="stat-label">Total Hostels</div>
                     </div>
                 </div>
@@ -1701,7 +1935,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                         <i class="fas fa-bed"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $hostel_stats['total_capacity']; ?></div>
+                        <div class="stat-number"><?php echo number_format($hostel_stats['total_capacity'] ?? 0); ?></div>
                         <div class="stat-label">Total Capacity</div>
                     </div>
                 </div>
@@ -1710,7 +1944,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                         <i class="fas fa-user-check"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $hostel_stats['total_occupied']; ?></div>
+                        <div class="stat-number"><?php echo number_format($hostel_stats['total_occupied'] ?? 0); ?></div>
                         <div class="stat-label">Occupied Beds</div>
                     </div>
                 </div>
@@ -1719,7 +1953,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                         <i class="fas fa-user-plus"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $hostel_stats['total_available']; ?></div>
+                        <div class="stat-number"><?php echo number_format($hostel_stats['total_available'] ?? 0); ?></div>
                         <div class="stat-label">Available Beds</div>
                     </div>
                 </div>
@@ -1745,15 +1979,15 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
             <!-- Tabs -->
             <div class="tabs">
-                <button class="tab active" onclick="showTab('overview')">Hostels Overview</button>
-                <button class="tab" onclick="showTab('rooms')">Rooms Management</button>
-                <button class="tab" onclick="showTab('allocations')">Student Allocations</button>
-                <button class="tab" onclick="showTab('maintenance')">Maintenance</button>
-                <button class="tab" onclick="showTab('allocation')">Allocate Student</button>
+                <button class="tab <?php echo $tab === 'overview' ? 'active' : ''; ?>" onclick="showTab('overview')">Hostels Overview</button>
+                <button class="tab <?php echo $tab === 'rooms' ? 'active' : ''; ?>" onclick="showTab('rooms')">Rooms Management</button>
+                <button class="tab <?php echo $tab === 'allocations' ? 'active' : ''; ?>" onclick="showTab('allocations')">Student Allocations</button>
+                <button class="tab <?php echo $tab === 'maintenance' ? 'active' : ''; ?>" onclick="showTab('maintenance')">Maintenance</button>
+                <button class="tab <?php echo $tab === 'allocation' ? 'active' : ''; ?>" onclick="showTab('allocation')">Allocate Student</button>
             </div>
 
             <!-- Overview Tab -->
-            <div id="overview" class="tab-content active">
+            <div id="overview" class="tab-content <?php echo $tab === 'overview' ? 'active' : ''; ?>">
                 <div class="card">
                     <div class="card-header">
                         <h3>Hostels Management</h3>
@@ -1766,7 +2000,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     <div class="card-body">
                         <!-- Filters -->
                         <div class="filters-card">
-                            <form method="GET" class="filter-form">
+                            <form method="GET" class="filter-form" id="filterForm">
+                                <input type="hidden" name="tab" value="overview">
                                 <div class="form-group">
                                     <label class="form-label">Gender</label>
                                     <select name="gender" class="form-select" onchange="this.form.submit()">
@@ -1792,7 +2027,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                     <button type="submit" class="btn btn-primary">
                                         <i class="fas fa-filter"></i> Apply
                                     </button>
-                                    <a href="hostel-management.php" class="btn btn-outline">
+                                    <a href="hostel-management.php?tab=overview" class="btn btn-outline">
                                         <i class="fas fa-times"></i> Clear
                                     </a>
                                 </div>
@@ -1801,8 +2036,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
                         <div class="hostels-grid">
                             <?php if (empty($hostels)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem; grid-column: 1 / -1;">
-                                    <i class="fas fa-building" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state" style="grid-column: 1 / -1;">
+                                    <i class="fas fa-building"></i>
                                     <p>No hostels found. <a href="javascript:void(0)" onclick="showModal('addHostelModal')" style="color: var(--primary-purple);">Add the first hostel</a></p>
                                 </div>
                             <?php else: ?>
@@ -1814,24 +2049,24 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                     <div class="hostel-card">
                                         <div class="hostel-header">
                                             <div class="hostel-name"><?php echo htmlspecialchars($hostel['name']); ?></div>
-                                            <div class="hostel-location"><?php echo htmlspecialchars($hostel['location']); ?></div>
+                                            <div class="hostel-location"><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($hostel['location']); ?></div>
                                         </div>
                                         <div class="hostel-body">
                                             <div class="hostel-info">
                                                 <div class="info-item">
-                                                    <span class="info-label">Gender:</span>
+                                                    <span class="info-label"><i class="fas fa-venus-mars"></i> Gender:</span>
                                                     <span class="info-value"><?php echo ucfirst($hostel['gender']); ?></span>
                                                 </div>
                                                 <div class="info-item">
-                                                    <span class="info-label">Capacity:</span>
+                                                    <span class="info-label"><i class="fas fa-bed"></i> Capacity:</span>
                                                     <span class="info-value"><?php echo $hostel['capacity']; ?> beds</span>
                                                 </div>
                                                 <div class="info-item">
-                                                    <span class="info-label">Available:</span>
+                                                    <span class="info-label"><i class="fas fa-check-circle"></i> Available:</span>
                                                     <span class="info-value"><?php echo $hostel['available_beds']; ?> beds</span>
                                                 </div>
                                                 <div class="info-item">
-                                                    <span class="info-label">Status:</span>
+                                                    <span class="info-label"><i class="fas fa-tag"></i> Status:</span>
                                                     <span class="status-badge status-<?php echo $hostel['status']; ?>">
                                                         <?php echo ucfirst($hostel['status']); ?>
                                                     </span>
@@ -1839,26 +2074,30 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                             </div>
                                             
                                             <div class="progress-bar">
-                                                <div class="progress-fill" style="width: <?php echo $occupancy_rate; ?>%; background: var(--<?php echo $occupancy_class; ?>);"></div>
+                                                <div class="progress-fill" style="width: <?php echo round($occupancy_rate); ?>%; background: var(--<?php echo $occupancy_class; ?>);"></div>
                                             </div>
                                             <div class="progress-text">
-                                                <span>Occupancy</span>
+                                                <span>Occupancy Rate</span>
                                                 <span><?php echo round($occupancy_rate); ?>%</span>
                                             </div>
                                             
-                                            <div style="margin-top: 1rem; font-size: 0.8rem; color: var(--dark-gray);">
-                                                <strong>Warden:</strong> <?php echo htmlspecialchars($hostel['warden_name']); ?><br>
-                                                <strong>Contact:</strong> <?php echo htmlspecialchars($hostel['warden_contact']); ?>
+                                            <?php if (!empty($hostel['warden_name'])): ?>
+                                            <div style="margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--medium-gray); font-size: 0.75rem;">
+                                                <div><i class="fas fa-user-tie"></i> <strong>Warden:</strong> <?php echo htmlspecialchars($hostel['warden_name']); ?></div>
+                                                <?php if (!empty($hostel['warden_contact'])): ?>
+                                                <div><i class="fas fa-phone"></i> <?php echo htmlspecialchars($hostel['warden_contact']); ?></div>
+                                                <?php endif; ?>
                                             </div>
+                                            <?php endif; ?>
                                             
-                                            <div class="management-actions" style="margin-top: 1rem;">
+                                            <div class="management-actions">
                                                 <button class="btn btn-outline action-small" onclick="editHostel(<?php echo $hostel['id']; ?>)">
                                                     <i class="fas fa-edit"></i> Edit
                                                 </button>
                                                 <button class="btn btn-outline action-small" onclick="viewRooms(<?php echo $hostel['id']; ?>, '<?php echo htmlspecialchars($hostel['name']); ?>')">
                                                     <i class="fas fa-door-open"></i> Rooms
                                                 </button>
-                                                <button class="btn btn-outline action-small" onclick="showModal('addRoomModal', <?php echo $hostel['id']; ?>)">
+                                                <button class="btn btn-outline action-small" onclick="showModalWithHostel('addRoomModal', <?php echo $hostel['id']; ?>)">
                                                     <i class="fas fa-plus"></i> Add Room
                                                 </button>
                                                 <button class="btn btn-danger action-small" onclick="deleteHostel(<?php echo $hostel['id']; ?>, '<?php echo htmlspecialchars($hostel['name']); ?>')">
@@ -1875,7 +2114,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             </div>
 
             <!-- Rooms Management Tab -->
-            <div id="rooms" class="tab-content">
+            <div id="rooms" class="tab-content <?php echo $tab === 'rooms' ? 'active' : ''; ?>">
                 <div class="card">
                     <div class="card-header">
                         <h3>Rooms Management</h3>
@@ -1883,41 +2122,44 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                             <button class="card-header-btn" onclick="showModal('addRoomModal')" title="Add New Room">
                                 <i class="fas fa-plus"></i>
                             </button>
+                            <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="card-body">
                         <div class="rooms-grid">
                             <?php if (empty($all_rooms)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem; grid-column: 1 / -1;">
-                                    <i class="fas fa-door-open" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state" style="grid-column: 1 / -1;">
+                                    <i class="fas fa-door-open"></i>
                                     <p>No rooms found. <a href="javascript:void(0)" onclick="showModal('addRoomModal')" style="color: var(--primary-purple);">Add the first room</a></p>
                                 </div>
                             <?php else: ?>
                                 <?php foreach ($all_rooms as $room): ?>
                                     <div class="room-card">
                                         <div class="room-header">
-                                            <div class="room-number">Room <?php echo htmlspecialchars($room['room_number']); ?></div>
+                                            <div class="room-number"><i class="fas fa-door-closed"></i> Room <?php echo htmlspecialchars($room['room_number']); ?></div>
                                             <span class="room-type"><?php echo ucfirst($room['room_type']); ?></span>
                                         </div>
                                         <div class="room-info">
                                             <div class="room-info-item">
-                                                <span class="room-info-label">Hostel:</span>
+                                                <span class="room-info-label"><i class="fas fa-building"></i> Hostel:</span>
                                                 <span class="room-info-value"><?php echo htmlspecialchars($room['hostel_name']); ?></span>
                                             </div>
                                             <div class="room-info-item">
-                                                <span class="room-info-label">Floor:</span>
+                                                <span class="room-info-label"><i class="fas fa-layer-group"></i> Floor:</span>
                                                 <span class="room-info-value"><?php echo $room['floor']; ?></span>
                                             </div>
                                             <div class="room-info-item">
-                                                <span class="room-info-label">Capacity:</span>
+                                                <span class="room-info-label"><i class="fas fa-users"></i> Capacity:</span>
                                                 <span class="room-info-value"><?php echo $room['capacity']; ?> beds</span>
                                             </div>
                                             <div class="room-info-item">
-                                                <span class="room-info-label">Available:</span>
+                                                <span class="room-info-label"><i class="fas fa-check-circle"></i> Available:</span>
                                                 <span class="room-info-value"><?php echo $room['available_beds']; ?> beds</span>
                                             </div>
                                             <div class="room-info-item">
-                                                <span class="room-info-label">Status:</span>
+                                                <span class="room-info-label"><i class="fas fa-tag"></i> Status:</span>
                                                 <span class="status-badge status-<?php echo $room['status']; ?>">
                                                     <?php echo ucfirst($room['status']); ?>
                                                 </span>
@@ -1940,7 +2182,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             </div>
 
             <!-- Allocations Tab -->
-            <div id="allocations" class="tab-content">
+            <div id="allocations" class="tab-content <?php echo $tab === 'allocations' ? 'active' : ''; ?>">
                 <div class="card">
                     <div class="card-header">
                         <h3>Student Allocations</h3>
@@ -1996,8 +2238,9 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                 <tbody>
                                     <?php if (empty($allocations)): ?>
                                         <tr>
-                                            <td colspan="9" style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                                No hostel allocations found.
+                                            <td colspan="9" class="empty-state">
+                                                <i class="fas fa-bed"></i>
+                                                <p>No hostel allocations found.</p>
                                             </td>
                                         </tr>
                                     <?php else: ?>
@@ -2006,8 +2249,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                                 <td>
                                                     <div style="font-weight: 600;"><?php echo htmlspecialchars($allocation['student_name']); ?></div>
                                                     <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                        <?php echo htmlspecialchars($allocation['reg_number']); ?><br>
-                                                        <?php echo htmlspecialchars($allocation['email']); ?>
+                                                        <?php echo htmlspecialchars($allocation['reg_number']); ?>
                                                     </div>
                                                 </td>
                                                 <td>
@@ -2050,7 +2292,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             </div>
 
             <!-- Maintenance Tab -->
-            <div id="maintenance" class="tab-content">
+            <div id="maintenance" class="tab-content <?php echo $tab === 'maintenance' ? 'active' : ''; ?>">
                 <div class="card">
                     <div class="card-header">
                         <h3>Maintenance Requests</h3>
@@ -2072,15 +2314,15 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                         <th>Status</th>
                                         <th>Reported</th>
                                         <th>Due Date</th>
-                                        <th>Cost</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (empty($maintenance_requests)): ?>
                                         <tr>
-                                            <td colspan="9" style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                                No maintenance requests found.
+                                            <td colspan="8" class="empty-state">
+                                                <i class="fas fa-check-circle"></i>
+                                                <p>No maintenance requests found.</p>
                                             </td>
                                         </tr>
                                     <?php else: ?>
@@ -2089,16 +2331,16 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                                 <td>
                                                     <div style="font-weight: 600;"><?php echo htmlspecialchars($request['title']); ?></div>
                                                     <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                        <?php echo strlen($request['description']) > 50 ? substr($request['description'], 0, 50) . '...' : $request['description']; ?>
+                                                        <?php echo strlen($request['description'] ?? '') > 50 ? substr($request['description'], 0, 50) . '...' : ($request['description'] ?? ''); ?>
                                                     </div>
                                                 </td>
                                                 <td>
                                                     <div style="font-weight: 600;"><?php echo htmlspecialchars($request['hostel_name']); ?></div>
-                                                    <?php if ($request['room_number']): ?>
+                                                    <?php if (!empty($request['room_number'])): ?>
                                                         <div style="font-size: 0.7rem; color: var(--dark-gray);">Room <?php echo htmlspecialchars($request['room_number']); ?></div>
                                                     <?php endif; ?>
                                                 </td>
-                                                <td><?php echo ucfirst($request['issue_type']); ?></td>
+                                                <td><?php echo ucfirst($request['issue_type'] ?? 'other'); ?></td>
                                                 <td>
                                                     <span class="priority-badge priority-<?php echo $request['priority']; ?>">
                                                         <?php echo ucfirst($request['priority']); ?>
@@ -2111,13 +2353,6 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                                 </td>
                                                 <td><?php echo date('M j, Y', strtotime($request['created_at'])); ?></td>
                                                 <td><?php echo $request['due_date'] ? date('M j, Y', strtotime($request['due_date'])) : 'N/A'; ?></td>
-                                                <td>
-                                                    <?php if ($request['actual_cost'] > 0): ?>
-                                                        <?php echo number_format($request['actual_cost'], 2); ?> RWF
-                                                    <?php else: ?>
-                                                        -
-                                                    <?php endif; ?>
-                                                </td>
                                                 <td>
                                                     <button class="btn btn-outline action-small" onclick="updateMaintenance(<?php echo $request['id']; ?>)">
                                                         <i class="fas fa-edit"></i> Update
@@ -2134,13 +2369,13 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             </div>
 
             <!-- Allocation Tab -->
-            <div id="allocation" class="tab-content">
+            <div id="allocation" class="tab-content <?php echo $tab === 'allocation' ? 'active' : ''; ?>">
                 <div class="card">
                     <div class="card-header">
                         <h3>Allocate Student to Hostel</h3>
                     </div>
                     <div class="card-body">
-                        <form method="POST">
+                        <form method="POST" id="allocationForm">
                             <input type="hidden" name="action" value="allocate_hostel">
                             
                             <div class="form-grid">
@@ -2149,8 +2384,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                     <select name="student_id" class="form-select" required>
                                         <option value="">Select Student</option>
                                         <?php foreach ($available_students as $student): ?>
-                                            <option value="<?php echo $student['id']; ?>" data-gender="<?php echo $student['gender']; ?>">
-                                                <?php echo htmlspecialchars($student['full_name'] . ' (' . $student['reg_number'] . ') - ' . $student['department_name']); ?>
+                                            <option value="<?php echo $student['id']; ?>">
+                                                <?php echo htmlspecialchars($student['full_name'] . ' (' . $student['reg_number'] . ') - ' . ($student['department_name'] ?? 'No Department')); ?>
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
@@ -2163,10 +2398,10 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                 
                                 <div class="form-group">
                                     <label class="form-label">Hostel & Room *</label>
-                                    <select name="room_id" class="form-select" required onchange="updateBedOptions(this)">
+                                    <select name="room_id" id="room_select" class="form-select" required onchange="updateBedOptions()">
                                         <option value="">Select Room</option>
                                         <?php foreach ($available_rooms as $room): ?>
-                                            <option value="<?php echo $room['id']; ?>" data-hostel="<?php echo $room['hostel_id']; ?>" data-beds="<?php echo $room['available_beds']; ?>" data-gender="<?php echo $room['gender']; ?>">
+                                            <option value="<?php echo $room['id']; ?>" data-hostel="<?php echo $room['hostel_id']; ?>" data-beds="<?php echo $room['available_beds']; ?>">
                                                 <?php echo htmlspecialchars($room['hostel_name'] . ' - Room ' . $room['room_number'] . ' (' . $room['gender'] . ') - ' . $room['available_beds'] . ' bed(s) available'); ?>
                                             </option>
                                         <?php endforeach; ?>
@@ -2183,7 +2418,6 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                     <label class="form-label">Bed Number</label>
                                     <select name="bed_number" class="form-select" id="bed_number">
                                         <option value="">Auto-assign</option>
-                                        <!-- Bed options will be populated dynamically -->
                                     </select>
                                 </div>
                                 
@@ -2198,9 +2432,11 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                                 <textarea name="allocation_reason" class="form-textarea" placeholder="Reason for hostel allocation (optional)"></textarea>
                             </div>
                             
-                            <button type="submit" class="btn btn-primary" <?php echo (empty($available_students) || empty($available_rooms)) ? 'disabled' : ''; ?>>
-                                <i class="fas fa-user-plus"></i> Allocate Hostel
-                            </button>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary" <?php echo (empty($available_students) || empty($available_rooms)) ? 'disabled' : ''; ?>>
+                                    <i class="fas fa-user-plus"></i> Allocate Hostel
+                                </button>
+                            </div>
                         </form>
                     </div>
                 </div>
@@ -2212,7 +2448,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
     <div id="addHostelModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Add New Hostel</h3>
+                <h3><i class="fas fa-plus-circle"></i> Add New Hostel</h3>
                 <button class="close" onclick="closeModal('addHostelModal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -2287,7 +2523,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
     <div id="editHostelModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Edit Hostel</h3>
+                <h3><i class="fas fa-edit"></i> Edit Hostel</h3>
                 <button class="close" onclick="closeModal('editHostelModal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -2328,9 +2564,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     
                     <div class="form-group">
                         <label class="form-label">Amenities</label>
-                        <div class="checkbox-grid" id="edit_hostel_amenities">
-                            <!-- Amenities will be populated dynamically -->
-                        </div>
+                        <div class="checkbox-grid" id="edit_hostel_amenities"></div>
                     </div>
                     
                     <div class="form-grid">
@@ -2368,7 +2602,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
     <div id="addRoomModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Add New Room</h3>
+                <h3><i class="fas fa-door-open"></i> Add New Room</h3>
                 <button class="close" onclick="closeModal('addRoomModal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -2379,7 +2613,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     <div class="form-grid">
                         <div class="form-group">
                             <label class="form-label">Hostel *</label>
-                            <select name="hostel_id_select" class="form-select" required onchange="document.getElementById('add_room_hostel_id').value = this.value">
+                            <select name="hostel_id_select" id="add_room_hostel_select" class="form-select" required onchange="document.getElementById('add_room_hostel_id').value = this.value">
                                 <option value="">Select Hostel</option>
                                 <?php foreach ($hostels as $hostel): ?>
                                     <option value="<?php echo $hostel['id']; ?>"><?php echo htmlspecialchars($hostel['name']); ?></option>
@@ -2438,7 +2672,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
     <div id="editRoomModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Edit Room</h3>
+                <h3><i class="fas fa-edit"></i> Edit Room</h3>
                 <button class="close" onclick="closeModal('editRoomModal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -2485,9 +2719,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     
                     <div class="form-group">
                         <label class="form-label">Room Amenities</label>
-                        <div class="checkbox-grid" id="edit_room_amenities">
-                            <!-- Amenities will be populated dynamically -->
-                        </div>
+                        <div class="checkbox-grid" id="edit_room_amenities"></div>
                     </div>
                     
                     <div class="form-actions">
@@ -2503,7 +2735,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
     <div id="maintenanceModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>New Maintenance Request</h3>
+                <h3><i class="fas fa-tools"></i> New Maintenance Request</h3>
                 <button class="close" onclick="closeModal('maintenanceModal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -2513,7 +2745,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                     <div class="form-grid">
                         <div class="form-group">
                             <label class="form-label">Hostel *</label>
-                            <select name="hostel_id" class="form-select" required onchange="updateRoomOptions(this.value)">
+                            <select name="hostel_id" id="maintenance_hostel_select" class="form-select" required onchange="updateRoomOptions()">
                                 <option value="">Select Hostel</option>
                                 <?php foreach ($hostels as $hostel): ?>
                                     <option value="<?php echo $hostel['id']; ?>"><?php echo htmlspecialchars($hostel['name']); ?></option>
@@ -2523,9 +2755,8 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                         
                         <div class="form-group">
                             <label class="form-label">Room (Optional)</label>
-                            <select name="room_id" class="form-select" id="maintenance_room_select">
+                            <select name="room_id" id="maintenance_room_select" class="form-select">
                                 <option value="">Select Room</option>
-                                <!-- Rooms will be populated dynamically -->
                             </select>
                         </div>
                         
@@ -2594,27 +2825,113 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Tab Management
         function showTab(tabName) {
+            // Update URL without reload
+            const url = new URL(window.location.href);
+            url.searchParams.set('tab', tabName);
+            window.history.pushState({}, '', url);
+            
+            // Update tab contents
             document.querySelectorAll('.tab-content').forEach(tab => {
                 tab.classList.remove('active');
             });
             document.getElementById(tabName).classList.add('active');
             
+            // Update tab buttons
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
             });
-            event.target.classList.add('active');
+            
+            // Find and activate the clicked tab
+            const tabs = document.querySelectorAll('.tab');
+            const tabMap = {
+                'overview': 0,
+                'rooms': 1,
+                'allocations': 2,
+                'maintenance': 3,
+                'allocation': 4
+            };
+            const index = tabMap[tabName];
+            if (tabs[index]) {
+                tabs[index].classList.add('active');
+            }
         }
 
+        // Make showTab work with click events
+        document.querySelectorAll('.tab').forEach((tab, index) => {
+            tab.addEventListener('click', function(e) {
+                const tabNames = ['overview', 'rooms', 'allocations', 'maintenance', 'allocation'];
+                showTab(tabNames[index]);
+            });
+        });
+
         // Modal Management
-        function showModal(modalId, hostelId = null) {
+        function showModal(modalId) {
             document.getElementById(modalId).style.display = 'block';
-            
-            if (hostelId && modalId === 'addRoomModal') {
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function showModalWithHostel(modalId, hostelId) {
+            showModal(modalId);
+            if (modalId === 'addRoomModal') {
                 document.getElementById('add_room_hostel_id').value = hostelId;
-                // Set the select value if it exists
-                const select = document.querySelector('select[name="hostel_id_select"]');
+                const select = document.getElementById('add_room_hostel_select');
                 if (select) {
                     select.value = hostelId;
                 }
@@ -2623,6 +2940,7 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         function closeModal(modalId) {
             document.getElementById(modalId).style.display = 'none';
+            document.body.style.overflow = '';
         }
 
         // Close modal when clicking outside
@@ -2630,16 +2948,17 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
             document.querySelectorAll('.modal').forEach(modal => {
                 if (event.target === modal) {
                     modal.style.display = 'none';
+                    document.body.style.overflow = '';
                 }
             });
         }
 
         // Hostel Management Functions
+        const hostelsData = <?php echo json_encode($hostels); ?>;
+        const commonAmenities = <?php echo json_encode($common_amenities); ?>;
+        
         function editHostel(hostelId) {
-            // In a real implementation, you would fetch hostel data via AJAX
-            // For now, we'll simulate with the existing data
-            const hostels = <?php echo json_encode($hostels); ?>;
-            const hostel = hostels.find(h => h.id == hostelId);
+            const hostel = hostelsData.find(h => h.id == hostelId);
             
             if (hostel) {
                 document.getElementById('edit_hostel_id').value = hostel.id;
@@ -2656,11 +2975,10 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                 const amenitiesContainer = document.getElementById('edit_hostel_amenities');
                 amenitiesContainer.innerHTML = '';
                 
-                const amenities = <?php echo json_encode($common_amenities); ?>;
                 const hostelAmenities = JSON.parse(hostel.amenities || '[]');
                 
-                amenities.forEach(amenity => {
-                    const checkboxId = `edit_amenity_${amenity.toLowerCase().replace(' ', '_')}`;
+                commonAmenities.forEach(amenity => {
+                    const checkboxId = `edit_amenity_${amenity.toLowerCase().replace(/ /g, '_')}`;
                     const isChecked = hostelAmenities.includes(amenity);
                     
                     amenitiesContainer.innerHTML += `
@@ -2689,16 +3007,17 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         }
 
         function viewRooms(hostelId, hostelName) {
-            // This would typically show a modal or redirect to rooms view
-            // For now, we'll switch to the rooms tab and filter if possible
             showTab('rooms');
-            // You could add filtering logic here to show only rooms for this hostel
+            // Scroll to rooms section
+            document.getElementById('rooms').scrollIntoView({ behavior: 'smooth' });
         }
 
         // Room Management Functions
+        const allRooms = <?php echo json_encode($all_rooms); ?>;
+        const roomAmenities = <?php echo json_encode($room_amenities); ?>;
+        
         function editRoom(roomId) {
-            const rooms = <?php echo json_encode($all_rooms); ?>;
-            const room = rooms.find(r => r.id == roomId);
+            const room = allRooms.find(r => r.id == roomId);
             
             if (room) {
                 document.getElementById('edit_room_id').value = room.id;
@@ -2712,12 +3031,11 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
                 const amenitiesContainer = document.getElementById('edit_room_amenities');
                 amenitiesContainer.innerHTML = '';
                 
-                const amenities = <?php echo json_encode($room_amenities); ?>;
-                const roomAmenities = JSON.parse(room.amenities || '[]');
+                const roomAmenitiesList = JSON.parse(room.amenities || '[]');
                 
-                amenities.forEach(amenity => {
-                    const checkboxId = `edit_room_amenity_${amenity.toLowerCase().replace(' ', '_')}`;
-                    const isChecked = roomAmenities.includes(amenity);
+                roomAmenities.forEach(amenity => {
+                    const checkboxId = `edit_room_amenity_${amenity.toLowerCase().replace(/ /g, '_')}`;
+                    const isChecked = roomAmenitiesList.includes(amenity);
                     
                     amenitiesContainer.innerHTML += `
                         <div class="checkbox-item">
@@ -2745,55 +3063,60 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
         }
 
         // Allocation Functions
-        function updateBedOptions(roomSelect) {
+        function updateBedOptions() {
+            const roomSelect = document.getElementById('room_select');
             const selectedOption = roomSelect.options[roomSelect.selectedIndex];
-            const availableBeds = parseInt(selectedOption.getAttribute('data-beds'));
+            const availableBeds = parseInt(selectedOption.getAttribute('data-beds') || 0);
             const hostelId = selectedOption.getAttribute('data-hostel');
             
-            document.getElementById('hostel_id').value = hostelId;
+            document.getElementById('hostel_id').value = hostelId || '';
             
             const bedSelect = document.getElementById('bed_number');
             bedSelect.innerHTML = '<option value="">Auto-assign</option>';
             
-            for (let i = 1; i <= availableBeds; i++) {
-                bedSelect.innerHTML += `<option value="${i}">Bed ${i}</option>`;
+            if (!isNaN(availableBeds) && availableBeds > 0) {
+                for (let i = 1; i <= availableBeds; i++) {
+                    bedSelect.innerHTML += `<option value="Bed ${i}">Bed ${i}</option>`;
+                }
             }
         }
 
         // Maintenance Functions
-        function updateRoomOptions(hostelId) {
-            const rooms = <?php echo json_encode($all_rooms); ?>;
+        function updateRoomOptions() {
+            const hostelSelect = document.getElementById('maintenance_hostel_select');
+            const hostelId = hostelSelect.value;
             const roomSelect = document.getElementById('maintenance_room_select');
             
             roomSelect.innerHTML = '<option value="">Select Room</option>';
             
-            rooms.filter(room => room.hostel_id == hostelId).forEach(room => {
-                roomSelect.innerHTML += `<option value="${room.id}">Room ${room.room_number}</option>`;
-            });
+            if (hostelId) {
+                const rooms = allRooms.filter(room => room.hostel_id == hostelId);
+                rooms.forEach(room => {
+                    roomSelect.innerHTML += `<option value="${room.id}">Room ${room.room_number}</option>`;
+                });
+            }
         }
 
         function updateMaintenance(maintenanceId) {
-            // This would typically open a modal to update maintenance status
-            // For now, we'll use a simple form submission approach
             const status = prompt('Enter new status (reported/in_progress/completed):');
-            if (status && ['reported', 'in_progress', 'completed'].includes(status)) {
+            if (status && ['reported', 'in_progress', 'completed'].includes(status.toLowerCase())) {
                 const form = document.createElement('form');
                 form.method = 'POST';
                 
                 let formContent = `
                     <input type="hidden" name="action" value="update_maintenance_status">
                     <input type="hidden" name="maintenance_id" value="${maintenanceId}">
-                    <input type="hidden" name="status" value="${status}">
+                    <input type="hidden" name="status" value="${status.toLowerCase()}">
                 `;
                 
-                if (status === 'completed') {
+                if (status.toLowerCase() === 'completed') {
                     const completionNotes = prompt('Enter completion notes:');
                     const actualCost = prompt('Enter actual cost (RWF):');
                     
                     if (completionNotes !== null) {
-                        formContent += `<input type="hidden" name="completion_notes" value="${completionNotes}">`;
+                        formContent += `<input type="hidden" name="completion_notes" value="${completionNotes.replace(/"/g, '&quot;')}">`;
                     }
-                    if (actualCost !== null && !isNaN(actualCost)) {
+                    if (actualCost !== null && !isNaN(actualCost) && actualCost !== '') {
                         formContent += `<input type="hidden" name="actual_cost" value="${actualCost}">`;
                     }
                 }
@@ -2806,78 +3129,34 @@ $room_amenities = ['Desk', 'Wardrobe', 'Fan', 'AC', 'TV', 'Balcony', 'Private Ba
 
         // Form Validation
         document.addEventListener('DOMContentLoaded', function() {
-            // Add form validation
-            const forms = document.querySelectorAll('form');
-            forms.forEach(form => {
-                form.addEventListener('submit', function(e) {
-                    const requiredFields = form.querySelectorAll('[required]');
-                    let valid = true;
-                    
-                    requiredFields.forEach(field => {
-                        if (!field.value.trim()) {
-                            valid = false;
-                            field.style.borderColor = 'var(--danger)';
-                        } else {
-                            field.style.borderColor = '';
-                        }
-                    });
-                    
-                    if (!valid) {
-                        e.preventDefault();
-                        alert('Please fill in all required fields.');
-                    }
-                });
+            // Add loading animations
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
             });
             
             // Auto-close alerts after 5 seconds
             setTimeout(() => {
                 document.querySelectorAll('.alert').forEach(alert => {
-                    alert.style.display = 'none';
+                    alert.style.opacity = '0';
+                    alert.style.transition = 'opacity 0.5s';
+                    setTimeout(() => {
+                        if (alert.parentNode) alert.remove();
+                    }, 500);
                 });
             }, 5000);
-        });
-
-        // Print Functionality
-        function printReport() {
-            const printContent = document.querySelector('.tab-content.active').innerHTML;
-            const originalContent = document.body.innerHTML;
-            
-            document.body.innerHTML = `
-                <div style="padding: 20px;">
-                    <h1 style="text-align: center; color: var(--primary-purple); margin-bottom: 20px;">
-                        RP Musanze College - Hostel Management Report
-                    </h1>
-                    <div style="text-align: center; color: var(--dark-gray); margin-bottom: 30px;">
-                        Generated on: ${new Date().toLocaleDateString()}
-                    </div>
-                    ${printContent}
-                </div>
-            `;
-            
-            window.print();
-            document.body.innerHTML = originalContent;
-            window.location.reload();
-        }
-
-        // Initialize page based on URL parameters
-        document.addEventListener('DOMContentLoaded', function() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const tab = urlParams.get('tab');
-            
-            if (tab && document.getElementById(tab)) {
-                showTab(tab);
-            }
             
             // Initialize room options for allocation
-            const roomSelect = document.querySelector('select[name="room_id"]');
+            const roomSelect = document.getElementById('room_select');
             if (roomSelect) {
-                updateBedOptions(roomSelect);
+                updateBedOptions();
             }
         });
 
-        // Auto-refresh data every 2 minutes
+        // Auto-refresh data every 2 minutes (only if no modal is open)
         setInterval(() => {
-            if (!document.querySelector('.modal[style*="display: block"]')) {
+            const openModals = document.querySelectorAll('.modal[style*="display: block"]');
+            if (openModals.length === 0) {
                 window.location.reload();
             }
         }, 120000);

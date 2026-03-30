@@ -43,7 +43,7 @@ if ($action === 'delete' && isset($_GET['id'])) {
     }
 }
 
-// Update Report Status
+// Update Report Status (PostgreSQL uses CURRENT_TIMESTAMP)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     try {
         $report_id = $_POST['report_id'];
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         
         $stmt = $pdo->prepare("
             UPDATE class_rep_reports 
-            SET status = ?, feedback = ?, reviewed_by = ?, reviewed_at = NOW() 
+            SET status = ?, feedback = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP 
             WHERE id = ?
         ");
         $stmt->execute([$status, $feedback, $user_id, $report_id]);
@@ -66,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     }
 }
 
-// Export Reports
+// Export Reports (PostgreSQL compatible - uses CSV export)
 if ($action === 'export') {
     try {
         // Get reports for export
@@ -134,7 +134,7 @@ $type_filter = $_GET['type'] ?? '';
 $date_from = $_GET['date_from'] ?? '';
 $date_to = $_GET['date_to'] ?? '';
 
-// Build query with filters
+// Build query with filters (PostgreSQL compatible)
 $query = "
     SELECT 
         crr.*,
@@ -213,52 +213,96 @@ try {
     error_log("Class rep reports data error: " . $e->getMessage());
 }
 
-// Get dashboard statistics for sidebar
+// Get dashboard statistics for sidebar (PostgreSQL compatible)
 try {
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
+    // Total reps count (PostgreSQL uses true for boolean)
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
     $sidebar_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
     $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
-    // Check for pending minutes
+    // Check for pending minutes (PostgreSQL compatible)
     $pending_minutes = 0;
     try {
-        $stmt = $pdo->query("SHOW TABLES LIKE 'meeting_minutes'");
-        if ($stmt->rowCount() > 0) {
-            $stmt = $pdo->query("SELECT COUNT(*) as pending_minutes FROM meeting_minutes WHERE status = 'draft'");
+        $stmt = $pdo->query("
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_name = 'meeting_minutes'
+            ) as table_exists
+        ");
+        $table_exists = $stmt->fetch(PDO::FETCH_ASSOC)['table_exists'] ?? false;
+        
+        if ($table_exists) {
+            $stmt = $pdo->query("SELECT COUNT(*) as pending_minutes FROM meeting_minutes WHERE approval_status = 'draft'");
             $pending_minutes = $stmt->fetch(PDO::FETCH_ASSOC)['pending_minutes'] ?? 0;
         } else {
             // Fallback: Count meetings without minutes
-            $stmt = $pdo->query("SELECT COUNT(*) as pending_minutes FROM rep_meetings WHERE (minutes IS NULL OR minutes = '') AND status = 'completed'");
-            $pending_minutes = $stmt->fetch(PDO::FETCH_ASSOC)['pending_minutes'] ?? 0;
+            $stmt = $pdo->query("
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_name = 'rep_meetings'
+                ) as rep_meetings_exists
+            ");
+            $rep_meetings_exists = $stmt->fetch(PDO::FETCH_ASSOC)['rep_meetings_exists'] ?? false;
+            
+            if ($rep_meetings_exists) {
+                $stmt = $pdo->query("SELECT COUNT(*) as pending_minutes FROM rep_meetings WHERE (minutes IS NULL OR minutes = '') AND status = 'completed'");
+                $pending_minutes = $stmt->fetch(PDO::FETCH_ASSOC)['pending_minutes'] ?? 0;
+            }
         }
     } catch (Exception $e) {
         error_log("Pending minutes query error: " . $e->getMessage());
     }
     
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
-    $sidebar_upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
+    // Upcoming meetings for sidebar (PostgreSQL uses CURRENT_DATE)
+    $stmt = $pdo->query("
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_name = 'rep_meetings'
+        ) as rep_meetings_exists
+    ");
+    $rep_meetings_exists = $stmt->fetch(PDO::FETCH_ASSOC)['rep_meetings_exists'] ?? false;
     
-    $stmt = $pdo->prepare("SELECT COUNT(*) as unread_messages FROM conversation_messages cm JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)");
+    $sidebar_upcoming_meetings = 0;
+    if ($rep_meetings_exists) {
+        $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+        $sidebar_upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
+    }
+    
+    // Unread messages (PostgreSQL compatible)
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_count 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
     $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
     
 } catch (PDOException $e) {
-    $sidebar_reps_count = $pending_reports = $pending_minutes = $sidebar_upcoming_meetings = $unread_messages = 0;
+    $sidebar_reps_count = 0;
+    $pending_reports = 0;
+    $pending_minutes = 0;
+    $sidebar_upcoming_meetings = 0;
+    $unread_messages = 0;
+    error_log("Sidebar stats error: " . $e->getMessage());
 }
+
+// Set variables for sidebar display
+$total_reps = $sidebar_reps_count;
+$upcoming_meetings = $sidebar_upcoming_meetings;
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Class Representative Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* Your existing CSS styles remain exactly the same as previous files */
         :root {
             --primary-blue: #007bff;
             --secondary-blue: #0056b3;
@@ -280,6 +324,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -315,18 +361,15 @@ try {
             transition: var(--transition);
         }
 
-        /* Header and other styles remain the same as previous files */
+        /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -336,7 +379,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -357,26 +399,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -384,22 +438,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -408,12 +447,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -424,25 +462,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -452,50 +489,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -525,9 +597,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -548,7 +618,7 @@ try {
 
         .menu-section {
             padding: 0.75rem 1.5rem;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             color: var(--dark-gray);
             text-transform: uppercase;
@@ -557,11 +627,18 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -591,7 +668,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -620,13 +697,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -641,7 +719,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -659,7 +737,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -667,7 +745,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -678,11 +756,18 @@ try {
             gap: 1.5rem;
         }
 
+        @media (max-width: 992px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
         .card-header {
@@ -691,6 +776,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -724,6 +810,10 @@ try {
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -743,6 +833,10 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -753,27 +847,27 @@ try {
 
         .status-draft {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-submitted {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-reviewed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-approved {
             background: #d1f2eb;
-            color: var(--primary-blue);
+            color: #0c5460;
         }
 
         .status-rejected {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         /* Form Styles */
@@ -791,7 +885,7 @@ try {
 
         .form-control {
             width: 100%;
-            padding: 0.5rem 0.75rem;
+            padding: 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
@@ -803,14 +897,14 @@ try {
         .form-control:focus {
             outline: none;
             border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
         }
 
         .btn {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem 1rem;
+            padding: 0.75rem 1.5rem;
             border: none;
             border-radius: var(--border-radius);
             font-size: 0.8rem;
@@ -851,16 +945,25 @@ try {
         }
 
         .btn-sm {
-            padding: 0.25rem 0.5rem;
+            padding: 0.5rem 1rem;
             font-size: 0.7rem;
         }
 
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* Alert */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
-            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -875,51 +978,7 @@ try {
             border-left-color: var(--danger);
         }
 
-        .empty-state {
-            text-align: center;
-            padding: 2rem;
-            color: var(--dark-gray);
-        }
-
-        .empty-state i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            opacity: 0.5;
-        }
-
-        .empty-state h4 {
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-        }
-
-        .type-stats {
-            display: grid;
-            gap: 0.75rem;
-        }
-
-        .type-stat {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.5rem;
-            background: var(--light-gray);
-            border-radius: var(--border-radius);
-        }
-
-        .type-name {
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .type-count {
-            background: var(--primary-blue);
-            color: white;
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
+        /* Filters */
         .filters {
             background: var(--white);
             padding: 1.25rem;
@@ -950,6 +1009,54 @@ try {
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1rem;
+        }
+
+        /* Type Stats */
+        .type-stats {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .type-stat {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            background: var(--light-gray);
+            border-radius: var(--border-radius);
+        }
+
+        .type-name {
+            font-weight: 600;
+            color: var(--text-dark);
+            text-transform: capitalize;
+        }
+
+        .type-count {
+            background: var(--primary-blue);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h4 {
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
         }
 
         /* Modal Styles */
@@ -1002,35 +1109,86 @@ try {
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1038,18 +1196,50 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1062,7 +1252,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1091,11 +1284,14 @@ try {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-              <!-- Sidebar -->
-        <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1104,6 +1300,9 @@ try {
                     <a href="class_reps.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Management</span>
+                        <?php if ($total_reps > 0): ?>
+                            <span class="menu-badge"><?php echo $total_reps; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1112,22 +1311,28 @@ try {
                         <span>Class Rep Meetings</span>
                     </a>
                 </li>
-                                <li class="menu-item">
-                    <a href="meeting_minutes.php" >
+                <li class="menu-item">
+                    <a href="meeting_minutes.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Meeting Minutes</span>
+                        <?php if ($pending_minutes > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_minutes; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="class_rep_reports.php" class="active">
                         <i class="fas fa-file-alt"></i>
                         <span>Class Rep Reports</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="class_rep_performance.php">
                         <i class="fas fa-chart-line"></i>
-                        <span>Class Rep <br>Performance</span>
+                        <span>Class Rep Performance</span>
                     </a>
                 </li>
                 
@@ -1144,26 +1349,31 @@ try {
                     <a href="meetings.php">
                         <i class="fas fa-handshake"></i>
                         <span>Meetings</span>
+                        <?php if ($upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
-                        <span>Profile</span>
+                        <span>Profile & Settings</span>
                     </a>
                 </li>
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Class Representative Reports</h1>
@@ -1186,7 +1396,7 @@ try {
                         <i class="fas fa-file-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_reports; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_reports); ?></div>
                         <div class="stat-label">Total Reports</div>
                     </div>
                 </div>
@@ -1195,7 +1405,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $submitted_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($submitted_count); ?></div>
                         <div class="stat-label">Pending Review</div>
                     </div>
                 </div>
@@ -1204,7 +1414,7 @@ try {
                         <i class="fas fa-eye"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $reviewed_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($reviewed_count); ?></div>
                         <div class="stat-label">Reviewed</div>
                     </div>
                 </div>
@@ -1213,7 +1423,7 @@ try {
                         <i class="fas fa-check"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $approved_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($approved_count); ?></div>
                         <div class="stat-label">Approved</div>
                     </div>
                 </div>
@@ -1224,8 +1434,8 @@ try {
                 <div class="filters-header">
                     <div class="filters-title">Filter Reports</div>
                     <div class="filter-actions">
-                        <a href="class_rep_reports.php" class="btn btn-sm">
-                            <i class="fas fa-refresh"></i> Clear Filters
+                        <a href="class_rep_reports.php" class="btn btn-sm" style="background: var(--medium-gray);">
+                            <i class="fas fa-sync-alt"></i> Clear Filters
                         </a>
                         <a href="class_rep_reports.php?action=export<?php echo $status_filter ? '&status=' . $status_filter : ''; ?><?php echo $type_filter ? '&type=' . $type_filter : ''; ?><?php echo $date_from ? '&date_from=' . $date_from : ''; ?><?php echo $date_to ? '&date_to=' . $date_to : ''; ?>" class="btn btn-success btn-sm">
                             <i class="fas fa-download"></i> Export CSV
@@ -1261,11 +1471,11 @@ try {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label" for="date_from">From Date</label>
-                            <input type="date" class="form-control" id="date_from" name="date_from" value="<?php echo $date_from; ?>">
+                            <input type="date" class="form-control" id="date_from" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>">
                         </div>
                         <div class="form-group">
                             <label class="form-label" for="date_to">To Date</label>
-                            <input type="date" class="form-control" id="date_to" name="date_to" value="<?php echo $date_to; ?>">
+                            <input type="date" class="form-control" id="date_to" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>">
                         </div>
                     </div>
                     <button type="submit" class="btn btn-primary">
@@ -1289,14 +1499,14 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
-                            <?php if (empty($reports)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-file-alt"></i>
-                                    <h4>No Reports Found</h4>
-                                    <p>No class representative reports match your current filters.</p>
-                                </div>
-                            <?php else: ?>
-                                <div style="overflow-x: auto;">
+                            <div class="table-container">
+                                <?php if (empty($reports)): ?>
+                                    <div class="empty-state">
+                                        <i class="fas fa-file-alt"></i>
+                                        <h4>No Reports Found</h4>
+                                        <p>No class representative reports match your current filters.</p>
+                                    </div>
+                                <?php else: ?>
                                     <table class="table">
                                         <thead>
                                             <tr>
@@ -1332,7 +1542,7 @@ try {
                                                         <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($report['department_name'] ?? 'N/A'); ?></small>
                                                     </td>
                                                     <td>
-                                                        <span style="text-transform: capitalize;"><?php echo $report['report_type']; ?></span>
+                                                        <span class="status-badge" style="text-transform: capitalize;"><?php echo $report['report_type']; ?></span>
                                                     </td>
                                                     <td>
                                                         <?php if ($report['report_period']): ?>
@@ -1376,8 +1586,8 @@ try {
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
-                                </div>
-                            <?php endif; ?>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1391,14 +1601,15 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($type_counts)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-chart-pie"></i>
                                     <p>No report type statistics available</p>
                                 </div>
                             <?php else: ?>
                                 <div class="type-stats">
                                     <?php foreach ($type_counts as $type): ?>
                                         <div class="type-stat">
-                                            <span class="type-name" style="text-transform: capitalize;"><?php echo $type['report_type']; ?></span>
+                                            <span class="type-name"><?php echo ucfirst($type['report_type']); ?></span>
                                             <span class="type-count"><?php echo $type['count']; ?></span>
                                         </div>
                                     <?php endforeach; ?>
@@ -1434,19 +1645,19 @@ try {
                         </div>
                         <div class="card-body">
                             <div style="font-size: 0.8rem; color: var(--text-dark);">
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
                                     <span class="status-badge status-draft">Draft</span>
                                     <span> - Report is being prepared by representative</span>
                                 </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
                                     <span class="status-badge status-submitted">Submitted</span>
                                     <span> - Awaiting your review</span>
                                 </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
                                     <span class="status-badge status-reviewed">Reviewed</span>
                                     <span> - You have reviewed the report</span>
                                 </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
                                     <span class="status-badge status-approved">Approved</span>
                                     <span> - Report has been approved</span>
                                 </div>
@@ -1473,6 +1684,9 @@ try {
             </div>
             <div class="modal-body" id="reportDetails">
                 <!-- Report details will be loaded here via AJAX -->
+                <div style="text-align: center; padding: 2rem;">
+                    <i class="fas fa-spinner fa-spin"></i> Loading report details...
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary close-modal">Close</button>
@@ -1493,8 +1707,8 @@ try {
                 <div class="modal-body">
                     <input type="hidden" name="report_id" id="review_report_id">
                     <div class="form-group">
-                        <label class="form-label" for="status">Status</label>
-                        <select class="form-control" id="status" name="status" required>
+                        <label class="form-label" for="review_status">Status</label>
+                        <select class="form-control" id="review_status" name="status" required>
                             <option value="reviewed">Reviewed</option>
                             <option value="approved">Approved</option>
                             <option value="rejected">Rejected</option>
@@ -1506,7 +1720,7 @@ try {
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn close-modal">Cancel</button>
+                    <button type="button" class="btn close-modal" style="background: var(--medium-gray);">Cancel</button>
                     <button type="submit" name="update_status" class="btn btn-primary">Update Status</button>
                 </div>
             </form>
@@ -1518,7 +1732,6 @@ try {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1530,6 +1743,67 @@ try {
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Modal functionality
@@ -1547,16 +1821,15 @@ try {
                 reportDetails.innerHTML = '<div style="text-align: center; padding: 2rem;"><i class="fas fa-spinner fa-spin"></i> Loading report details...</div>';
                 viewReportModal.style.display = 'flex';
                 
-                // Load report details via AJAX
-// Load report details via AJAX
-fetch(`get_report_details.php?id=${reportId}`)
-    .then(response => response.text())
-    .then(html => {
-        reportDetails.innerHTML = html;
-    })
-    .catch(error => {
-        reportDetails.innerHTML = '<div style="text-align: center; color: var(--danger); padding: 2rem;">Error loading report details.</div>';
-    });
+                // Load report details via AJAX (PostgreSQL compatible)
+                fetch(`get_report_details.php?id=${reportId}`)
+                    .then(response => response.text())
+                    .then(html => {
+                        reportDetails.innerHTML = html;
+                    })
+                    .catch(error => {
+                        reportDetails.innerHTML = '<div style="text-align: center; color: var(--danger); padding: 2rem;">Error loading report details.</div>';
+                    });
             });
         });
 
@@ -1587,11 +1860,36 @@ fetch(`get_report_details.php?id=${reportId}`)
             }
         });
 
-        // Auto-refresh page every 5 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here if needed
-            console.log('Class rep reports page auto-refresh triggered');
-        }, 300000);
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
+        });
     </script>
 </body>
 </html>

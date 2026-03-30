@@ -36,8 +36,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 try {
                     $stmt = $pdo->prepare("
-                        INSERT INTO epidemic_alerts (title, description, disease_type, severity, affected_areas, reported_cases, suspected_cases, start_date, reported_by, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                        INSERT INTO epidemic_alerts (title, description, disease_type, severity, affected_areas, reported_cases, suspected_cases, start_date, reported_by, status, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$title, $description, $disease_type, $severity, $affected_areas, $reported_cases, $suspected_cases, $start_date, $user_id]);
                     
@@ -48,20 +48,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
                 
             case 'create_measure':
-                $epidemic_alert_id = $_POST['epidemic_alert_id'] ?? null;
+                $epidemic_alert_id = !empty($_POST['epidemic_alert_id']) ? $_POST['epidemic_alert_id'] : null;
                 $measure_type = $_POST['measure_type'];
                 $title = $_POST['title'];
                 $description = $_POST['description'];
                 $target_area = $_POST['target_area'];
                 $start_date = $_POST['start_date'];
-                $end_date = $_POST['end_date'];
+                $end_date = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
                 $responsible_person = $_POST['responsible_person'];
                 $budget = $_POST['budget'] ?? 0;
                 
                 try {
                     $stmt = $pdo->prepare("
-                        INSERT INTO prevention_measures (epidemic_alert_id, measure_type, title, description, target_area, start_date, end_date, responsible_person, budget, created_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO prevention_measures (epidemic_alert_id, measure_type, title, description, target_area, start_date, end_date, responsible_person, budget, created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$epidemic_alert_id, $measure_type, $title, $description, $target_area, $start_date, $end_date, $responsible_person, $budget, $user_id]);
                     
@@ -82,8 +82,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 try {
                     $stmt = $pdo->prepare("
-                        INSERT INTO health_screenings (title, screening_type, location, screening_date, participants_count, positive_cases, notes, conducted_by)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO health_screenings (title, screening_type, location, screening_date, participants_count, positive_cases, notes, conducted_by, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$title, $screening_type, $location, $screening_date, $participants_count, $positive_cases, $notes, $user_id]);
                     
@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $status = $_POST['status'];
                 
                 try {
-                    $stmt = $pdo->prepare("UPDATE epidemic_alerts SET status = ? WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE epidemic_alerts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $stmt->execute([$status, $alert_id]);
                     
                     $_SESSION['success_message'] = "Alert status updated successfully!";
@@ -120,15 +120,15 @@ try {
     $active_alerts = $stmt->fetch(PDO::FETCH_ASSOC)['active_alerts'] ?? 0;
     
     // Total reported cases
-    $stmt = $pdo->query("SELECT SUM(reported_cases) as total_cases FROM epidemic_alerts WHERE status = 'active'");
+    $stmt = $pdo->query("SELECT COALESCE(SUM(reported_cases), 0) as total_cases FROM epidemic_alerts WHERE status = 'active'");
     $total_cases = $stmt->fetch(PDO::FETCH_ASSOC)['total_cases'] ?? 0;
     
     // Prevention measures in progress
     $stmt = $pdo->query("SELECT COUNT(*) as active_measures FROM prevention_measures WHERE status = 'in_progress'");
     $active_measures = $stmt->fetch(PDO::FETCH_ASSOC)['active_measures'] ?? 0;
     
-    // Recent screenings
-    $stmt = $pdo->query("SELECT COUNT(*) as recent_screenings FROM health_screenings WHERE screening_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)");
+    // Recent screenings (last 7 days)
+    $stmt = $pdo->query("SELECT COUNT(*) as recent_screenings FROM health_screenings WHERE screening_date >= CURRENT_DATE - INTERVAL '7 days'");
     $recent_screenings = $stmt->fetch(PDO::FETCH_ASSOC)['recent_screenings'] ?? 0;
     
     // Alerts by severity
@@ -200,7 +200,7 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Epidemics Prevention - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -227,6 +227,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -266,14 +268,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -283,7 +282,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -292,38 +290,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -331,22 +335,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -355,77 +344,104 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -455,16 +471,20 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .page-header {
@@ -472,6 +492,8 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title {
@@ -526,16 +548,6 @@ try {
             color: white;
         }
 
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-2px);
-        }
-
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -549,7 +561,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -561,30 +573,31 @@ try {
             box-shadow: var(--shadow-md);
         }
 
-        .stat-card.success {
-            border-left-color: var(--success);
+        .stat-card.danger {
+            border-left-color: var(--danger);
         }
 
         .stat-card.warning {
             border-left-color: var(--warning);
         }
 
-        .stat-card.danger {
-            border-left-color: var(--danger);
-        }
-
         .stat-card.info {
             border-left-color: var(--info);
         }
 
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -592,19 +605,14 @@ try {
             color: var(--primary-green);
         }
 
-        .stat-card.success .stat-icon {
-            background: #d4edda;
-            color: var(--success);
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
         }
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .stat-card.danger .stat-icon {
-            background: #f8d7da;
-            color: var(--danger);
+            color: #856404;
         }
 
         .stat-card.info .stat-icon {
@@ -612,12 +620,17 @@ try {
             color: var(--info);
         }
 
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -625,7 +638,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -641,6 +654,9 @@ try {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -649,6 +665,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-green);
         }
 
         .card-header h3 {
@@ -682,6 +701,10 @@ try {
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -701,8 +724,13 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -711,26 +739,27 @@ try {
 
         .status-active {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-contained {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-false_alarm {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
+        /* Severity Badges */
         .severity-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -756,132 +785,6 @@ try {
             color: var(--success);
         }
 
-        /* Alert */
-        .alert {
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-            font-size: 0.8rem;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left-color: var(--success);
-        }
-
-        .alert-danger {
-            background: #f8d7da;
-            color: #721c24;
-            border-left-color: var(--danger);
-        }
-
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
-        }
-
-        /* Forms */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .modal-content {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
-            width: 90%;
-            max-width: 600px;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            padding: 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .modal-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 1.25rem;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .modal-close:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
-        }
-
-        .modal-body {
-            padding: 1.25rem;
-        }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-input, .form-select, .form-textarea {
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.85rem;
-            transition: var(--transition);
-        }
-
-        .form-input:focus, .form-select:focus, .form-textarea:focus {
-            outline: none;
-            border-color: var(--primary-green);
-            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
-        }
-
-        .form-textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
-
-        .form-actions {
-            display: flex;
-            gap: 0.75rem;
-            justify-content: flex-end;
-            margin-top: 1.5rem;
-        }
-
         /* Activity List */
         .activity-list {
             list-style: none;
@@ -889,7 +792,7 @@ try {
 
         .activity-item {
             display: flex;
-            align-items: start;
+            align-items: flex-start;
             gap: 0.75rem;
             padding: 0.75rem 0;
             border-bottom: 1px solid var(--medium-gray);
@@ -932,7 +835,7 @@ try {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
-            margin-top: 1.5rem;
+            margin-top: 0;
         }
 
         .action-btn {
@@ -953,8 +856,8 @@ try {
 
         .action-btn:hover {
             border-color: var(--primary-green);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .action-btn i {
@@ -968,51 +871,262 @@ try {
             font-size: 0.75rem;
         }
 
+        /* Alert */
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
+        }
+
+        .alert-danger {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border-left-color: var(--warning);
+        }
+
+        /* Forms */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.8rem;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: var(--primary-green);
+            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+        }
+
+        .form-textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--medium-gray);
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            overflow-y: auto;
+        }
+
+        .modal-content {
+            background-color: var(--white);
+            margin: 5% auto;
+            padding: 0;
+            border-radius: var(--border-radius);
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .modal-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--light-green);
+        }
+
+        .modal-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .modal-close {
+            color: var(--dark-gray);
+            font-size: 1.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            background: none;
+            border: none;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-dark);
+        }
+
+        .modal-body {
+            padding: 1.25rem;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .content-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .page-actions {
                 width: 100%;
                 justify-content: space-between;
             }
-            
+
             .quick-actions {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1020,29 +1134,56 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .table {
-                font-size: 0.7rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .table th, .table td {
-                padding: 0.5rem;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .quick-actions {
+                grid-template-columns: 1fr;
+            }
+
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Epidemics Prevention</h1>
                 </div>
@@ -1052,7 +1193,7 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
@@ -1078,8 +1219,11 @@ try {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-               <!-- Sidebar -->
-              <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1091,18 +1235,16 @@ try {
                     <a href="health_tickets.php">
                         <i class="fas fa-heartbeat"></i>
                         <span>Health Issues</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="hostels.php">
                         <i class="fas fa-bed"></i>
                         <span>Hostel Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="action-funding.php" >
+                    <a href="action-funding.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1111,7 +1253,6 @@ try {
                     <a href="campaigns.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Health Campaigns</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1147,9 +1288,8 @@ try {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div>
@@ -1169,14 +1309,14 @@ try {
             <!-- Success/Error Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1188,7 +1328,7 @@ try {
                         <i class="fas fa-bell"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $active_alerts; ?></div>
+                        <div class="stat-number"><?php echo number_format($active_alerts); ?></div>
                         <div class="stat-label">Active Alerts</div>
                     </div>
                 </div>
@@ -1197,7 +1337,7 @@ try {
                         <i class="fas fa-procedures"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_cases; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_cases); ?></div>
                         <div class="stat-label">Reported Cases</div>
                     </div>
                 </div>
@@ -1206,7 +1346,7 @@ try {
                         <i class="fas fa-shield-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $active_measures; ?></div>
+                        <div class="stat-number"><?php echo number_format($active_measures); ?></div>
                         <div class="stat-label">Active Measures</div>
                     </div>
                 </div>
@@ -1215,7 +1355,7 @@ try {
                         <i class="fas fa-clipboard-check"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $recent_screenings; ?></div>
+                        <div class="stat-number"><?php echo number_format($recent_screenings); ?></div>
                         <div class="stat-label">Screenings (Week)</div>
                     </div>
                 </div>
@@ -1228,7 +1368,7 @@ try {
                     <!-- Active Epidemic Alerts -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Active Epidemic Alerts</h3>
+                            <h3><i class="fas fa-exclamation-triangle"></i> Active Epidemic Alerts</h3>
                             <div class="card-header-actions">
                                 <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                                     <i class="fas fa-sync-alt"></i>
@@ -1237,544 +1377,203 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($recent_alerts)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-check-circle" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-check-circle"></i>
                                     <p>No active epidemic alerts</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Disease</th>
-                                            <th>Severity</th>
-                                            <th>Cases</th>
-                                            <th>Start Date</th>
-                                            <th>Status</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($recent_alerts as $alert): ?>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <div style="font-weight: 600;"><?php echo htmlspecialchars($alert['disease_type']); ?></div>
-                                                    <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($alert['title']); ?></div>
-                                                </td>
-                                                <td>
-                                                    <span class="severity-badge severity-<?php echo $alert['severity']; ?>">
-                                                        <?php echo ucfirst($alert['severity']); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <div style="font-weight: 600;"><?php echo $alert['reported_cases']; ?> confirmed</div>
-                                                    <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo $alert['suspected_cases']; ?> suspected</div>
-                                                </td>
-                                                <td><?php echo date('M j, Y', strtotime($alert['start_date'])); ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $alert['status']; ?>">
-                                                        <?php echo ucfirst(str_replace('_', ' ', $alert['status'])); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <form method="POST" style="display: inline;">
-                                                        <input type="hidden" name="action" value="update_alert_status">
-                                                        <input type="hidden" name="alert_id" value="<?php echo $alert['id']; ?>">
-                                                        <select name="status" onchange="this.form.submit()" style="font-size: 0.7rem; padding: 0.25rem;">
-                                                            <option value="active" <?php echo $alert['status'] === 'active' ? 'selected' : ''; ?>>Active</option>
-                                                            <option value="contained" <?php echo $alert['status'] === 'contained' ? 'selected' : ''; ?>>Contained</option>
-                                                            <option value="resolved" <?php echo $alert['status'] === 'resolved' ? 'selected' : ''; ?>>Resolved</option>
-                                                            <option value="false_alarm" <?php echo $alert['status'] === 'false_alarm' ? 'selected' : ''; ?>>False Alarm</option>
-                                                        </select>
-                                                    </form>
-                                                </td>
+                                                <th>Disease</th>
+                                                <th>Severity</th>
+                                                <th>Cases</th>
+                                                <th>Start Date</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Prevention Measures -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Active Prevention Measures</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" onclick="openModal('measureModal')" title="Add Measure">
-                                    <i class="fas fa-plus"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($active_prevention_measures)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <p>No active prevention measures</p>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($recent_alerts as $alert): ?>
+                                                <tr>
+                                                    <td>
+                                                        <div style="font-weight: 600;"><?php echo htmlspecialchars($alert['disease_type']); ?></div>
+                                                        <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($alert['title']); ?></div>
+                                                    </td>
+                                                    <td>
+                                                        <span class="severity-badge severity-<?php echo $alert['severity']; ?>">
+                                                            <?php echo ucfirst($alert['severity']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <div style="font-weight: 600;"><?php echo number_format($alert['reported_cases']); ?> confirmed</div>
+                                                        <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo number_format($alert['suspected_cases']); ?> suspected</div>
+                                                    </td>
+                                                    <td><?php echo date('M j, Y', strtotime($alert['start_date'])); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $alert['status']; ?>">
+                                                            <?php echo ucfirst(str_replace('_', ' ', $alert['status'])); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <form method="POST" style="display: inline;">
+                                                            <input type="hidden" name="action" value="update_alert_status">
+                                                            <input type="hidden" name="alert_id" value="<?php echo $alert['id']; ?>">
+                                                            <select name="status" class="form-select" style="font-size: 0.7rem; padding: 0.25rem; width: auto;" onchange="confirmStatusChange(this)">
+                                                                <option value="active" <?php echo $alert['status'] === 'active' ? 'selected' : ''; ?>>Active</option>
+                                                                <option value="contained" <?php echo $alert['status'] === 'contained' ? 'selected' : ''; ?>>Contained</option>
+                                                                <option value="resolved" <?php echo $alert['status'] === 'resolved' ? 'selected' : ''; ?>>Resolved</option>
+                                                                <option value="false_alarm" <?php echo $alert['status'] === 'false_alarm' ? 'selected' : ''; ?>>False Alarm</option>
+                                                            </select>
+                                                        </form>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
                                 </div>
-                            <?php else: ?>
-                                <div class="activity-list">
-                                    <?php foreach ($active_prevention_measures as $measure): ?>
-                                        <div class="activity-item">
-                                            <div class="activity-icon">
-                                                <i class="fas fa-<?php 
-                                                    switch($measure['measure_type']) {
-                                                        case 'vaccination': echo 'syringe'; break;
-                                                        case 'sanitation': echo 'spray-can'; break;
-                                                        case 'isolation': echo 'procedures'; break;
-                                                        case 'screening': echo 'stethoscope'; break;
-                                                        default: echo 'shield-alt';
-                                                    }
-                                                ?>"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($measure['title']); ?></strong>
-                                                    <?php if ($measure['alert_title']): ?>
-                                                        - Related to: <?php echo htmlspecialchars($measure['alert_title']); ?>
-                                                    <?php endif; ?>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo htmlspecialchars($measure['responsible_name']); ?> • 
-                                                    <?php echo date('M j, Y', strtotime($measure['start_date'])); ?> - 
-                                                    <?php echo date('M j, Y', strtotime($measure['end_date'])); ?>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Recent Health Screenings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Health Screenings</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_screenings_list)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <p>No recent health screenings</p>
-                                </div>
-                            <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Screening</th>
-                                            <th>Location</th>
-                                            <th>Date</th>
-                                            <th>Participants</th>
-                                            <th>Positive</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($recent_screenings_list as $screening): ?>
-                                            <tr>
-                                                <td><?php echo htmlspecialchars($screening['title']); ?></td>
-                                                <td><?php echo htmlspecialchars($screening['location']); ?></td>
-                                                <td><?php echo date('M j, Y', strtotime($screening['screening_date'])); ?></td>
-                                                <td><?php echo $screening['participants_count']; ?></td>
-                                                <td>
-                                                    <span style="color: <?php echo $screening['positive_cases'] > 0 ? 'var(--danger)' : 'var(--success)'; ?>; font-weight: 600;">
-                                                        <?php echo $screening['positive_cases']; ?>
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
                             <?php endif; ?>
                         </div>
                     </div>
                 </div>
-
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Quick Actions -->
+                    <!-- Recent Screening Activities -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Quick Actions</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="quick-actions">
-                                <button class="action-btn" onclick="openModal('alertModal')">
-                                    <i class="fas fa-bell"></i>
-                                    <span class="action-label">New Alert</span>
+                            <h3><i class="fas fa-stethoscope"></i> Recent Screening Activities</h3>
+                            <div class="card-header-actions">
+                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
+                                    <i class="fas fa-sync-alt"></i>
                                 </button>
-                                <button class="action-btn" onclick="openModal('measureModal')">
-                                    <i class="fas fa-shield-alt"></i>
-                                    <span class="action-label">Prevention Measure</span>
-                                </button>
-                                <button class="action-btn" onclick="openModal('screeningModal')">
-                                    <i class="fas fa-stethoscope"></i>
-                                    <span class="action-label">Health Screening</span>
-                                </button>
-                                <a href="reports.php?type=epidemic" class="action-btn">
-                                    <i class="fas fa-chart-bar"></i>
-                                    <span class="action-label">Reports</span>
-                                </a>
                             </div>
                         </div>
-                    </div>
-
-                    <!-- Severity Distribution -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Alerts by Severity</h3>
-                        </div>
                         <div class="card-body">
-                            <?php if (empty($alerts_by_severity)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No severity data available</p>
+                            <?php if (empty($recent_screenings_list)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-check-circle"></i>
+                                    <p>No recent screening activities</p>
                                 </div>
                             <?php else: ?>
-                                <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                                    <?php foreach ($alerts_by_severity as $severity): ?>
-                                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
-                                            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                                <span class="severity-badge severity-<?php echo $severity['severity']; ?>" style="font-size: 0.6rem;">
-                                                    <?php echo ucfirst($severity['severity']); ?>
-                                                </span>
+                                <ul class="activity-list">
+                                    <?php foreach ($recent_screenings_list as $screening): ?>
+                                        <li class="activity-item">
+                                            <div class="activity-icon">
+                                                <i class="fas fa-user-md"></i>
                                             </div>
-                                            <span style="font-weight: 600; color: var(--text-dark);"><?php echo $severity['count']; ?></span>
-                                        </div>
+                                            <div class="activity-content">
+                                                <div class="activity-text">
+                                                    <?php echo htmlspecialchars($screening['full_name']); ?> screened for <?php echo htmlspecialchars($screening['disease_type']); ?>
+                                                </div>
+                                                <div class="activity-time">
+                                                    <?php echo date('M j, Y, g:i A', strtotime($screening['screening_date'])); ?>
+                                                </div>
+                                            </div>
+                                        </li>
                                     <?php endforeach; ?>
-                                </div>
+                                </ul>
                             <?php endif; ?>
                         </div>
                     </div>
-
-                    <!-- Emergency Contacts -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Emergency Contacts</h3>
-                        </div>
-                        <div class="card-body">
-                            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
-                                    <div>
-                                        <div style="font-weight: 600; font-size: 0.8rem;">College Clinic</div>
-                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">+250 788 123 456</div>
-                                    </div>
-                                    <button class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.7rem;">
-                                        Call
-                                    </button>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
-                                    <div>
-                                        <div style="font-weight: 600; font-size: 0.8rem;">Emergency Services</div>
-                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">112</div>
-                                    </div>
-                                    <button class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.7rem;">
-                                        Call
-                                    </button>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0;">
-                                    <div>
-                                        <div style="font-weight: 600; font-size: 0.8rem;">Health Ministry</div>
-                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">+250 788 234 567</div>
-                                    </div>
-                                    <button class="btn btn-outline" style="padding: 0.25rem 0.5rem; font-size: 0.7rem;">
-                                        Call
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Important Notice -->
-                    <?php if ($active_alerts > 0): ?>
-                        <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i> 
-                            <strong>Active Epidemic Alert:</strong> 
-                            There <?php echo $active_alerts === 1 ? 'is' : 'are'; ?> currently 
-                            <?php echo $active_alerts; ?> active epidemic 
-                            alert<?php echo $active_alerts === 1 ? '' : 's'; ?> on campus.
-                            <a href="#" style="display: block; margin-top: 0.5rem; font-weight: 600;">View All Alerts →</a>
-                        </div>
-                    <?php endif; ?>
                 </div>
             </div>
         </main>
     </div>
-
     <!-- Modals -->
-    <!-- New Epidemic Alert Modal -->
-    <div class="modal" id="alertModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">Create New Epidemic Alert</h3>
-                <button class="modal-close" onclick="closeModal('alertModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form method="POST">
-                    <input type="hidden" name="action" value="create_alert">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Alert Title *</label>
-                        <input type="text" name="title" class="form-input" placeholder="e.g., Influenza Outbreak in Hostel A" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Disease Type *</label>
-                        <select name="disease_type" class="form-select" required>
-                            <option value="">Select disease type...</option>
-                            <option value="Influenza">Influenza (Flu)</option>
-                            <option value="COVID-19">COVID-19</option>
-                            <option value="Malaria">Malaria</option>
-                            <option value="Cholera">Cholera</option>
-                            <option value="Typhoid">Typhoid Fever</option>
-                            <option value="Dengue">Dengue Fever</option>
-                            <option value="Other">Other</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Severity Level *</label>
-                        <select name="severity" class="form-select" required>
-                            <option value="low">Low</option>
-                            <option value="medium" selected>Medium</option>
-                            <option value="high">High</option>
-                            <option value="critical">Critical</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Affected Areas *</label>
-                        <input type="text" name="affected_areas" class="form-input" placeholder="e.g., Hostel A, Cafeteria, Library" required>
-                        <small style="color: var(--dark-gray);">Separate multiple areas with commas</small>
-                    </div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                        <div class="form-group">
-                            <label class="form-label">Reported Cases</label>
-                            <input type="number" name="reported_cases" class="form-input" value="0" min="0">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label class="form-label">Suspected Cases</label>
-                            <input type="number" name="suspected_cases" class="form-input" value="0" min="0">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Start Date *</label>
-                        <input type="date" name="start_date" class="form-input" value="<?php echo date('Y-m-d'); ?>" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Description *</label>
-                        <textarea name="description" class="form-textarea" placeholder="Describe the outbreak, symptoms observed, and immediate concerns..." required></textarea>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-outline" onclick="closeModal('alertModal')">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Create Alert</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Prevention Measure Modal -->
-    <div class="modal" id="measureModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">Create Prevention Measure</h3>
-                <button class="modal-close" onclick="closeModal('measureModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form method="POST">
-                    <input type="hidden" name="action" value="create_measure">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Related Alert (Optional)</label>
-                        <select name="epidemic_alert_id" class="form-select">
-                            <option value="">No specific alert</option>
-                            <?php foreach ($active_alerts_list as $alert): ?>
-                                <option value="<?php echo $alert['id']; ?>"><?php echo htmlspecialchars($alert['title']); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Measure Type *</label>
-                        <select name="measure_type" class="form-select" required>
-                            <option value="awareness">Awareness Campaign</option>
-                            <option value="sanitation">Sanitation Drive</option>
-                            <option value="vaccination">Vaccination Program</option>
-                            <option value="isolation">Isolation Measures</option>
-                            <option value="screening">Health Screening</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Title *</label>
-                        <input type="text" name="title" class="form-input" placeholder="e.g., Hand Hygiene Awareness Campaign" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Target Area *</label>
-                        <input type="text" name="target_area" class="form-input" placeholder="e.g., All Hostels, Main Campus" required>
-                    </div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                        <div class="form-group">
-                            <label class="form-label">Start Date *</label>
-                            <input type="date" name="start_date" class="form-input" value="<?php echo date('Y-m-d'); ?>" required>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label class="form-label">End Date</label>
-                            <input type="date" name="end_date" class="form-input">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Responsible Person *</label>
-                        <select name="responsible_person" class="form-select" required>
-                            <option value="">Select responsible person...</option>
-                            <?php foreach ($committee_members as $member): ?>
-                                <option value="<?php echo $member['id']; ?>"><?php echo htmlspecialchars($member['full_name'] . ' (' . $member['role'] . ')'); ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Budget (RWF)</label>
-                        <input type="number" name="budget" class="form-input" placeholder="0.00" step="0.01" min="0">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Description *</label>
-                        <textarea name="description" class="form-textarea" placeholder="Describe the prevention measure, objectives, and implementation plan..." required></textarea>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-outline" onclick="closeModal('measureModal')">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Create Measure</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Health Screening Modal -->
-    <div class="modal" id="screeningModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3 class="modal-title">Record Health Screening</h3>
-                <button class="modal-close" onclick="closeModal('screeningModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form method="POST">
-                    <input type="hidden" name="action" value="record_screening">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Screening Title *</label>
-                        <input type="text" name="title" class="form-input" placeholder="e.g., Routine Temperature Check - Hostel B" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Screening Type *</label>
-                        <select name="screening_type" class="form-select" required>
-                            <option value="temperature">Temperature Check</option>
-                            <option value="symptoms">Symptoms Screening</option>
-                            <option value="vaccination">Vaccination Status</option>
-                            <option value="general">General Health Check</option>
-                            <option value="targeted">Targeted Screening</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Location *</label>
-                        <input type="text" name="location" class="form-input" placeholder="e.g., Hostel B Common Area" required>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Screening Date *</label>
-                        <input type="date" name="screening_date" class="form-input" value="<?php echo date('Y-m-d'); ?>" required>
-                    </div>
-                    
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                        <div class="form-group">
-                            <label class="form-label">Participants Count</label>
-                            <input type="number" name="participants_count" class="form-input" value="0" min="0">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label class="form-label">Positive Cases</label>
-                            <input type="number" name="positive_cases" class="form-input" value="0" min="0">
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Notes & Observations</label>
-                        <textarea name="notes" class="form-textarea" placeholder="Record any observations, follow-up actions needed, or special notes..."></textarea>
-                    </div>
-                    
-                    <div class="form-actions">
-                        <button type="button" class="btn btn-outline" onclick="closeModal('screeningModal')">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Record Screening</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
+    <?php include 'modals/epidemic_alert_modal.php'; ?>
+    <?php include 'modals/screening_modal.php'; ?>  
+    <!-- Scripts -->
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        const mainContent = document.getElementById('mainContent');
 
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
         });
 
-        // Modal Functions
-        function openModal(modalId) {
-            document.getElementById(modalId).style.display = 'flex';
-        }
+        mobileMenuToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('mobile-open');
+            mobileOverlay.classList.toggle('active');
+        });
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
-        }
+        mobileOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('mobile-open');
+            mobileOverlay.classList.remove('active');
+        });
 
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            if (event.target.classList.contains('modal')) {
-                event.target.style.display = 'none';
+        // Theme Toggle
+        const themeToggle = document.getElementById('themeToggle');
+        themeToggle.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            if (document.body.classList.contains('dark-mode')) {
+                localStorage.setItem('theme', 'dark');
+            } else {
+                localStorage.setItem('theme', 'light');
+            }
+        });
+
+        // Load saved theme preference
+        window.addEventListener('DOMContentLoaded', () => {
+            if (localStorage.getItem('theme') === 'dark') {
+                document.body.classList.add('dark-mode');
+            }
+        });
+
+        // Confirm status change
+        function confirmStatusChange(select) {
+            const form = select.closest('form');
+            const status = select.value;
+            let message = '';
+            switch(status) {
+                case 'active':
+                    message = 'Mark this alert as Active?';
+                    break;
+                case 'contained':
+                    message = 'Mark this alert as Contained?';
+                    break;
+                case 'resolved':
+                    message = 'Mark this alert as Resolved?';
+                    break;
+                case 'false_alarm':
+                    message = 'Mark this alert as False Alarm?';
+                    break;
+                default:
+                    message = 'Change alert status?';
+            }
+            if (confirm(message)) {
+                form.submit();
+            } else {
+                // Revert to previous value if cancelled
+                form.reset();
             }
         }
 
-        // Auto-refresh data every 5 minutes
-        setInterval(() => {
-            window.location.reload();
-        }, 300000);
-
-        // Add confirmation for critical actions
-        document.addEventListener('DOMContentLoaded', function() {
-            const statusSelects = document.querySelectorAll('select[name="status"]');
-            statusSelects.forEach(select => {
-                select.addEventListener('change', function() {
-                    if (this.value === 'resolved' || this.value === 'false_alarm') {
-                        if (!confirm('Are you sure you want to mark this alert as ' + this.value + '? This will archive the alert.')) {
-                            this.value = 'active';
-                        }
-                    }
-                });
-            });
-        });
+        // Modal Functions
+        function openModal(modalId) {
+            document.getElementById(modalId).style.display =
+                'block';
+        }
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display =
+                'none';
+        }
+        // Close modals when clicking outside of them
+        window.onclick = function(event) {
+            const alertModal = document.getElementById('alertModal');
+            const screeningModal = document.getElementById('screeningModal');
+            if (event.target === alertModal) {
+                closeModal('alertModal');
+            }
+            if (event.target === screeningModal) {
+                closeModal('screeningModal');
+            }
+        }
     </script>
 </body>
 </html>

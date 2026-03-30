@@ -45,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = "Error fetching committee information: " . $e->getMessage();
         }
         
-        // SIMPLE FILE UPLOAD - FIXED VERSION
+        // File upload handling
         $action_plan_file_path = '';
         
         if (isset($_FILES['action_plan_file']) && $_FILES['action_plan_file']['error'] !== UPLOAD_ERR_NO_FILE) {
@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $pdo->prepare("
                     INSERT INTO committee_budget_requests 
                     (committee_id, request_title, action_plan_file_path, requested_amount, purpose, requested_by, request_date, status, created_at, updated_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'submitted', NOW(), NOW())
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_DATE, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ");
                 
                 $result = $stmt->execute([
@@ -132,8 +132,8 @@ try {
         $stmt = $pdo->prepare("
             SELECT 
                 COUNT(*) as total_requests,
-                SUM(CASE WHEN status IN ('approved_by_finance', 'approved_by_president', 'funded') THEN requested_amount ELSE 0 END) as total_approved_amount,
-                SUM(CASE WHEN status = 'funded' THEN requested_amount ELSE 0 END) as total_funded_amount,
+                COALESCE(SUM(CASE WHEN status IN ('approved_by_finance', 'approved_by_president', 'funded') THEN requested_amount ELSE 0 END), 0) as total_approved_amount,
+                COALESCE(SUM(CASE WHEN status = 'funded' THEN requested_amount ELSE 0 END), 0) as total_funded_amount,
                 COUNT(CASE WHEN status = 'submitted' THEN 1 END) as pending_review,
                 COUNT(CASE WHEN status IN ('approved_by_finance', 'approved_by_president', 'funded') THEN 1 END) as approved_requests
             FROM committee_budget_requests 
@@ -163,7 +163,7 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Action Funding - Minister of Health - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -171,9 +171,9 @@ try {
     <style>
         :root {
             --primary-green: #28a745;
-            --secondary-green: #4caf50;
-            --accent-green: #2e7d32;
-            --light-green: #e8f5e9;
+            --secondary-green: #20c997;
+            --accent-green: #198754;
+            --light-green: #d1f2eb;
             --white: #ffffff;
             --light-gray: #f8f9fa;
             --medium-gray: #e9ecef;
@@ -182,6 +182,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -189,13 +190,15 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
-            --primary-green: #4caf50;
-            --secondary-green: #66bb6a;
-            --accent-green: #388e3c;
-            --light-green: #1b5e20;
+            --primary-green: #20c997;
+            --secondary-green: #3dd9a7;
+            --accent-green: #198754;
+            --light-green: #0d1b2a;
             --white: #1a1a1a;
             --light-gray: #2d2d2d;
             --medium-gray: #3d3d3d;
@@ -204,6 +207,7 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #29b6f6;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
         }
 
@@ -227,14 +231,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -244,7 +245,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -253,38 +253,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -292,22 +298,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -316,41 +307,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -360,50 +342,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -433,9 +450,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -450,17 +465,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         /* Page Header */
         .page-header {
+            margin-bottom: 1.5rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -477,18 +500,18 @@ try {
 
         .page-actions {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .btn {
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
             text-decoration: none;
             font-weight: 600;
+            transition: var(--transition);
             font-size: 0.85rem;
             border: none;
             cursor: pointer;
-            transition: var(--transition);
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -511,7 +534,23 @@ try {
         }
 
         .btn-outline:hover {
-            background: var(--light-green);
+            background: var(--primary-green);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.75rem;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-1px);
         }
 
         /* Stats Grid */
@@ -527,7 +566,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -551,14 +590,19 @@ try {
             border-left-color: var(--danger);
         }
 
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -573,7 +617,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -581,12 +625,17 @@ try {
             color: var(--danger);
         }
 
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -594,7 +643,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -605,6 +654,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -613,6 +664,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-green);
         }
 
         .card-header h3 {
@@ -645,7 +699,11 @@ try {
             padding: 1.25rem;
         }
 
-        /* Tables */
+        /* Table */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -665,6 +723,11 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -674,11 +737,11 @@ try {
         }
 
         .status-draft { background: #e9ecef; color: #6c757d; }
-        .status-submitted { background: #fff3cd; color: var(--warning); }
-        .status-under_review { background: #cce7ff; color: var(--primary-green); }
-        .status-approved_by_finance { background: #d4edda; color: var(--success); }
-        .status-approved_by_president { background: #d4edda; color: var(--success); }
-        .status-rejected { background: #f8d7da; color: var(--danger); }
+        .status-submitted { background: #fff3cd; color: #856404; }
+        .status-under_review { background: #cce7ff; color: #004085; }
+        .status-approved_by_finance { background: #d4edda; color: #155724; }
+        .status-approved_by_president { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
         .status-funded { background: #d1ecf1; color: #0c5460; }
 
         /* Form Styles */
@@ -711,6 +774,11 @@ try {
             box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.1);
         }
 
+        textarea.form-control {
+            resize: vertical;
+            min-height: 100px;
+        }
+
         .form-text {
             font-size: 0.75rem;
             color: var(--dark-gray);
@@ -723,6 +791,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -742,21 +813,7 @@ try {
         .action-buttons {
             display: flex;
             gap: 0.5rem;
-        }
-
-        .btn-sm {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.75rem;
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
+            flex-wrap: wrap;
         }
 
         /* Modal */
@@ -793,10 +850,11 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-green);
         }
 
         .modal-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
         }
@@ -807,6 +865,10 @@ try {
             font-size: 1.2rem;
             color: var(--dark-gray);
             cursor: pointer;
+        }
+
+        .modal-close:hover {
+            color: var(--text-dark);
         }
 
         .modal-body {
@@ -821,6 +883,37 @@ try {
             gap: 0.75rem;
         }
 
+        /* File Upload Area */
+        .file-upload-area {
+            border: 2px dashed var(--medium-gray);
+            padding: 20px;
+            text-align: center;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+        }
+
+        .file-upload-area:hover {
+            border-color: var(--primary-green);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
         /* File Preview Modal */
         .file-preview-modal .modal-content {
             max-width: 90%;
@@ -829,7 +922,7 @@ try {
 
         .file-preview-container {
             width: 100%;
-            height: 600px;
+            height: 500px;
             border: none;
             background: var(--white);
         }
@@ -841,29 +934,109 @@ try {
             justify-content: center;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
             }
-            
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
             .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                margin-left: 0 !important;
             }
-            
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .page-actions {
                 width: 100%;
                 justify-content: space-between;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -871,23 +1044,58 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                margin: 10% auto;
+                width: 95%;
+            }
+
+            .action-buttons {
+                flex-wrap: wrap;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Minister of Health</h1>
+                    <h1>Isonga - Action Funding</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -895,6 +1103,9 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
+                        <i class="fas fa-envelope"></i>
+                    </a>
                 </div>
                 <div class="user-info">
                     <div class="user-avatar">
@@ -909,8 +1120,8 @@ try {
                         <div class="user-role">Minister of Health</div>
                     </div>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -919,7 +1130,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-              <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -931,14 +1145,12 @@ try {
                     <a href="health_tickets.php">
                         <i class="fas fa-heartbeat"></i>
                         <span>Health Issues</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="hostels.php">
                         <i class="fas fa-bed"></i>
                         <span>Hostel Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -951,7 +1163,6 @@ try {
                     <a href="campaigns.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Health Campaigns</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -988,7 +1199,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
@@ -1008,13 +1219,13 @@ try {
             <!-- Alerts -->
             <?php if (isset($success)): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $success; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($success); ?>
                 </div>
             <?php endif; ?>
 
             <?php if (isset($error)): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $error; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($error); ?>
                 </div>
             <?php endif; ?>
 
@@ -1026,7 +1237,7 @@ try {
                         <i class="fas fa-file-invoice-dollar"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo isset($stats['total_requests']) ? $stats['total_requests'] : 0; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['total_requests'] ?? 0); ?></div>
                         <div class="stat-label">Total Requests</div>
                     </div>
                 </div>
@@ -1035,7 +1246,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo isset($stats['pending_review']) ? $stats['pending_review'] : 0; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['pending_review'] ?? 0); ?></div>
                         <div class="stat-label">Pending Review</div>
                     </div>
                 </div>
@@ -1044,7 +1255,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo isset($stats['approved_requests']) ? $stats['approved_requests'] : 0; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['approved_requests'] ?? 0); ?></div>
                         <div class="stat-label">Approved</div>
                     </div>
                 </div>
@@ -1053,7 +1264,7 @@ try {
                         <i class="fas fa-money-bill-wave"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format(isset($stats['total_approved_amount']) ? $stats['total_approved_amount'] : 0); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($stats['total_approved_amount'] ?? 0); ?></div>
                         <div class="stat-label">Total Approved</div>
                     </div>
                 </div>
@@ -1072,8 +1283,8 @@ try {
                 </div>
                 <div class="card-body">
                     <?php if (empty($budget_requests)): ?>
-                        <div style="text-align: center; color: var(--dark-gray); padding: 3rem;">
-                            <i class="fas fa-money-bill-wave" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state">
+                            <i class="fas fa-money-bill-wave"></i>
                             <h3>No Health Funding Requests Yet</h3>
                             <p>Submit your first funding request to get started with your health action plans.</p>
                             <button class="btn btn-primary" onclick="openNewRequestModal()" style="margin-top: 1rem;">
@@ -1101,32 +1312,24 @@ try {
                                             <td>RWF <?php echo number_format($request['requested_amount']); ?></td>
                                             <td>
                                                 <span class="status-badge status-<?php echo $request['status']; ?>">
-                                                    <?php echo str_replace('_', ' ', $request['status']); ?>
+                                                    <?php echo ucfirst(str_replace('_', ' ', $request['status'])); ?>
                                                 </span>
                                             </td>
                                             <td><?php echo date('M j, Y', strtotime($request['request_date'])); ?></td>
                                             <td>
                                                 <div class="action-buttons">
-                                                    <button class="btn btn-sm btn-outline" onclick="viewRequest(<?php echo $request['id']; ?>)">
-                                                        <i class="fas fa-eye"></i>
-                                                    </button>
                                                     <?php if (!empty($request['action_plan_file_path'])): ?>
-                                                        <button class="btn btn-sm btn-primary" onclick="previewFile('<?php echo $request['action_plan_file_path']; ?>')" title="Preview File">
-                                                            <i class="fas fa-file"></i>
+                                                        <button class="btn btn-outline btn-sm" onclick="previewFile('<?php echo $request['action_plan_file_path']; ?>')" title="Preview File">
+                                                            <i class="fas fa-eye"></i>
                                                         </button>
-                                                        <a href="../<?php echo $request['action_plan_file_path']; ?>" class="btn btn-sm btn-success" title="Download File" download>
+                                                        <a href="../<?php echo $request['action_plan_file_path']; ?>" class="btn btn-primary btn-sm" title="Download File" download>
                                                             <i class="fas fa-download"></i>
                                                         </a>
                                                     <?php endif; ?>
                                                     <?php if ($request['status'] === 'approved_by_president' && !empty($request['generated_letter_path'])): ?>
-                                                        <a href="../<?php echo $request['generated_letter_path']; ?>" class="btn btn-sm btn-success" title="Download Approval Letter" download>
+                                                        <a href="../<?php echo $request['generated_letter_path']; ?>" class="btn btn-success btn-sm" title="Download Approval Letter" download>
                                                             <i class="fas fa-file-pdf"></i>
                                                         </a>
-                                                    <?php endif; ?>
-                                                    <?php if ($request['status'] === 'draft'): ?>
-                                                        <button class="btn btn-sm btn-primary" onclick="editRequest(<?php echo $request['id']; ?>)">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
                                                     <?php endif; ?>
                                                 </div>
                                             </td>
@@ -1165,13 +1368,11 @@ try {
                         <textarea class="form-control" name="purpose" rows="4" placeholder="Describe the purpose of this funding and how it will be used for health initiatives..." required></textarea>
                     </div>
 
-                    <!-- SIMPLE FILE UPLOAD - EXACTLY LIKE MINISTER OF ENVIRONMENT VERSION -->
                     <div class="form-group">
                         <label class="form-label">Health Action Plan Document *</label>
-                        <div style="border: 2px dashed #ccc; padding: 20px; text-align: center; border-radius: 8px;">
-                            <input type="file" name="action_plan_file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" required 
-                                   style="display: block; margin: 0 auto;">
-                            <div class="form-text" style="margin-top: 10px;">Click choose file to upload your health action plan</div>
+                        <div class="file-upload-area">
+                            <input type="file" name="action_plan_file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" required style="display: block; margin: 0 auto;">
+                            <div class="form-text" style="margin-top: 10px;">Upload your health action plan (PDF, DOC, DOCX, JPG, PNG)</div>
                         </div>
                     </div>
                 </div>
@@ -1222,21 +1423,70 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Modal Functions
         function openNewRequestModal() {
             document.getElementById('newRequestModal').classList.add('show');
+            document.body.style.overflow = 'hidden';
         }
 
         function closeNewRequestModal() {
             document.getElementById('newRequestModal').classList.remove('show');
-        }
-
-        function viewRequest(requestId) {
-            window.location.href = 'view_budget_request.php?id=' + requestId;
-        }
-
-        function editRequest(requestId) {
-            window.location.href = 'edit_budget_request.php?id=' + requestId;
+            document.body.style.overflow = '';
         }
 
         // File preview function
@@ -1252,27 +1502,32 @@ try {
             // Handle different file types
             if (fileExtension === 'pdf') {
                 previewFrame.src = '../' + filePath;
-            } else if (['jpg', 'jpeg', 'png'].includes(fileExtension)) {
+            } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension)) {
                 previewFrame.src = '../' + filePath;
             } else if (['doc', 'docx'].includes(fileExtension)) {
                 previewFrame.src = 'https://docs.google.com/gview?url=' + encodeURIComponent(window.location.origin + '/isonga-mis/' + filePath) + '&embedded=true';
             } else {
-                previewFrame.src = 'about:blank';
-                previewFrame.innerHTML = `
-                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column; gap: 1rem;">
-                        <i class="fas fa-file" style="font-size: 4rem; color: var(--dark-gray);"></i>
-                        <h3>File Preview Not Available</h3>
-                        <p>Please download the file to view it.</p>
-                    </div>
+                previewFrame.srcdoc = `
+                    <html>
+                        <body style="display: flex; align-items: center; justify-content: center; height: 100%; font-family: sans-serif; background: var(--white);">
+                            <div style="text-align: center;">
+                                <i class="fas fa-file" style="font-size: 4rem; color: var(--dark-gray);"></i>
+                                <h3>File Preview Not Available</h3>
+                                <p>Please download the file to view it.</p>
+                            </div>
+                        </body>
+                    </html>
                 `;
             }
             
             document.getElementById('filePreviewModal').classList.add('show');
+            document.body.style.overflow = 'hidden';
         }
 
         function closeFilePreview() {
             document.getElementById('filePreviewModal').classList.remove('show');
             document.getElementById('filePreviewFrame').src = 'about:blank';
+            document.body.style.overflow = '';
         }
 
         // Close modal when clicking outside
@@ -1288,7 +1543,25 @@ try {
             }
         });
 
-        // NO COMPLEX FILE UPLOAD LOGIC - Simple file input works fine
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
+            });
+        }, 5000);
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
+        });
     </script>
 </body>
 </html>

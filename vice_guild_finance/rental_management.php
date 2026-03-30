@@ -59,13 +59,13 @@ function recordRentalIncomeTransaction($property_id, $amount, $payment_date, $re
         }
         
         // Get the rental income category ID (you may need to create this category)
-        $stmt = $pdo->prepare("SELECT id FROM budget_categories WHERE category_name LIKE '%rental%' AND category_type = 'income' AND is_active = 1 LIMIT 1");
+        $stmt = $pdo->prepare("SELECT id FROM budget_categories WHERE category_name ILIKE '%rental%' AND category_type = 'income' AND is_active = true LIMIT 1");
         $stmt->execute();
         $category = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if (!$category) {
             // Create rental income category if it doesn't exist
-            $stmt = $pdo->prepare("INSERT INTO budget_categories (category_name, category_type, description, is_active) VALUES (?, 'income', 'Rental income from properties', 1)");
+            $stmt = $pdo->prepare("INSERT INTO budget_categories (category_name, category_type, description, is_active) VALUES (?, 'income', 'Rental income from properties', true)");
             $stmt->execute(['Rental Income']);
             $category_id = $pdo->lastInsertId();
         } else {
@@ -157,7 +157,7 @@ if ($action === 'update_property' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $tenant_email = trim($_POST['tenant_email'] ?? '');
     $lease_start_date = $_POST['lease_start_date'];
     $lease_end_date = $_POST['lease_end_date'];
-    $is_active = isset($_POST['is_active']) ? 1 : 0;
+    $is_active = isset($_POST['is_active']) ? true : false;
     
     try {
         $stmt = $pdo->prepare("
@@ -301,10 +301,13 @@ try {
         SELECT rp.*, 
                COUNT(rpm.id) as payment_count,
                COALESCE(SUM(rpm.amount), 0) as total_collected,
-               DATEDIFF(rp.lease_end_date, CURDATE()) as days_remaining
+               (rp.lease_end_date - CURRENT_DATE) as days_remaining
         FROM rental_properties rp
         LEFT JOIN rental_payments rpm ON rp.id = rpm.property_id AND rpm.status = 'verified'
-        GROUP BY rp.id
+        GROUP BY rp.id, rp.property_name, rp.property_location, rp.monthly_rent,
+                 rp.tenant_name, rp.tenant_phone, rp.tenant_email,
+                 rp.lease_start_date, rp.lease_end_date, rp.is_active,
+                 rp.contract_file_path, rp.created_at
         ORDER BY rp.is_active DESC, rp.property_name
     ");
     $rental_properties = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -336,7 +339,7 @@ try {
         SELECT SUM(amount) as total_collected 
         FROM rental_payments 
         WHERE status = 'verified' 
-        AND YEAR(payment_date) = YEAR(CURDATE())
+        AND EXTRACT(YEAR FROM payment_date) = EXTRACT(YEAR FROM CURRENT_DATE)
     ");
     $stmt->execute();
     $total_collected = $stmt->fetch(PDO::FETCH_ASSOC)['total_collected'] ?? 0;
@@ -345,11 +348,11 @@ try {
     $stmt = $pdo->prepare("
         SELECT AVG(monthly_sum) as monthly_average 
         FROM (
-            SELECT MONTH(payment_date) as month, SUM(amount) as monthly_sum 
+            SELECT EXTRACT(MONTH FROM payment_date) as month, SUM(amount) as monthly_sum 
             FROM rental_payments 
             WHERE status = 'verified' 
-            AND YEAR(payment_date) = YEAR(CURDATE())
-            GROUP BY MONTH(payment_date)
+            AND EXTRACT(YEAR FROM payment_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+            GROUP BY EXTRACT(MONTH FROM payment_date)
         ) monthly_totals
     ");
     $stmt->execute();
@@ -360,19 +363,19 @@ try {
     $pending_verification = $stmt->fetch(PDO::FETCH_ASSOC)['pending'] ?? 0;
 
     // Active properties
-    $stmt = $pdo->query("SELECT COUNT(*) as active FROM rental_properties WHERE is_active = 1");
+    $stmt = $pdo->query("SELECT COUNT(*) as active FROM rental_properties WHERE is_active = true");
     $active_properties = $stmt->fetch(PDO::FETCH_ASSOC)['active'] ?? 0;
 
     // Payment trends (last 6 months)
     $stmt = $pdo->query("
         SELECT 
-            DATE_FORMAT(payment_date, '%Y-%m') as month,
+            TO_CHAR(payment_date, 'YYYY-MM') as month,
             SUM(amount) as monthly_total,
             COUNT(*) as payment_count
         FROM rental_payments 
         WHERE status = 'verified'
-        AND payment_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        GROUP BY DATE_FORMAT(payment_date, '%Y-%m')
+        AND payment_date >= CURRENT_DATE - INTERVAL '6 months'
+        GROUP BY TO_CHAR(payment_date, 'YYYY-MM')
         ORDER BY month DESC
     ");
     $payment_trends = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -388,14 +391,19 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Rental Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Reuse all the CSS from dashboard.php */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -409,6 +417,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --finance-primary: #1976D2;
             --finance-secondary: #2196F3;
             --finance-accent: #0D47A1;
@@ -420,6 +429,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -435,17 +446,11 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --finance-primary: #2196F3;
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
-        }
-
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
         }
 
         body {
@@ -462,14 +467,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -500,26 +502,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -527,16 +541,8 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
+            font-size: 1rem;
             overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
         }
 
         .user-avatar img {
@@ -551,12 +557,12 @@ try {
 
         .user-name {
             font-weight: 600;
+            font-size: 0.9rem;
             color: var(--text-dark);
-            font-size: 0.95rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -567,10 +573,10 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -579,13 +585,14 @@ try {
             cursor: pointer;
             transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
+            font-size: 1rem;
+            text-decoration: none;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -595,57 +602,100 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
+            font-weight: 500;
+            transition: var(--transition);
             border: none;
             cursor: pointer;
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .sidebar-menu {
@@ -675,9 +725,8 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -779,7 +828,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -887,6 +936,10 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--finance-light);
+        }
+
         .amount {
             font-weight: 600;
             font-family: 'Courier New', monospace;
@@ -968,6 +1021,13 @@ try {
             background: var(--white);
             color: var(--text-dark);
             font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .form-select:focus {
+            outline: none;
+            border-color: var(--finance-primary);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
         }
 
         .form-file {
@@ -1196,59 +1256,217 @@ try {
             border-left-color: var(--danger);
         }
 
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        /* ── Responsive ── */
+
+        /* ── Tablet/desktop sidebar collapse boundary ── */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .two-column-grid {
-                grid-template-columns: 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
+        /* ── Tablet ── */
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .property-grid {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .two-column-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .property-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .tabs {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                white-space: nowrap;
+                flex-wrap: nowrap;
+            }
+
+            /* Tables scroll horizontally */
+            .card-body .table {
+                display: block;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                white-space: nowrap;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .stat-icon {
+                width: 42px;
+                height: 42px;
+                font-size: 1.1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.25rem;
+            }
+
+            .chart-container {
+                height: 220px;
+            }
+
+            .btn-sm {
+                padding: 0.2rem 0.4rem;
+                font-size: 0.65rem;
+            }
         }
 
+        /* ── Small phones ── */
         @media (max-width: 480px) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.1rem;
+            }
+
+            .card-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.25rem;
+            }
+
+            .card-body {
+                padding: 0.75rem;
+            }
+
+            .modal-content {
+                width: 95%;
+                max-height: 95vh;
+            }
+
+            .modal-body {
                 padding: 1rem;
+            }
+
+            .chart-container {
+                height: 160px;
+            }
+
+            .property-card-footer {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 0.5rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1260,6 +1478,9 @@ try {
                 <div class="header-actions">
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
+                    </button>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1288,7 +1509,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1375,7 +1599,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Rental Property Management 🏠</h1>
@@ -1811,14 +2035,75 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Tab functionality
         function openTab(tabName) {
             const tabs = document.querySelectorAll('.tab-content');
             const tabButtons = document.querySelectorAll('.tab');
-            
+
             tabs.forEach(tab => tab.classList.remove('active'));
             tabButtons.forEach(button => button.classList.remove('active'));
-            
+
             document.getElementById(tabName).classList.add('active');
             event.currentTarget.classList.add('active');
         }
@@ -1842,7 +2127,7 @@ try {
         function editProperty(propertyId) {
             const properties = <?php echo json_encode($rental_properties); ?>;
             const property = properties.find(p => p.id == propertyId);
-            
+
             if (property) {
                 document.getElementById('editPropertyId').value = property.id;
                 document.querySelector('input[name="property_name"]').value = property.property_name;
@@ -1855,11 +2140,10 @@ try {
                 document.querySelector('input[name="lease_end_date"]').value = property.lease_end_date;
                 document.getElementById('isActive').checked = property.is_active;
                 document.getElementById('activeField').style.display = 'block';
-                
-                // Change form action to update
+
                 document.querySelector('#propertyForm input[name="action"]').value = 'update_property';
                 document.querySelector('#addPropertyModal .modal-header h3').textContent = 'Edit Rental Property';
-                
+
                 openModal('addPropertyModal');
             }
         }
@@ -1867,7 +2151,11 @@ try {
         // Record payment for specific property
         function recordPayment(propertyId) {
             document.querySelector('#paymentForm select[name="property_id"]').value = propertyId;
-            openTab('payments-tab');
+            // Switch to payments tab
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('payments-tab').classList.add('active');
+            document.querySelectorAll('.tab')[1].classList.add('active');
             document.querySelector('#paymentForm input[name="amount"]').focus();
         }
 
@@ -1885,7 +2173,7 @@ try {
             const paymentTrends = <?php echo json_encode($payment_trends); ?>;
             if (paymentTrends.length > 0) {
                 const trendsCtx = document.getElementById('paymentTrendsChart').getContext('2d');
-                const trendsChart = new Chart(trendsCtx, {
+                new Chart(trendsCtx, {
                     type: 'line',
                     data: {
                         labels: paymentTrends.map(trend => {
@@ -1921,10 +2209,10 @@ try {
             // Property Performance Chart
             const properties = <?php echo json_encode($rental_properties); ?>;
             const activeProperties = properties.filter(p => p.is_active);
-            
+
             if (activeProperties.length > 0) {
                 const performanceCtx = document.getElementById('propertyPerformanceChart').getContext('2d');
-                const performanceChart = new Chart(performanceCtx, {
+                new Chart(performanceCtx, {
                     type: 'bar',
                     data: {
                         labels: activeProperties.map(prop => prop.property_name),
@@ -1969,7 +2257,7 @@ try {
             const propertyId = this.value;
             const properties = <?php echo json_encode($rental_properties); ?>;
             const property = properties.find(p => p.id == propertyId);
-            
+
             if (property) {
                 document.querySelector('#paymentForm input[name="amount"]').value = property.monthly_rent;
             }

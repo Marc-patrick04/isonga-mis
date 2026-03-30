@@ -39,7 +39,7 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as upcoming_events FROM events WHERE category_id = 3 AND event_date >= CURDATE() AND status = 'published'");
     $upcoming_events = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_events'] ?? 0;
     
-    // Pending facility bookings for cultural activities (removed from display but keeping in code)
+    // Pending facility bookings for cultural activities
     $stmt = $pdo->query("SELECT COUNT(*) as pending_bookings FROM facility_bookings WHERE status = 'pending'");
     $pending_bookings = $stmt->fetch(PDO::FETCH_ASSOC)['pending_bookings'] ?? 0;
     
@@ -154,6 +154,53 @@ try {
     $stmt->execute([$user_id]);
     $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
     
+    // New students count for sidebar badge
+    $new_students = 0;
+    try {
+        $new_students_stmt = $pdo->prepare("
+            SELECT COUNT(*) as new_students 
+            FROM users 
+            WHERE role = 'student' 
+            AND status = 'active' 
+            AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        ");
+        $new_students_stmt->execute();
+        $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+    } catch (PDOException $e) {
+        $new_students = 0;
+    }
+    
+    // Upcoming meetings count for sidebar badge
+    $upcoming_meetings = 0;
+    try {
+        $upcoming_meetings = $pdo->query("
+            SELECT COUNT(*) as count FROM meetings 
+            WHERE meeting_date >= CURDATE() AND status = 'scheduled'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $upcoming_meetings = 0;
+    }
+    
+    // Pending minutes count for sidebar badge
+    $pending_minutes = 0;
+    try {
+        $pending_minutes = $pdo->query("
+            SELECT COUNT(*) as count FROM meeting_minutes 
+            WHERE approval_status = 'submitted'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_minutes = 0;
+    }
+    
+    // Pending reports
+    $pending_reports = 0;
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'");
+        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_reports = 0;
+    }
+    
 } catch (PDOException $e) {
     // Handle general error
     error_log("Minister of Culture dashboard statistics error: " . $e->getMessage());
@@ -162,13 +209,14 @@ try {
     $participation_rate = 0;
     $recent_events = $active_clubs = $upcoming_activities = $recent_activities = [];
     $equipment_status = $club_performance = [];
+    $new_students = $upcoming_meetings = $pending_minutes = $pending_reports = 0;
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Minister of Culture & Civic Education Dashboard - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -187,6 +235,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-purple) 0%, var(--accent-purple) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -194,6 +243,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -209,6 +260,7 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --gradient-primary: linear-gradient(135deg, var(--primary-purple) 0%, var(--accent-purple) 100%);
         }
 
@@ -232,14 +284,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -249,7 +298,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -258,38 +306,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -297,22 +351,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -321,41 +360,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -365,50 +395,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -438,9 +503,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -455,11 +518,18 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -489,7 +559,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-purple);
+            border-left: 4px solid var(--primary-purple);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -514,13 +584,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -548,7 +619,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -556,7 +627,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -567,11 +638,18 @@ try {
             gap: 1.5rem;
         }
 
+        @media (max-width: 992px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
         .card-header {
@@ -580,6 +658,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-purple);
         }
 
         .card-header h3 {
@@ -613,6 +692,10 @@ try {
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -632,6 +715,11 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-purple);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -647,7 +735,7 @@ try {
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
@@ -658,6 +746,110 @@ try {
         .status-cancelled {
             background: #f8d7da;
             color: var(--danger);
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 0.75rem;
+            background: var(--white);
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            text-decoration: none;
+            color: var(--text-dark);
+            transition: var(--transition);
+            text-align: center;
+        }
+
+        .action-btn:hover {
+            border-color: var(--primary-purple);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .action-btn i {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: var(--primary-purple);
+        }
+
+        .action-label {
+            font-weight: 600;
+            font-size: 0.7rem;
+        }
+
+        /* Club Performance */
+        .club-item {
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .club-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .club-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .club-name {
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+
+        .club-category {
+            font-size: 0.7rem;
+            color: var(--dark-gray);
+        }
+
+        .club-stats {
+            text-align: right;
+        }
+
+        .club-count {
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            height: 6px;
+            background: var(--medium-gray);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.25rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--success);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.65rem;
+            color: var(--dark-gray);
+            display: flex;
+            justify-content: space-between;
         }
 
         /* Activity List */
@@ -696,54 +888,43 @@ try {
         }
 
         .activity-text {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--text-dark);
             margin-bottom: 0.25rem;
         }
 
         .activity-time {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             color: var(--dark-gray);
         }
 
-        /* Quick Actions */
-        .quick-actions {
+        /* Quick Overview */
+        .quick-overview {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
-            margin-top: 1.5rem;
         }
 
-        .action-btn {
+        .overview-item {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            background: var(--white);
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            color: var(--text-dark);
-            transition: var(--transition);
-            text-align: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--medium-gray);
         }
 
-        .action-btn:hover {
-            border-color: var(--primary-purple);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+        .overview-item:last-child {
+            border-bottom: none;
         }
 
-        .action-btn i {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
-            color: var(--primary-purple);
-        }
-
-        .action-label {
-            font-weight: 600;
+        .overview-label {
+            color: var(--dark-gray);
             font-size: 0.75rem;
+        }
+
+        .overview-value {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.8rem;
         }
 
         /* Alert */
@@ -752,7 +933,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
-            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-warning {
@@ -771,89 +954,117 @@ try {
             text-decoration: underline;
         }
 
-        /* Club Stats */
-        .club-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-
-        .club-stat {
-            background: var(--light-gray);
-            padding: 0.75rem;
-            border-radius: var(--border-radius);
+        /* Empty State */
+        .empty-state {
             text-align: center;
-        }
-
-        .club-name {
-            font-size: 0.7rem;
+            padding: 2rem;
             color: var(--dark-gray);
-            margin-bottom: 0.25rem;
         }
 
-        .club-count {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary-purple);
-        }
-
-        /* Progress Bars */
-        .progress-bar {
-            height: 6px;
-            background: var(--medium-gray);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-bottom: 0.25rem;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--success);
-            border-radius: 3px;
-        }
-
-        .progress-text {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-            display: flex;
-            justify-content: space-between;
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-purple);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .quick-actions {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .club-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .club-stats {
+                text-align: left;
             }
         }
 
@@ -861,23 +1072,57 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
+            .quick-actions {
+                grid-template-columns: 1fr;
+            }
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Minister of Culture & Civic Education</h1>
+                    <h1>Isonga - Minister of Culture</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -885,7 +1130,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -915,7 +1163,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" class="active">
@@ -927,7 +1178,6 @@ try {
                     <a href="clubs.php">
                         <i class="fas fa-users"></i>
                         <span>Cultural Clubs</span>
-                        <span class="member-count"><?php echo $total_clubs; ?></span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -961,12 +1211,18 @@ try {
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Reports & Analytics</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="meetings.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Meetings</span>
+                        <?php if ($upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -988,18 +1244,18 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Welcome, Culture Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 🎭</h1>
-                    <p>Promote cultural activities, arts, and civic education for <?php echo date('Y'); ?> academic year</p>
+                    <p>Promote cultural activities, arts, and civic education for the academic year</p>
                 </div>
             </div>
 
             <?php if ($password_change_required): ?>
                 <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    <strong>Action Required:</strong> Please <a href="profile.php?tab=security">change your password</a> for security reasons.
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span><strong>Action Required:</strong> Please <a href="profile.php?tab=security">change your password</a> for security reasons.</span>
                 </div>
             <?php endif; ?>
 
@@ -1010,7 +1266,7 @@ try {
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_clubs; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_clubs); ?></div>
                         <div class="stat-label">Cultural Clubs</div>
                     </div>
                 </div>
@@ -1019,7 +1275,7 @@ try {
                         <i class="fas fa-user-friends"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_members; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_members); ?></div>
                         <div class="stat-label">Club Members</div>
                     </div>
                 </div>
@@ -1028,11 +1284,11 @@ try {
                         <i class="fas fa-calendar-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_events; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_events); ?></div>
                         <div class="stat-label">Upcoming Events</div>
                     </div>
                 </div>
-                <div class="stat-card success">
+                <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-chart-line"></i>
                     </div>
@@ -1044,14 +1300,14 @@ try {
             </div>
 
             <!-- Additional Stats Grid -->
-            <div class="stats-grid" style="margin-top: 1rem;">
+            <div class="stats-grid">
                 <div class="stat-card warning">
                     <div class="stat-icon">
                         <i class="fas fa-palette"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $weekly_activities; ?></div>
-                        <div class="stat-label">Activities (Week)</div>
+                        <div class="stat-number"><?php echo number_format($weekly_activities); ?></div>
+                        <div class="stat-label">Activities (This Week)</div>
                     </div>
                 </div>
                 <div class="stat-card">
@@ -1059,7 +1315,7 @@ try {
                         <i class="fas fa-comments"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $unread_messages; ?></div>
+                        <div class="stat-number"><?php echo number_format($unread_messages); ?></div>
                         <div class="stat-label">Unread Messages</div>
                     </div>
                 </div>
@@ -1068,7 +1324,7 @@ try {
                         <i class="fas fa-ticket-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $pending_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($pending_tickets); ?></div>
                         <div class="stat-label">Pending Tickets</div>
                     </div>
                 </div>
@@ -1109,38 +1365,40 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Club Name</th>
-                                        <th>Category</th>
-                                        <th>Department</th>
-                                        <th>Members</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php if (empty($active_clubs)): ?>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td colspan="5" style="text-align: center; color: var(--dark-gray); padding: 2rem;">No active cultural clubs</td>
+                                            <th>Club Name</th>
+                                            <th>Category</th>
+                                            <th>Department</th>
+                                            <th>Members</th>
+                                            <th>Status</th>
                                         </tr>
-                                    <?php else: ?>
-                                        <?php foreach ($active_clubs as $club): ?>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($active_clubs)): ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($club['name']); ?></td>
-                                                <td><?php echo htmlspecialchars(ucfirst($club['category'])); ?></td>
-                                                <td><?php echo htmlspecialchars($club['department'] ?? 'N/A'); ?></td>
-                                                <td><?php echo $club['member_count']; ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $club['status']; ?>">
-                                                        <?php echo ucfirst($club['status']); ?>
-                                                    </span>
-                                                </td>
+                                                <td colspan="5" class="empty-state">No active cultural clubs</td>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </tbody>
-                            </table>
+                                        <?php else: ?>
+                                            <?php foreach ($active_clubs as $club): ?>
+                                                <tr>
+                                                    <td><strong><?php echo htmlspecialchars($club['name']); ?></strong></td>
+                                                    <td><?php echo ucfirst($club['category']); ?></td>
+                                                    <td><?php echo htmlspecialchars($club['department'] ?? 'N/A'); ?></td>
+                                                    <td><?php echo $club['member_count']; ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $club['status']; ?>">
+                                                            <?php echo ucfirst($club['status']); ?>
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
@@ -1155,43 +1413,43 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
-                            <?php if (empty($upcoming_activities)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-alt" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No upcoming cultural activities</p>
-                                </div>
-                            <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Event</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Participants</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($upcoming_activities as $activity): ?>
+                            <div class="table-container">
+                                <?php if (empty($upcoming_activities)): ?>
+                                    <div class="empty-state">
+                                        <i class="fas fa-calendar-alt"></i>
+                                        <p>No upcoming cultural activities</p>
+                                    </div>
+                                <?php else: ?>
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($activity['title']); ?></td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($activity['event_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($activity['start_time'])); ?></small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($activity['location']); ?></td>
-                                                <td><?php echo $activity['registered_participants']; ?></td>
+                                                <th>Event</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                            <?php endif; ?>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($upcoming_activities as $activity): ?>
+                                                <tr>
+                                                    <td><strong><?php echo htmlspecialchars($activity['title']); ?></strong></td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($activity['event_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($activity['start_time'])); ?></small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($activity['location']); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
 
                     <!-- Quick Actions -->
                     <div class="quick-actions">
                         <a href="clubs.php?action=add" class="action-btn">
-                            <i class="fas fa-user-plus"></i>
+                            <i class="fas fa-plus-circle"></i>
                             <span class="action-label">Add Club</span>
                         </a>
                         <a href="events.php?action=schedule" class="action-btn">
@@ -1211,38 +1469,38 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Club Performance Leaders -->
+                    <!-- Top Clubs by Membership -->
                     <div class="card">
                         <div class="card-header">
                             <h3>Top Clubs by Membership</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($club_performance)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-trophy"></i>
                                     <p>No club data available</p>
                                 </div>
                             <?php else: ?>
                                 <?php foreach ($club_performance as $club): ?>
-                                    <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--medium-gray);">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                    <?php 
+                                        $capacity_percent = min(100, round(($club['member_count'] / 50) * 100));
+                                    ?>
+                                    <div class="club-item">
+                                        <div class="club-header">
                                             <div>
-                                                <strong style="font-size: 0.8rem;"><?php echo htmlspecialchars($club['club_name']); ?></strong>
-                                                <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars($club['category']); ?></div>
+                                                <div class="club-name"><?php echo htmlspecialchars($club['club_name']); ?></div>
+                                                <div class="club-category"><?php echo ucfirst($club['category']); ?></div>
                                             </div>
-                                            <div style="text-align: right;">
-                                                <div style="font-size: 0.8rem; font-weight: 600;">
-                                                    <?php echo $club['member_count']; ?> members
-                                                </div>
+                                            <div class="club-stats">
+                                                <div class="club-count"><?php echo $club['member_count']; ?> members</div>
                                             </div>
                                         </div>
-                                        <div class="attendance-progress">
-                                            <div class="progress-bar">
-                                                <div class="progress-fill" style="width: <?php echo min(100, ($club['member_count'] / 50) * 100); ?>%"></div>
-                                            </div>
-                                            <div class="progress-text">
-                                                <span>Capacity</span>
-                                                <span><?php echo min(100, round(($club['member_count'] / 50) * 100)); ?>%</span>
-                                            </div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" style="width: <?php echo $capacity_percent; ?>%"></div>
+                                        </div>
+                                        <div class="progress-text">
+                                            <span>Capacity</span>
+                                            <span><?php echo $capacity_percent; ?>%</span>
                                         </div>
                                     </div>
                                 <?php endforeach; ?>
@@ -1250,28 +1508,28 @@ try {
                         </div>
                     </div>
 
-                    <!-- Quick Stats -->
+                    <!-- Quick Overview -->
                     <div class="card">
                         <div class="card-header">
                             <h3>Cultural Program Overview</h3>
                         </div>
                         <div class="card-body">
-                            <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Active Clubs</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_clubs; ?> clubs</strong>
+                            <div class="quick-overview">
+                                <div class="overview-item">
+                                    <span class="overview-label">Active Clubs</span>
+                                    <span class="overview-value"><?php echo $total_clubs; ?> clubs</span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Club Members</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_members; ?> students</strong>
+                                <div class="overview-item">
+                                    <span class="overview-label">Club Members</span>
+                                    <span class="overview-value"><?php echo number_format($total_members); ?> students</span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Student Participation</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $participation_rate; ?>%</strong>
+                                <div class="overview-item">
+                                    <span class="overview-label">Student Participation</span>
+                                    <span class="overview-value"><?php echo $participation_rate; ?>%</span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Activities This Week</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $weekly_activities; ?> events</strong>
+                                <div class="overview-item">
+                                    <span class="overview-label">Activities This Week</span>
+                                    <span class="overview-value"><?php echo $weekly_activities; ?> events</span>
                                 </div>
                             </div>
                         </div>
@@ -1280,9 +1538,8 @@ try {
                     <!-- Pending Actions Alert -->
                     <?php if ($pending_tickets > 0): ?>
                         <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i> 
-                            <strong>Action Required:</strong> You have 
-                            <a href="tickets.php"><?php echo $pending_tickets; ?> support tickets pending response</a>.
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span><strong>Action Required:</strong> You have <a href="tickets.php"><?php echo $pending_tickets; ?> support tickets pending response</a>.</span>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -1295,7 +1552,6 @@ try {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1306,21 +1562,99 @@ try {
             body.classList.toggle('dark-mode');
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun</i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh dashboard every 3 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Culture Dashboard auto-refresh triggered');
-        }, 180000);
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars</i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
             });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

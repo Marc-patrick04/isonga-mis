@@ -360,11 +360,12 @@ if ($utilization_percentage > 90) {
             display: none;
             background: none;
             border: none;
-            font-size: 1.5rem;
+            font-size: 1.2rem;
             cursor: pointer;
             color: var(--text-dark);
             padding: 0.5rem;
             border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
@@ -1093,85 +1094,187 @@ if ($utilization_percentage > 90) {
         }
 
         /* Responsive */
+
+        /* ── Content grid: 2-col to 1-col at tablet ── */
         @media (max-width: 992px) {
             .sidebar {
                 transform: translateX(-100%);
                 position: fixed;
+                top: 0;
+                height: 100vh;
                 z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
             .sidebar.mobile-open {
                 transform: translateX(0);
             }
-            
+
+            /* Hide the desktop collapse toggle on mobile */
+            .sidebar-toggle {
+                display: none;
+            }
+
             .main-content {
-                margin-left: 0;
+                margin-left: 0 !important;
             }
-            
+
             .main-content.sidebar-collapsed {
-                margin-left: 0;
+                margin-left: 0 !important;
             }
-            
+
             .mobile-menu-toggle {
-                display: block;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
             }
-            
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
             .overlay {
                 display: none;
                 position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
                 z-index: 999;
             }
-            
+
             .overlay.active {
                 display: block;
             }
+
+            /* Hide the sidebar-toggle collapse button on mobile */
+            #sidebarToggleBtn {
+                display: none;
+            }
         }
 
+        /* ── Tablet ── */
         @media (max-width: 768px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
             .main-content {
                 padding: 1rem;
             }
-            
-            .budget-amounts {
-                flex-direction: column;
-                gap: 0.25rem;
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
-            
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .quick-actions {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .budget-item {
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 0.5rem;
             }
-            
+
+            .budget-amounts {
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
             .budget-progress {
                 width: 100%;
             }
+
+            /* Tables get horizontal scroll */
+            .card-body .table {
+                display: block;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                white-space: nowrap;
+            }
+
+            /* Stat numbers shrink a bit */
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            /* Meeting/account items wrap */
+            .meeting-item,
+            .account-item {
+                flex-wrap: wrap;
+                gap: 0.5rem;
+            }
         }
 
+        /* ── Small phones ── */
         @media (max-width: 480px) {
             .stats-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .quick-actions {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .chart-container {
+                height: 160px;
+            }
+
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
+            .card-body {
+                padding: 1rem;
             }
         }
     </style>
@@ -1821,8 +1924,12 @@ if ($utilization_percentage > 90) {
         
         if (mobileMenuToggle) {
             mobileMenuToggle.addEventListener('click', () => {
-                sidebar.classList.toggle('mobile-open');
-                mobileOverlay.classList.toggle('active');
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
             });
         }
         
@@ -1830,8 +1937,20 @@ if ($utilization_percentage > 90) {
             mobileOverlay.addEventListener('click', () => {
                 sidebar.classList.remove('mobile-open');
                 mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             });
         }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
 
         // Initialize Charts
         document.addEventListener('DOMContentLoaded', function() {

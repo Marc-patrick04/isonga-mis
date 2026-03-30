@@ -21,6 +21,20 @@ try {
     $user = [];
 }
 
+// Get unread messages count for badge
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Handle news actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
@@ -63,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO news (title, content, excerpt, image_url, category_id, author_id, views_count, is_featured, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, NOW(), NOW())
+                        VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([
                         $title, 
@@ -154,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $pdo->prepare("
                         UPDATE news 
                         SET title = ?, content = ?, excerpt = ?, image_url = ?, category_id = ?, 
-                            is_featured = ?, status = ?, updated_at = NOW()
+                            is_featured = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND author_id = ?
                     ");
                     $stmt->execute([
@@ -210,7 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $stmt = $pdo->prepare("
                         UPDATE news 
-                        SET status = ?, updated_at = NOW()
+                        SET status = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE id = ? AND author_id = ?
                     ");
                     $stmt->execute([$status, $news_id, $user_id]);
@@ -255,7 +269,7 @@ $params = [];
 
 // Apply filters
 if (!empty($search)) {
-    $query .= " AND (n.title LIKE ? OR n.content LIKE ? OR n.excerpt LIKE ?)";
+    $query .= " AND (n.title ILIKE ? OR n.content ILIKE ? OR n.excerpt ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -306,7 +320,7 @@ try {
 
 // Get news categories for filter and form
 try {
-    $stmt = $pdo->query("SELECT * FROM news_categories WHERE is_active = 1 ORDER BY name");
+    $stmt = $pdo->query("SELECT * FROM news_categories WHERE is_active = true ORDER BY name");
     $news_categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $news_categories = [];
@@ -347,7 +361,7 @@ try {
     $featured_news = $stmt->fetch(PDO::FETCH_ASSOC)['featured'] ?? 0;
     
     // Total views
-    $stmt = $pdo->prepare("SELECT SUM(views_count) as total_views FROM news WHERE author_id = ?");
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(views_count), 0) as total_views FROM news WHERE author_id = ?");
     $stmt->execute([$user_id]);
     $total_views = $stmt->fetch(PDO::FETCH_ASSOC)['total_views'] ?? 0;
     
@@ -396,11 +410,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>News Management - Minister of Public Relations</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-blue: #3B82F6;
@@ -422,6 +436,8 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -460,14 +476,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -477,7 +490,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -486,38 +498,44 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -525,22 +543,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -549,41 +552,32 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -593,50 +587,85 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -666,9 +695,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -683,9 +710,15 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -693,6 +726,8 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .welcome-section h1 {
@@ -709,7 +744,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         .header-actions {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .btn {
@@ -775,7 +810,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -800,13 +835,14 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -821,7 +857,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -834,7 +870,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -842,7 +878,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -902,6 +938,8 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .form-title {
@@ -940,6 +978,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             gap: 1rem;
             justify-content: flex-end;
             margin-top: 1rem;
+            flex-wrap: wrap;
         }
 
         .form-checkbox {
@@ -959,10 +998,12 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             padding: 1.5rem;
             text-align: center;
             transition: var(--transition);
+            cursor: pointer;
         }
 
         .image-upload:hover {
             border-color: var(--primary-blue);
+            background: var(--light-blue);
         }
 
         .image-upload input {
@@ -1005,6 +1046,8 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             transition: var(--transition);
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .news-card:hover {
@@ -1049,7 +1092,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         }
 
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -1058,17 +1101,17 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         .status-published {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-draft {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-archived {
-            background: #e9ecef;
-            color: var(--dark-gray);
+            background: #e2e3e5;
+            color: #383d41;
         }
 
         .featured-badge {
@@ -1112,11 +1155,13 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             gap: 0.75rem;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
         }
 
         .action-group {
             display: flex;
             gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
         /* Empty State */
@@ -1144,6 +1189,9 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1159,57 +1207,127 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             border-left-color: var(--danger);
         }
 
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
             .dashboard-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .form-actions {
                 flex-direction: column;
             }
-            
+
             .news-actions {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .action-group {
                 width: 100%;
                 justify-content: space-between;
+            }
+
+            .news-meta {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1217,28 +1335,57 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .news-meta {
-                flex-direction: column;
-                gap: 0.5rem;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .image-preview {
+                max-width: 100%;
+            }
+
+            .current-image img {
+                max-width: 100%;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Public Relations & Associations</h1>
+                    <h1>Isonga - News Management</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -1246,8 +1393,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1273,7 +1423,10 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1297,7 +1450,9 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     <a href="news.php" class="active">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
-                        <span class="member-count"><?php echo $total_news; ?></span>
+                        <?php if ($total_news > 0): ?>
+                            <span class="menu-badge"><?php echo $total_news; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1306,7 +1461,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <span>Events</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="gallery.php">
                         <i class="fas fa-images"></i>
@@ -1319,8 +1473,8 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <span>Associations</span>
                     </a>
                 </li>
-                                <li class="menu-item">
-                    <a href="committee_budget_requests.php" >
+                <li class="menu-item">
+                    <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1341,6 +1495,9 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1353,7 +1510,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>News Management</h1>
@@ -1375,14 +1532,14 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             <!-- Alert Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1394,7 +1551,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <i class="fas fa-newspaper"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_news; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_news); ?></div>
                         <div class="stat-label">Total News Articles</div>
                     </div>
                 </div>
@@ -1403,7 +1560,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <i class="fas fa-user"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $my_news; ?></div>
+                        <div class="stat-number"><?php echo number_format($my_news); ?></div>
                         <div class="stat-label">My Articles</div>
                     </div>
                 </div>
@@ -1412,7 +1569,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <i class="fas fa-eye"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_views; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_views); ?></div>
                         <div class="stat-label">Total Views</div>
                     </div>
                 </div>
@@ -1421,20 +1578,20 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <i class="fas fa-star"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $featured_news; ?></div>
+                        <div class="stat-number"><?php echo number_format($featured_news); ?></div>
                         <div class="stat-label">Featured Articles</div>
                     </div>
                 </div>
             </div>
 
             <!-- Additional Stats -->
-            <div class="stats-grid" style="margin-top: 1rem;">
+            <div class="stats-grid" style="margin-top: 0;">
                 <div class="stat-card success">
                     <div class="stat-icon">
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $published_news; ?></div>
+                        <div class="stat-number"><?php echo number_format($published_news); ?></div>
                         <div class="stat-label">Published</div>
                     </div>
                 </div>
@@ -1443,7 +1600,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <i class="fas fa-edit"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $draft_news; ?></div>
+                        <div class="stat-number"><?php echo number_format($draft_news); ?></div>
                         <div class="stat-label">Drafts</div>
                     </div>
                 </div>
@@ -1656,7 +1813,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                                     </div>
                                     
                                     <div class="news-stats">
-                                        <span><i class="fas fa-eye"></i> <?php echo $article['views_count']; ?> views</span>
+                                        <span><i class="fas fa-eye"></i> <?php echo number_format($article['views_count']); ?> views</span>
                                         <span><i class="fas fa-clock"></i> Updated: <?php echo date('M j, Y', strtotime($article['updated_at'])); ?></span>
                                     </div>
                                 </div>
@@ -1799,7 +1956,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1811,6 +1967,61 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Toggle news form visibility
@@ -1864,6 +2075,13 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     }
                 });
             }
+
+            // Add loading animations
+            const cards = document.querySelectorAll('.news-card, .news-form');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
         });
 
         // Form validation
@@ -1909,9 +2127,10 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             const excerptTextarea = document.querySelector('textarea[name="excerpt"]');
             const categorySelect = document.querySelector('select[name="category_id"]');
             
-            if (titleInput && contentTextarea) {
-                const elements = [titleInput, contentTextarea, categorySelect];
+            if (titleInput && contentTextarea && !document.querySelector('#editNewsForm')) {
+                const elements = [titleInput, contentTextarea];
                 if (excerptTextarea) elements.push(excerptTextarea);
+                if (categorySelect) elements.push(categorySelect);
                 
                 elements.forEach(element => {
                     if (element) {
@@ -1957,6 +2176,17 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                 });
             });
         });
+
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
+            });
+        }, 5000);
     </script>
 </body>
 </html>

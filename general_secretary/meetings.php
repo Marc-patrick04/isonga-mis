@@ -20,6 +20,64 @@ try {
     $user = [];
 }
 
+// Get sidebar statistics
+try {
+    // Pending tickets count
+    $ticketStmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE status IN ('open', 'in_progress') 
+        AND (assigned_to = ? OR assigned_to IS NULL)
+    ");
+    $ticketStmt->execute([$user_id]);
+    $pending_tickets = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    
+    // New students count
+    $new_students_stmt = $pdo->prepare("
+        SELECT COUNT(*) as new_students 
+        FROM users 
+        WHERE role = 'student' 
+        AND status = 'active' 
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    ");
+    $new_students_stmt->execute();
+    $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+    
+    // Upcoming meetings count
+    $upcoming_meetings_count = $pdo->query("
+        SELECT COUNT(*) as count FROM meetings 
+        WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'
+    ")->fetch()['count'] ?? 0;
+    
+    // Pending minutes count
+    $pending_minutes = $pdo->query("
+        SELECT COUNT(*) as count FROM meetings 
+        WHERE status = 'completed' 
+        AND id NOT IN (SELECT meeting_id FROM meeting_minutes WHERE status = 'approved')
+    ")->fetch()['count'] ?? 0;
+    
+    // Pending reports
+    $pending_reports = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'")->fetch()['pending_reports'] ?? 0;
+    
+    // Unread messages
+    $unread_messages = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_count 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+    }
+    
+} catch (PDOException $e) {
+    $pending_tickets = $new_students = $upcoming_meetings_count = $pending_minutes = $pending_reports = $unread_messages = 0;
+}
+
 // Handle form actions
 $action = $_GET['action'] ?? 'list';
 $meeting_id = $_GET['id'] ?? null;
@@ -28,7 +86,6 @@ $message_type = '';
 
 // Add/Edit Meeting
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'add' || $action === 'edit')) {
-    // Only process meeting form data for add/edit actions
     $title = trim($_POST['title'] ?? '');
     $description = trim($_POST['description'] ?? '');
     $meeting_type = $_POST['meeting_type'] ?? '';
@@ -108,7 +165,6 @@ if ($action === 'delete' && $meeting_id) {
         // Delete related records first
         $pdo->prepare("DELETE FROM meeting_agenda_items WHERE meeting_id = ?")->execute([$meeting_id]);
         $pdo->prepare("DELETE FROM meeting_attendance WHERE meeting_id = ?")->execute([$meeting_id]);
-        $pdo->prepare("DELETE FROM meeting_attendees WHERE meeting_id = ?")->execute([$meeting_id]);
         
         // Delete the meeting
         $delete_stmt = $pdo->prepare("DELETE FROM meetings WHERE id = ?");
@@ -125,7 +181,7 @@ if ($action === 'delete' && $meeting_id) {
 }
 
 // Update Meeting Status
-if ($action === 'update_status' && $meeting_id) {
+if ($action === 'update_status' && $meeting_id && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $status = $_POST['status'] ?? '';
     if (in_array($status, ['scheduled', 'ongoing', 'completed', 'cancelled', 'postponed'])) {
         try {
@@ -140,6 +196,22 @@ if ($action === 'update_status' && $meeting_id) {
             $message = "Error updating status: " . $e->getMessage();
             $message_type = 'error';
         }
+    }
+}
+
+// Complete Meeting
+if ($action === 'complete' && $meeting_id) {
+    try {
+        $update_stmt = $pdo->prepare("UPDATE meetings SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?");
+        $update_stmt->execute([$meeting_id]);
+        
+        $message = "Meeting marked as completed! You can now create meeting minutes.";
+        $message_type = 'success';
+        $action = 'list';
+    } catch (PDOException $e) {
+        error_log("Complete meeting error: " . $e->getMessage());
+        $message = "Error completing meeting: " . $e->getMessage();
+        $message_type = 'error';
     }
 }
 
@@ -347,13 +419,13 @@ try {
 // Get statistics for dashboard cards
 try {
     // Total meetings
-    $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
+    $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'] ?? 0;
     
     // Upcoming meetings
-    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'")->fetch()['count'] ?? 0;
     
     // Completed meetings this month
-    $completed_this_month = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE status = 'completed' AND MONTH(meeting_date) = MONTH(CURRENT_DATE()) AND YEAR(meeting_date) = YEAR(CURRENT_DATE())")->fetch()['count'];
+    $completed_this_month = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE status = 'completed' AND MONTH(meeting_date) = MONTH(CURRENT_DATE()) AND YEAR(meeting_date) = YEAR(CURRENT_DATE())")->fetch()['count'] ?? 0;
     
     // Average attendance rate
     $attendance_stmt = $pdo->query("
@@ -381,29 +453,12 @@ try {
     error_log("Statistics error: " . $e->getMessage());
     $total_meetings = $upcoming_meetings = $completed_this_month = $average_attendance = 0;
 }
-
-
-// Complete Meeting (Change status to completed)
-if ($action === 'complete' && $meeting_id) {
-    try {
-        $update_stmt = $pdo->prepare("UPDATE meetings SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?");
-        $update_stmt->execute([$meeting_id]);
-        
-        $message = "Meeting marked as completed! You can now create meeting minutes.";
-        $message_type = 'success';
-        $action = 'list';
-    } catch (PDOException $e) {
-        error_log("Complete meeting error: " . $e->getMessage());
-        $message = "Error completing meeting: " . $e->getMessage();
-        $message_type = 'error';
-    }
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Meeting Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -422,6 +477,7 @@ if ($action === 'complete' && $meeting_id) {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -429,6 +485,8 @@ if ($action === 'complete' && $meeting_id) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -444,6 +502,7 @@ if ($action === 'complete' && $meeting_id) {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
         }
 
@@ -467,14 +526,11 @@ if ($action === 'complete' && $meeting_id) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -484,7 +540,6 @@ if ($action === 'complete' && $meeting_id) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -493,38 +548,44 @@ if ($action === 'complete' && $meeting_id) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -532,22 +593,7 @@ if ($action === 'complete' && $meeting_id) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -556,41 +602,32 @@ if ($action === 'complete' && $meeting_id) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -600,50 +637,85 @@ if ($action === 'complete' && $meeting_id) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -673,9 +745,7 @@ if ($action === 'complete' && $meeting_id) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -690,16 +760,25 @@ if ($action === 'complete' && $meeting_id) {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -711,26 +790,21 @@ if ($action === 'complete' && $meeting_id) {
 
         .page-title p {
             color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
-        .page-actions {
-            display: flex;
-            gap: 0.75rem;
+            font-size: 0.85rem;
         }
 
         .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.6rem 1.2rem;
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.85rem;
-            transition: var(--transition);
-            border: none;
-            cursor: pointer;
         }
 
         .btn-primary {
@@ -739,18 +813,28 @@ if ($action === 'complete' && $meeting_id) {
         }
 
         .btn-primary:hover {
-            transform: translateY(-2px);
+            transform: translateY(-1px);
             box-shadow: var(--shadow-md);
         }
 
         .btn-outline {
             background: transparent;
-            border: 1px solid var(--primary-blue);
-            color: var(--primary-blue);
+            border: 1px solid var(--medium-gray);
+            color: var(--text-dark);
         }
 
         .btn-outline:hover {
-            background: var(--primary-blue);
+            border-color: var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.7rem;
+        }
+
+        .btn-success {
+            background: var(--success);
             color: white;
         }
 
@@ -759,9 +843,9 @@ if ($action === 'complete' && $meeting_id) {
             color: white;
         }
 
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-2px);
+        .btn-info {
+            background: var(--info);
+            color: white;
         }
 
         /* Stats Grid */
@@ -777,7 +861,7 @@ if ($action === 'complete' && $meeting_id) {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -802,13 +886,14 @@ if ($action === 'complete' && $meeting_id) {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -836,7 +921,7 @@ if ($action === 'complete' && $meeting_id) {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -844,11 +929,11 @@ if ($action === 'complete' && $meeting_id) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        /* Cards */
+        /* Card */
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -863,6 +948,7 @@ if ($action === 'complete' && $meeting_id) {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -875,31 +961,39 @@ if ($action === 'complete' && $meeting_id) {
             padding: 1.25rem;
         }
 
-        /* Forms */
-        .form-group {
+        /* Filters */
+        .filters {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
             margin-bottom: 1rem;
+            align-items: flex-end;
         }
 
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-label {
+            font-size: 0.75rem;
             font-weight: 600;
+            margin-bottom: 0.5rem;
             color: var(--text-dark);
-            font-size: 0.85rem;
         }
 
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
+        .form-control, .form-select {
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
             color: var(--text-dark);
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             transition: var(--transition);
+            width: 100%;
         }
 
-        .form-control:focus {
+        .form-control:focus, .form-select:focus {
             outline: none;
             border-color: var(--primary-blue);
             box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
@@ -909,9 +1003,14 @@ if ($action === 'complete' && $meeting_id) {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1rem;
+            margin-bottom: 1rem;
         }
 
-        /* Tables */
+        /* Table */
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -931,6 +1030,11 @@ if ($action === 'complete' && $meeting_id) {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -939,50 +1043,144 @@ if ($action === 'complete' && $meeting_id) {
             text-transform: uppercase;
         }
 
-        .status-active {
-            background: #d4edda;
-            color: var(--success);
+        .status-scheduled {
+            background: #cce7ff;
+            color: var(--primary-blue);
         }
 
-        .status-inactive {
+        .status-ongoing {
             background: #fff3cd;
             color: var(--warning);
         }
 
-        .status-suspended {
+        .status-completed {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .status-cancelled {
             background: #f8d7da;
             color: var(--danger);
         }
 
+        .status-postponed {
+            background: #e2e3e5;
+            color: var(--dark-gray);
+        }
+
+        /* Action Buttons */
         .action-buttons {
             display: flex;
             gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
-        .btn-sm {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.75rem;
-        }
-
-        /* Filters */
-        .filters {
-            display: grid;
-            grid-template-columns: 1fr auto auto;
-            gap: 1rem;
+        /* Meeting Details */
+        .meeting-details {
+            background: var(--light-blue);
+            padding: 1.5rem;
+            border-radius: var(--border-radius);
             margin-bottom: 1.5rem;
-            align-items: end;
         }
 
-        .filter-group {
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .detail-item {
             display: flex;
             flex-direction: column;
         }
 
-        .filter-label {
-            font-size: 0.8rem;
+        .detail-label {
+            font-size: 0.7rem;
+            color: var(--dark-gray);
             font-weight: 600;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .detail-value {
+            font-size: 0.85rem;
             color: var(--text-dark);
+            font-weight: 500;
+        }
+
+        /* Agenda Items */
+        .agenda-item {
+            background: var(--light-gray);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 0.75rem;
+            border-left: 3px solid var(--primary-blue);
+        }
+
+        .agenda-form {
+            background: var(--light-gray);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            position: relative;
+        }
+
+        .remove-agenda {
+            background: var(--danger);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin-top: 0.5rem;
+            transition: var(--transition);
+        }
+
+        .remove-agenda:hover {
+            transform: scale(1.05);
+        }
+
+        /* Attendance Grid */
+        .attendance-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .attendance-card {
+            background: var(--white);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--medium-gray);
+            transition: var(--transition);
+        }
+
+        .attendance-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .attendance-present {
+            border-left: 4px solid var(--success);
+        }
+
+        .attendance-absent {
+            border-left: 4px solid var(--danger);
+        }
+
+        .attendance-excused {
+            border-left: 4px solid var(--warning);
+        }
+
+        .attendance-rate {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--success);
         }
 
         /* Pagination */
@@ -992,6 +1190,7 @@ if ($action === 'complete' && $meeting_id) {
             align-items: center;
             gap: 0.5rem;
             margin-top: 1.5rem;
+            flex-wrap: wrap;
         }
 
         .page-link {
@@ -1016,12 +1215,15 @@ if ($action === 'complete' && $meeting_id) {
             border-color: var(--primary-blue);
         }
 
-        /* Alerts */
+        /* Alert */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -1036,46 +1238,126 @@ if ($action === 'complete' && $meeting_id) {
             border-left-color: var(--danger);
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .form-row {
-                grid-template-columns: 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filters {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .filters {
+                grid-template-columns: 1fr;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+            }
+
+            .detail-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .attendance-grid {
+                grid-template-columns: 1fr;
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
         }
 
@@ -1083,151 +1365,51 @@ if ($action === 'complete' && $meeting_id) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .action-buttons {
-                flex-direction: column;
+
+            .logo {
+                height: 32px;
             }
-        }
-        
-        .agenda-item {
-            background: var(--light-gray);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 3px solid var(--primary-blue);
-        }
-        
-        .attendance-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-        
-        .attendance-card {
-            background: var(--white);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            border: 1px solid var(--medium-gray);
-        }
-        
-        .attendance-present {
-            border-left: 4px solid var(--success);
-        }
-        
-        .attendance-absent {
-            border-left: 4px solid var(--danger);
-        }
-        
-        .attendance-excused {
-            border-left: 4px solid var(--warning);
-        }
-        
-        .meeting-details {
-            background: var(--light-blue);
-            padding: 1.5rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1.5rem;
-        }
-        
-        .detail-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-        }
-        
-        .detail-item {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .detail-label {
-            font-size: 0.8rem;
-            color: var(--dark-gray);
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-        
-        .detail-value {
-            font-size: 0.9rem;
-            color: var(--text-dark);
-            font-weight: 500;
-        }
-        
-        .status-badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-        
-        .status-scheduled {
-            background: #cce7ff;
-            color: var(--primary-blue);
-        }
-        
-        .status-ongoing {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-        
-        .status-completed {
-            background: #d4edda;
-            color: var(--success);
-        }
-        
-        .status-cancelled {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-        
-        .status-postponed {
-            background: #e2e3e5;
-            color: var(--dark-gray);
-        }
-        
-        .attendance-rate {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--success);
-        }
-        
-        .agenda-form {
-            background: var(--light-gray);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-        }
-        
-        .remove-agenda {
-            background: var(--danger);
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            margin-top: 0.5rem;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
         }
     </style>
 </head>
 <body>
-    <!-- Header (Same as students.php) -->
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
+    <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - General Secretary</h1>
                 </div>
@@ -1237,8 +1419,14 @@ if ($action === 'complete' && $meeting_id) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1264,7 +1452,10 @@ if ($action === 'complete' && $meeting_id) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1272,64 +1463,42 @@ if ($action === 'complete' && $meeting_id) {
                         <span>Dashboard</span>
                     </a>
                 </li>
-                        <li class="menu-item">
-            <a href="tickets.php">
-                <i class="fas fa-ticket-alt"></i>
-                <span>Student Tickets</span>
-                <?php
-                // Get pending tickets count for badge
-                try {
-                    $ticketStmt = $pdo->prepare("
-                        SELECT COUNT(*) as pending_tickets 
-                        FROM tickets 
-                        WHERE status IN ('open', 'in_progress') 
-                        AND (assigned_to = ? OR assigned_to IS NULL)
-                    ");
-                    $ticketStmt->execute([$user_id]);
-                    $pending_tickets = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'];
-                } catch (PDOException $e) {
-                    $pending_tickets = 0;
-                }
-                ?>
-                <?php if ($pending_tickets > 0): ?>
-                    <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-                <?php endif; ?>
-            </a>
-        </li>
+                <li class="menu-item">
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="students.php">
                         <i class="fas fa-user-graduate"></i>
                         <span>Student Management</span>
+                        <?php if ($new_students > 0): ?>
+                            <span class="menu-badge"><?php echo $new_students; ?> new</span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="meetings.php" class="active">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Meetings & Attendance</span>
+                        <?php if ($upcoming_meetings_count > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings_count; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="meeting_minutes.php">
-        <i class="fas fa-clipboard-list"></i>
-        <span>Meeting Minutes</span>
-        <?php
-        // Count pending minutes (minutes that need to be written/approved)
-        try {
-            $pending_minutes = $pdo->query("
-                SELECT COUNT(*) as count FROM meetings 
-                WHERE status = 'completed' 
-                AND id NOT IN (SELECT meeting_id FROM meeting_minutes WHERE status = 'approved')
-            ")->fetch()['count'];
-        } catch (PDOException $e) {
-            $pending_minutes = 0;
-        }
-        ?>
-        <?php if ($pending_minutes > 0): ?>
-            <span class="menu-badge"><?php echo $pending_minutes; ?></span>
-        <?php endif; ?>
-    </a>
-</li>
-
+                    <a href="meeting_minutes.php">
+                        <i class="fas fa-clipboard-list"></i>
+                        <span>Meeting Minutes</span>
+                        <?php if ($pending_minutes > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_minutes; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="committee.php">
                         <i class="fas fa-users"></i>
@@ -1340,12 +1509,18 @@ if ($action === 'complete' && $meeting_id) {
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Reports & Analytics</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1358,11 +1533,10 @@ if ($action === 'complete' && $meeting_id) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <!-- Page Header -->
+        <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div class="page-title">
-                    <h1>Meeting Management</h1>
+                    <h1>Meeting Management 📅</h1>
                     <p>Schedule meetings, track attendance, and manage committee gatherings</p>
                 </div>
                 <div class="page-actions">
@@ -1370,7 +1544,6 @@ if ($action === 'complete' && $meeting_id) {
                         <a href="?action=add" class="btn btn-primary">
                             <i class="fas fa-calendar-plus"></i> Schedule Meeting
                         </a>
-
                     <?php else: ?>
                         <a href="meetings.php" class="btn btn-outline">
                             <i class="fas fa-arrow-left"></i> Back to List
@@ -1392,7 +1565,7 @@ if ($action === 'complete' && $meeting_id) {
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">
-                        <i class="fas fa-calendar"></i>
+                        <i class="fas fa-calendar-alt"></i>
                     </div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $total_meetings; ?></div>
@@ -1417,7 +1590,7 @@ if ($action === 'complete' && $meeting_id) {
                         <div class="stat-label">Completed This Month</div>
                     </div>
                 </div>
-                <div class="stat-card danger">
+                <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-users"></i>
                     </div>
@@ -1439,13 +1612,13 @@ if ($action === 'complete' && $meeting_id) {
                     <form method="POST" action="">
                         <div class="form-row">
                             <div class="form-group">
-                                <label class="form-label" for="title">Meeting Title *</label>
-                                <input type="text" class="form-control" id="title" name="title" 
+                                <label class="filter-label">Meeting Title *</label>
+                                <input type="text" class="form-control" name="title" 
                                        value="<?php echo htmlspecialchars($meeting_data['title'] ?? ''); ?>" required>
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="meeting_type">Meeting Type *</label>
-                                <select class="form-control" id="meeting_type" name="meeting_type" required>
+                                <label class="filter-label">Meeting Type *</label>
+                                <select class="form-select" name="meeting_type" required>
                                     <option value="general" <?php echo ($meeting_data['meeting_type'] ?? '') == 'general' ? 'selected' : ''; ?>>General</option>
                                     <option value="executive" <?php echo ($meeting_data['meeting_type'] ?? '') == 'executive' ? 'selected' : ''; ?>>Executive</option>
                                     <option value="committee" <?php echo ($meeting_data['meeting_type'] ?? '') == 'committee' ? 'selected' : ''; ?>>Committee</option>
@@ -1456,24 +1629,24 @@ if ($action === 'complete' && $meeting_id) {
                         </div>
                         
                         <div class="form-group">
-                            <label class="form-label" for="description">Meeting Description</label>
-                            <textarea class="form-control" id="description" name="description" rows="3"><?php echo htmlspecialchars($meeting_data['description'] ?? ''); ?></textarea>
+                            <label class="filter-label">Meeting Description</label>
+                            <textarea class="form-control" name="description" rows="3"><?php echo htmlspecialchars($meeting_data['description'] ?? ''); ?></textarea>
                         </div>
                         
                         <div class="form-row">
                             <div class="form-group">
-                                <label class="form-label" for="location">Location *</label>
-                                <input type="text" class="form-control" id="location" name="location" 
+                                <label class="filter-label">Location *</label>
+                                <input type="text" class="form-control" name="location" 
                                        value="<?php echo htmlspecialchars($meeting_data['location'] ?? ''); ?>" required>
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="chairperson_id">Chairperson *</label>
-                                <select class="form-control" id="chairperson_id" name="chairperson_id" required>
+                                <label class="filter-label">Chairperson *</label>
+                                <select class="form-select" name="chairperson_id" required>
                                     <option value="">Select Chairperson</option>
-                                    <?php foreach ($users as $user): ?>
-                                        <option value="<?php echo $user['id']; ?>" 
-                                            <?php echo ($meeting_data['chairperson_id'] ?? '') == $user['id'] ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($user['full_name'] . ' (' . $user['role'] . ')'); ?>
+                                    <?php foreach ($users as $user_item): ?>
+                                        <option value="<?php echo $user_item['id']; ?>" 
+                                            <?php echo ($meeting_data['chairperson_id'] ?? '') == $user_item['id'] ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($user_item['full_name'] . ' (' . $user_item['role'] . ')'); ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
@@ -1482,64 +1655,63 @@ if ($action === 'complete' && $meeting_id) {
                         
                         <div class="form-row">
                             <div class="form-group">
-                                <label class="form-label" for="meeting_date">Meeting Date *</label>
-                                <input type="date" class="form-control" id="meeting_date" name="meeting_date" 
+                                <label class="filter-label">Meeting Date *</label>
+                                <input type="date" class="form-control" name="meeting_date" 
                                        value="<?php echo htmlspecialchars($meeting_data['meeting_date'] ?? ''); ?>" required>
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="start_time">Start Time *</label>
-                                <input type="time" class="form-control" id="start_time" name="start_time" 
+                                <label class="filter-label">Start Time *</label>
+                                <input type="time" class="form-control" name="start_time" 
                                        value="<?php echo htmlspecialchars($meeting_data['start_time'] ?? ''); ?>" required>
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="end_time">End Time *</label>
-                                <input type="time" class="form-control" id="end_time" name="end_time" 
+                                <label class="filter-label">End Time *</label>
+                                <input type="time" class="form-control" name="end_time" 
                                        value="<?php echo htmlspecialchars($meeting_data['end_time'] ?? ''); ?>" required>
                             </div>
                         </div>
                         
                         <div class="form-row">
                             <div class="form-group">
-                                <label class="form-label">
-                                    <input type="checkbox" id="is_committee_meeting" name="is_committee_meeting" value="1" 
+                                <label class="filter-label">
+                                    <input type="checkbox" name="is_committee_meeting" value="1" 
                                            <?php echo ($meeting_data['is_committee_meeting'] ?? 0) ? 'checked' : ''; ?>>
                                     Committee Meeting
                                 </label>
                             </div>
                             <div class="form-group">
-                                <label class="form-label" for="committee_role">Committee Role (if applicable)</label>
-                                <select class="form-control" id="committee_role" name="committee_role">
+                                <label class="filter-label">Committee Role (if applicable)</label>
+                                <select class="form-select" name="committee_role" id="committee_role">
                                     <option value="">Select Committee Role</option>
                                     <option value="guild_president" <?php echo ($meeting_data['committee_role'] ?? '') == 'guild_president' ? 'selected' : ''; ?>>Guild President</option>
                                     <option value="vice_guild_academic" <?php echo ($meeting_data['committee_role'] ?? '') == 'vice_guild_academic' ? 'selected' : ''; ?>>Vice Guild Academic</option>
                                     <option value="vice_guild_finance" <?php echo ($meeting_data['committee_role'] ?? '') == 'vice_guild_finance' ? 'selected' : ''; ?>>Vice Guild Finance</option>
                                     <option value="general_secretary" <?php echo ($meeting_data['committee_role'] ?? '') == 'general_secretary' ? 'selected' : ''; ?>>General Secretary</option>
-                                    <!-- Add other committee roles as needed -->
                                 </select>
                             </div>
                         </div>
 
                         <!-- Agenda Items Section -->
                         <div class="form-group">
-                            <label class="form-label">Meeting Agenda</label>
+                            <label class="filter-label">Meeting Agenda</label>
                             <div id="agenda-items">
                                 <?php if (!empty($agenda_items)): ?>
                                     <?php foreach ($agenda_items as $index => $agenda): ?>
                                         <div class="agenda-form">
                                             <div class="form-row">
                                                 <div class="form-group">
-                                                    <label class="form-label">Agenda Title</label>
+                                                    <label class="filter-label">Agenda Title</label>
                                                     <input type="text" class="form-control" name="agenda_titles[]" 
                                                            value="<?php echo htmlspecialchars($agenda['title']); ?>" placeholder="Enter agenda item title">
                                                 </div>
                                                 <div class="form-group">
-                                                    <label class="form-label">Duration (minutes)</label>
+                                                    <label class="filter-label">Duration (minutes)</label>
                                                     <input type="number" class="form-control" name="agenda_durations[]" 
-                                                           value="<?php echo htmlspecialchars($agenda['duration_minutes']); ?>" min="5" max="120" value="15">
+                                                           value="<?php echo htmlspecialchars($agenda['duration_minutes']); ?>" min="5" max="120">
                                                 </div>
                                             </div>
                                             <div class="form-group">
-                                                <label class="form-label">Description</label>
+                                                <label class="filter-label">Description</label>
                                                 <textarea class="form-control" name="agenda_descriptions[]" rows="2" placeholder="Brief description of this agenda item"><?php echo htmlspecialchars($agenda['description']); ?></textarea>
                                             </div>
                                             <button type="button" class="remove-agenda" onclick="this.parentElement.remove()">
@@ -1551,16 +1723,16 @@ if ($action === 'complete' && $meeting_id) {
                                     <div class="agenda-form">
                                         <div class="form-row">
                                             <div class="form-group">
-                                                <label class="form-label">Agenda Title</label>
+                                                <label class="filter-label">Agenda Title</label>
                                                 <input type="text" class="form-control" name="agenda_titles[]" placeholder="Enter agenda item title">
                                             </div>
                                             <div class="form-group">
-                                                <label class="form-label">Duration (minutes)</label>
+                                                <label class="filter-label">Duration (minutes)</label>
                                                 <input type="number" class="form-control" name="agenda_durations[]" min="5" max="120" value="15">
                                             </div>
                                         </div>
                                         <div class="form-group">
-                                            <label class="form-label">Description</label>
+                                            <label class="filter-label">Description</label>
                                             <textarea class="form-control" name="agenda_descriptions[]" rows="2" placeholder="Brief description of this agenda item"></textarea>
                                         </div>
                                         <button type="button" class="remove-agenda" onclick="this.parentElement.remove()">
@@ -1569,12 +1741,12 @@ if ($action === 'complete' && $meeting_id) {
                                     </div>
                                 <?php endif; ?>
                             </div>
-                            <button type="button" class="btn btn-outline btn-sm" onclick="addAgendaItem()">
+                            <button type="button" class="btn btn-outline btn-sm" onclick="addAgendaItem()" style="margin-top: 0.5rem;">
                                 <i class="fas fa-plus"></i> Add Agenda Item
                             </button>
                         </div>
                         
-                        <div class="form-group" style="margin-top: 1.5rem;">
+                        <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
                             <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-save"></i> 
                                 <?php echo $action === 'add' ? 'Schedule Meeting' : 'Update Meeting'; ?>
@@ -1591,7 +1763,7 @@ if ($action === 'complete' && $meeting_id) {
             <div class="card">
                 <div class="card-header">
                     <h3>Meeting Details</h3>
-                    <div class="card-header-actions">
+                    <div class="action-buttons">
                         <a href="?action=edit&id=<?php echo $meeting_id; ?>" class="btn btn-outline btn-sm">
                             <i class="fas fa-edit"></i> Edit
                         </a>
@@ -1637,7 +1809,7 @@ if ($action === 'complete' && $meeting_id) {
 
                     <?php if (!empty($meeting_data['description'])): ?>
                     <div class="form-group">
-                        <label class="form-label">Description</label>
+                        <label class="filter-label">Description</label>
                         <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius);">
                             <?php echo nl2br(htmlspecialchars($meeting_data['description'])); ?>
                         </div>
@@ -1647,7 +1819,7 @@ if ($action === 'complete' && $meeting_id) {
                     <!-- Agenda Items -->
                     <?php if (!empty($agenda_items)): ?>
                     <div class="form-group">
-                        <label class="form-label">Meeting Agenda</label>
+                        <label class="filter-label">Meeting Agenda</label>
                         <?php foreach ($agenda_items as $agenda): ?>
                             <div class="agenda-item">
                                 <h4 style="margin-bottom: 0.5rem;"><?php echo htmlspecialchars($agenda['title']); ?></h4>
@@ -1663,7 +1835,7 @@ if ($action === 'complete' && $meeting_id) {
                     <!-- Attendance Summary -->
                     <?php if (!empty($attendance_records)): ?>
                     <div class="form-group">
-                        <label class="form-label">Attendance Summary</label>
+                        <label class="filter-label">Attendance Summary</label>
                         <div class="attendance-grid">
                             <?php 
                             $present_count = 0;
@@ -1731,8 +1903,8 @@ if ($action === 'complete' && $meeting_id) {
                                     </div>
                                     
                                     <div class="form-group">
-                                        <label class="form-label">Attendance</label>
-                                        <select class="form-control" name="attendance_<?php echo $member['id']; ?>">
+                                        <label class="filter-label">Attendance</label>
+                                        <select class="form-select" name="attendance_<?php echo $member['id']; ?>">
                                             <option value="present" <?php echo ($existing_record['attendance_status'] ?? '') == 'present' ? 'selected' : ''; ?>>Present</option>
                                             <option value="absent" <?php echo ($existing_record['attendance_status'] ?? '') == 'absent' ? 'selected' : ''; ?>>Absent</option>
                                             <option value="excused" <?php echo ($existing_record['attendance_status'] ?? '') == 'excused' ? 'selected' : ''; ?>>Excused</option>
@@ -1740,14 +1912,14 @@ if ($action === 'complete' && $meeting_id) {
                                     </div>
                                     
                                     <div class="form-group">
-                                        <label class="form-label">Notes</label>
+                                        <label class="filter-label">Notes</label>
                                         <textarea class="form-control" name="notes_<?php echo $member['id']; ?>" rows="2" placeholder="Optional notes"><?php echo htmlspecialchars($existing_record['notes'] ?? ''); ?></textarea>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
                         </div>
                         
-                        <div class="form-group" style="margin-top: 1.5rem;">
+                        <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
                             <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-save"></i> Save Attendance
                             </button>
@@ -1766,14 +1938,14 @@ if ($action === 'complete' && $meeting_id) {
                     <form method="GET" action="">
                         <div class="filters">
                             <div class="filter-group">
-                                <label class="filter-label" for="search">Search Meetings</label>
-                                <input type="text" class="form-control" id="search" name="search" 
+                                <label class="filter-label">Search Meetings</label>
+                                <input type="text" class="form-control" name="search" 
                                        placeholder="Search by title, description, or location..."
                                        value="<?php echo htmlspecialchars($search); ?>">
                             </div>
                             <div class="filter-group">
-                                <label class="filter-label" for="status">Status</label>
-                                <select class="form-control" id="status" name="status">
+                                <label class="filter-label">Status</label>
+                                <select class="form-select" name="status">
                                     <option value="">All Status</option>
                                     <option value="scheduled" <?php echo $status_filter == 'scheduled' ? 'selected' : ''; ?>>Scheduled</option>
                                     <option value="ongoing" <?php echo $status_filter == 'ongoing' ? 'selected' : ''; ?>>Ongoing</option>
@@ -1783,8 +1955,8 @@ if ($action === 'complete' && $meeting_id) {
                                 </select>
                             </div>
                             <div class="filter-group">
-                                <label class="filter-label" for="type">Type</label>
-                                <select class="form-control" id="type" name="type">
+                                <label class="filter-label">Type</label>
+                                <select class="form-select" name="type">
                                     <option value="">All Types</option>
                                     <option value="general" <?php echo $type_filter == 'general' ? 'selected' : ''; ?>>General</option>
                                     <option value="executive" <?php echo $type_filter == 'executive' ? 'selected' : ''; ?>>Executive</option>
@@ -1796,23 +1968,20 @@ if ($action === 'complete' && $meeting_id) {
                         </div>
                         <div class="filters" style="margin-top: 1rem;">
                             <div class="filter-group">
-                                <label class="filter-label" for="date_from">From Date</label>
-                                <input type="date" class="form-control" id="date_from" name="date_from" 
+                                <label class="filter-label">From Date</label>
+                                <input type="date" class="form-control" name="date_from" 
                                        value="<?php echo htmlspecialchars($date_from); ?>">
                             </div>
                             <div class="filter-group">
-                                <label class="filter-label" for="date_to">To Date</label>
-                                <input type="date" class="form-control" id="date_to" name="date_to" 
+                                <label class="filter-label">To Date</label>
+                                <input type="date" class="form-control" name="date_to" 
                                        value="<?php echo htmlspecialchars($date_to); ?>">
                             </div>
-                            <div class="filter-group">
-                                <label class="filter-label" style="visibility: hidden;">Apply</label>
-                                <div style="display: flex; gap: 0.5rem;">
-                                    <button type="submit" class="btn btn-primary">
-                                        <i class="fas fa-filter"></i> Apply Filters
-                                    </button>
-                                    <a href="meetings.php" class="btn btn-outline">Clear Filters</a>
-                                </div>
+                            <div class="filter-group" style="display: flex; gap: 0.5rem; flex-direction: row; align-items: flex-end;">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-filter"></i> Apply Filters
+                                </button>
+                                <a href="meetings.php" class="btn btn-outline">Clear</a>
                             </div>
                         </div>
                     </form>
@@ -1826,8 +1995,8 @@ if ($action === 'complete' && $meeting_id) {
                 </div>
                 <div class="card-body">
                     <?php if (empty($meetings)): ?>
-                        <div style="text-align: center; padding: 3rem; color: var(--dark-gray);">
-                            <i class="fas fa-calendar-times" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state">
+                            <i class="fas fa-calendar-times"></i>
                             <p>No meetings found matching your criteria.</p>
                             <?php if ($search || $status_filter || $type_filter || $date_from || $date_to): ?>
                                 <a href="meetings.php" class="btn btn-primary">Clear Filters</a>
@@ -1836,7 +2005,7 @@ if ($action === 'complete' && $meeting_id) {
                             <?php endif; ?>
                         </div>
                     <?php else: ?>
-                        <div style="overflow-x: auto;">
+                        <div class="table-wrapper">
                             <table class="table">
                                 <thead>
                                     <tr>
@@ -1848,8 +2017,7 @@ if ($action === 'complete' && $meeting_id) {
                                         <th>Status</th>
                                         <th>Attendance</th>
                                         <th>Actions</th>
-                                    </tr>
-                                </thead>
+                                    </thead>
                                 <tbody>
                                     <?php foreach ($meetings as $meeting): 
                                         $attendance_rate = 0;
@@ -1876,59 +2044,59 @@ if ($action === 'complete' && $meeting_id) {
                                                     <?php echo ucfirst($meeting['status']); ?>
                                                 </span>
                                             </td>
-<td>
-    <?php 
-    $total_committee = $meeting['total_committee_members'] ?? 0;
-    $total_attended = $meeting['present_count'] ?? 0;
-    
-    if ($meeting['status'] === 'completed' && $total_committee > 0): 
-        $attendance_rate = round(($total_attended / $total_committee) * 100);
-    ?>
-        <div style="font-weight: 600; color: var(--success);"><?php echo $attendance_rate; ?>%</div>
-        <small><?php echo $total_attended; ?>/<?php echo $total_committee; ?> present</small>
-    <?php elseif ($meeting['status'] === 'completed'): ?>
-        <div style="font-weight: 600; color: var(--warning);">No data</div>
-        <small>Committee members not set</small>
-    <?php else: ?>
-        <span style="color: var(--dark-gray);">-</span>
-    <?php endif; ?>
-</td>
-<td>
-    <div class="action-buttons">
-        <a href="?action=view&id=<?php echo $meeting['id']; ?>" 
-           class="btn btn-outline btn-sm" title="View Details">
-            <i class="fas fa-eye"></i>
-        </a>
-        <a href="?action=edit&id=<?php echo $meeting['id']; ?>" 
-           class="btn btn-outline btn-sm" title="Edit">
-            <i class="fas fa-edit"></i>
-        </a>
-        <?php if ($meeting['status'] === 'scheduled' || $meeting['status'] === 'ongoing'): ?>
-            <a href="?action=attendance&id=<?php echo $meeting['id']; ?>" 
-               class="btn btn-primary btn-sm" title="Record Attendance">
-                <i class="fas fa-clipboard-check"></i>
-            </a>
-            <a href="?action=complete&id=<?php echo $meeting['id']; ?>" 
-               class="btn btn-success btn-sm" 
-               onclick="return confirm('Mark this meeting as completed? This will allow you to create meeting minutes.')"
-               title="Complete Meeting">
-                <i class="fas fa-check"></i>
-            </a>
-        <?php endif; ?>
-        <?php if ($meeting['status'] === 'completed'): ?>
-            <a href="meeting_minutes.php?action=add&meeting_id=<?php echo $meeting['id']; ?>" 
-               class="btn btn-info btn-sm" title="Create Minutes">
-                <i class="fas fa-clipboard-list"></i>
-            </a>
-        <?php endif; ?>
-        <a href="?action=delete&id=<?php echo $meeting['id']; ?>" 
-           class="btn btn-danger btn-sm" 
-           onclick="return confirm('Are you sure you want to delete this meeting? This action cannot be undone.')"
-           title="Delete">
-            <i class="fas fa-trash"></i>
-        </a>
-    </div>
-</td>
+                                            <td>
+                                                <?php 
+                                                $total_committee = $meeting['total_committee_members'] ?? 0;
+                                                $total_attended = $meeting['present_count'] ?? 0;
+                                                
+                                                if ($meeting['status'] === 'completed' && $total_committee > 0): 
+                                                    $rate = round(($total_attended / $total_committee) * 100);
+                                                ?>
+                                                    <div style="font-weight: 600; color: var(--success);"><?php echo $rate; ?>%</div>
+                                                    <small><?php echo $total_attended; ?>/<?php echo $total_committee; ?> present</small>
+                                                <?php elseif ($meeting['status'] === 'completed'): ?>
+                                                    <div style="font-weight: 600; color: var(--warning);">No data</div>
+                                                    <small>Committee members not set</small>
+                                                <?php else: ?>
+                                                    <span style="color: var(--dark-gray);">-</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <div class="action-buttons">
+                                                    <a href="?action=view&id=<?php echo $meeting['id']; ?>" 
+                                                       class="btn btn-outline btn-sm" title="View Details">
+                                                        <i class="fas fa-eye"></i>
+                                                    </a>
+                                                    <a href="?action=edit&id=<?php echo $meeting['id']; ?>" 
+                                                       class="btn btn-outline btn-sm" title="Edit">
+                                                        <i class="fas fa-edit"></i>
+                                                    </a>
+                                                    <?php if ($meeting['status'] === 'scheduled' || $meeting['status'] === 'ongoing'): ?>
+                                                        <a href="?action=attendance&id=<?php echo $meeting['id']; ?>" 
+                                                           class="btn btn-primary btn-sm" title="Record Attendance">
+                                                            <i class="fas fa-clipboard-check"></i>
+                                                        </a>
+                                                        <a href="?action=complete&id=<?php echo $meeting['id']; ?>" 
+                                                           class="btn btn-success btn-sm" 
+                                                           onclick="return confirm('Mark this meeting as completed? This will allow you to create meeting minutes.')"
+                                                           title="Complete Meeting">
+                                                            <i class="fas fa-check"></i>
+                                                        </a>
+                                                    <?php endif; ?>
+                                                    <?php if ($meeting['status'] === 'completed'): ?>
+                                                        <a href="meeting_minutes.php?action=add&meeting_id=<?php echo $meeting['id']; ?>" 
+                                                           class="btn btn-info btn-sm" title="Create Minutes">
+                                                            <i class="fas fa-clipboard-list"></i>
+                                                        </a>
+                                                    <?php endif; ?>
+                                                    <a href="?action=delete&id=<?php echo $meeting['id']; ?>" 
+                                                       class="btn btn-danger btn-sm" 
+                                                       onclick="return confirm('Are you sure you want to delete this meeting? This action cannot be undone.')"
+                                                       title="Delete">
+                                                        <i class="fas fa-trash"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -1989,6 +2157,67 @@ if ($action === 'complete' && $meeting_id) {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Agenda Items Management
         function addAgendaItem() {
             const agendaContainer = document.getElementById('agenda-items');
@@ -1997,16 +2226,16 @@ if ($action === 'complete' && $meeting_id) {
             newAgenda.innerHTML = `
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Agenda Title</label>
+                        <label class="filter-label">Agenda Title</label>
                         <input type="text" class="form-control" name="agenda_titles[]" placeholder="Enter agenda item title">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Duration (minutes)</label>
+                        <label class="filter-label">Duration (minutes)</label>
                         <input type="number" class="form-control" name="agenda_durations[]" min="5" max="120" value="15">
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Description</label>
+                    <label class="filter-label">Description</label>
                     <textarea class="form-control" name="agenda_descriptions[]" rows="2" placeholder="Brief description of this agenda item"></textarea>
                 </div>
                 <button type="button" class="remove-agenda" onclick="this.parentElement.remove()">
@@ -2017,7 +2246,7 @@ if ($action === 'complete' && $meeting_id) {
         }
 
         // Committee Meeting Checkbox Toggle
-        const committeeCheckbox = document.getElementById('is_committee_meeting');
+        const committeeCheckbox = document.querySelector('input[name="is_committee_meeting"]');
         const committeeRoleSelect = document.getElementById('committee_role');
         
         if (committeeCheckbox && committeeRoleSelect) {
@@ -2029,21 +2258,19 @@ if ($action === 'complete' && $meeting_id) {
             }
             
             committeeCheckbox.addEventListener('change', toggleCommitteeRole);
-            // Initial state
             toggleCommitteeRole();
         }
 
         // Date Validation
-        const meetingDateInput = document.getElementById('meeting_date');
+        const meetingDateInput = document.querySelector('input[name="meeting_date"]');
         if (meetingDateInput) {
-            // Set min date to today
             const today = new Date().toISOString().split('T')[0];
             meetingDateInput.min = today;
         }
 
         // Time Validation
-        const startTimeInput = document.getElementById('start_time');
-        const endTimeInput = document.getElementById('end_time');
+        const startTimeInput = document.querySelector('input[name="start_time"]');
+        const endTimeInput = document.querySelector('input[name="end_time"]');
         
         if (startTimeInput && endTimeInput) {
             function validateTimes() {

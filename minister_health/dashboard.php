@@ -25,6 +25,107 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get sidebar statistics
+try {
+    // Total tickets
+    $stmt = $pdo->query("SELECT COUNT(*) as total_tickets FROM tickets");
+    $total_tickets_all = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'] ?? 0;
+    
+    // Open tickets
+    $stmt = $pdo->query("SELECT COUNT(*) as open_tickets FROM tickets WHERE status = 'open'");
+    $open_tickets_all = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'] ?? 0;
+    
+    // Pending reports
+    $pending_reports = 0;
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'");
+        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_reports = 0;
+    }
+    
+    // Unread messages
+    $unread_messages = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_count 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+    }
+    
+    // New students count
+    $new_students = 0;
+    try {
+        $new_students_stmt = $pdo->prepare("
+            SELECT COUNT(*) as new_students 
+            FROM users 
+            WHERE role = 'student' 
+            AND status = 'active' 
+            AND created_at >= NOW() - INTERVAL '7 days'
+        ");
+        $new_students_stmt->execute();
+        $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+    } catch (PDOException $e) {
+        $new_students = 0;
+    }
+    
+    // Upcoming meetings count
+    $upcoming_meetings = 0;
+    try {
+        $upcoming_meetings = $pdo->query("
+            SELECT COUNT(*) as count FROM meetings 
+            WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $upcoming_meetings = 0;
+    }
+    
+    // Pending minutes count
+    $pending_minutes = 0;
+    try {
+        $pending_minutes = $pdo->query("
+            SELECT COUNT(*) as count FROM meeting_minutes 
+            WHERE approval_status = 'submitted'
+        ")->fetch()['count'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_minutes = 0;
+    }
+    
+    // Pending tickets for badge
+    $pending_tickets_badge = 0;
+    try {
+        $ticketStmt = $pdo->prepare("
+            SELECT COUNT(*) as pending_tickets 
+            FROM tickets 
+            WHERE status IN ('open', 'in_progress') 
+            AND (assigned_to = ? OR assigned_to IS NULL)
+        ");
+        $ticketStmt->execute([$user_id]);
+        $pending_tickets_badge = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_tickets_badge = 0;
+    }
+    
+    // Pending documents
+    $pending_docs = 0;
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as pending_docs FROM documents WHERE status = 'draft'");
+        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_docs = 0;
+    }
+    
+} catch (PDOException $e) {
+    $total_tickets_all = $open_tickets_all = $pending_reports = $unread_messages = 0;
+    $new_students = $upcoming_meetings = $pending_minutes = $pending_tickets_badge = $pending_docs = 0;
+}
+
 // Get dashboard statistics for Minister of Health
 try {
     // Health-related tickets (assuming category_id 4 is for health)
@@ -59,28 +160,36 @@ try {
     $stmt->execute();
     $pending_hostel = $stmt->fetch(PDO::FETCH_ASSOC)['pending_hostel'] ?? 0;
     
-    // Health awareness campaigns (using events table if exists, otherwise placeholder)
+    // Health awareness campaigns
     $health_campaigns = 0;
     try {
-        // Check if events table exists
-        $stmt = $pdo->query("SHOW TABLES LIKE 'events'");
-        if ($stmt->rowCount() > 0) {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as health_campaigns 
-                FROM events 
-                WHERE (category_id IN (SELECT id FROM event_categories WHERE name LIKE '%health%' OR name LIKE '%medical%')
-                OR title LIKE '%health%' OR title LIKE '%medical%')
-                AND event_date >= CURDATE()
-            ");
-            $stmt->execute();
-            $health_campaigns = $stmt->fetch(PDO::FETCH_ASSOC)['health_campaigns'] ?? 0;
-        }
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as health_campaigns 
+            FROM events 
+            WHERE (category_id IN (SELECT id FROM event_categories WHERE name ILIKE '%health%' OR name ILIKE '%medical%')
+            OR title ILIKE '%health%' OR title ILIKE '%medical%')
+            AND event_date >= CURRENT_DATE
+        ");
+        $stmt->execute();
+        $health_campaigns = $stmt->fetch(PDO::FETCH_ASSOC)['health_campaigns'] ?? 0;
     } catch (Exception $e) {
-        // Events table doesn't exist or has issues
         error_log("Events table error: " . $e->getMessage());
     }
     
-
+    // Restaurant complaints (assuming category_id 5 is for restaurant)
+    $restaurant_complaints = 0;
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as restaurant_complaints 
+            FROM tickets 
+            WHERE category_id = 5 
+            AND status IN ('open', 'in_progress')
+        ");
+        $stmt->execute();
+        $restaurant_complaints = $stmt->fetch(PDO::FETCH_ASSOC)['restaurant_complaints'] ?? 0;
+    } catch (PDOException $e) {
+        $restaurant_complaints = 0;
+    }
     
     // Recent health incidents (using tickets for health issues)
     $stmt = $pdo->prepare("
@@ -88,34 +197,29 @@ try {
         FROM tickets t
         JOIN users u ON t.reg_number = u.reg_number
         LEFT JOIN departments d ON u.department_id = d.id
-        WHERE t.category_id = 4  -- Health category
+        WHERE t.category_id = 4
         ORDER BY t.created_at DESC 
         LIMIT 5
     ");
     $stmt->execute();
     $recent_incidents = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Upcoming health events (if events table exists)
+    // Upcoming health events
     $upcoming_events = [];
     try {
-        // Check if events table exists
-        $stmt = $pdo->query("SHOW TABLES LIKE 'events'");
-        if ($stmt->rowCount() > 0) {
-            $stmt = $pdo->prepare("
-                SELECT e.*, ec.name as category_name
-                FROM events e
-                LEFT JOIN event_categories ec ON e.category_id = ec.id
-                WHERE (ec.name LIKE '%health%' OR ec.name LIKE '%medical%' OR e.title LIKE '%health%' OR e.title LIKE '%medical%')
-                AND e.event_date >= CURDATE()
-                AND e.status = 'published'
-                ORDER BY e.event_date ASC
-                LIMIT 5
-            ");
-            $stmt->execute();
-            $upcoming_events = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        }
+        $stmt = $pdo->prepare("
+            SELECT e.*, ec.name as category_name
+            FROM events e
+            LEFT JOIN event_categories ec ON e.category_id = ec.id
+            WHERE (ec.name ILIKE '%health%' OR ec.name ILIKE '%medical%' OR e.title ILIKE '%health%' OR e.title ILIKE '%medical%')
+            AND e.event_date >= CURRENT_DATE
+            AND e.status = 'published'
+            ORDER BY e.event_date ASC
+            LIMIT 5
+        ");
+        $stmt->execute();
+        $upcoming_events = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Exception $e) {
-        // Events table doesn't exist or has issues
         error_log("Events table error: " . $e->getMessage());
     }
     
@@ -125,82 +229,68 @@ try {
         FROM tickets t
         JOIN users u ON t.reg_number = u.reg_number
         LEFT JOIN departments d ON u.department_id = d.id
-        WHERE t.category_id = 4  -- Health category
+        WHERE t.category_id = 4
         ORDER BY t.created_at DESC
         LIMIT 5
     ");
     $stmt->execute();
     $recent_tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Recent activities (login activities if table exists)
+    // Recent activities (login activities)
     $recent_activities = [];
     try {
-        // Check if login_activities table exists
-        $stmt = $pdo->query("SHOW TABLES LIKE 'login_activities'");
-        if ($stmt->rowCount() > 0) {
-            $stmt = $pdo->query("
-                SELECT la.*, u.full_name, u.role 
-                FROM login_activities la 
-                JOIN users u ON la.user_id = u.id 
-                ORDER BY la.login_time DESC 
-                LIMIT 8
-            ");
-            $recent_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        }
+        $stmt = $pdo->query("
+            SELECT la.*, u.full_name, u.role 
+            FROM login_activities la 
+            JOIN users u ON la.user_id = u.id 
+            ORDER BY la.login_time DESC 
+            LIMIT 8
+        ");
+        $recent_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Exception $e) {
-        // Login activities table doesn't exist or has issues
         error_log("Login activities table error: " . $e->getMessage());
     }
     
-    // Unread messages (if conversation system exists)
-    $unread_messages = 0;
-    try {
-        // Check if conversation tables exist
-        $stmt = $pdo->query("SHOW TABLES LIKE 'conversation_messages'");
-        if ($stmt->rowCount() > 0) {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as unread_messages 
-                FROM conversation_messages cm
-                JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
-                WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
-            ");
-            $stmt->execute([$user_id]);
-            $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
-        }
-    } catch (Exception $e) {
-        // Conversation tables don't exist or have issues
-        error_log("Conversation tables error: " . $e->getMessage());
-    }
-    
     // Health statistics by department
-    $stmt = $pdo->query("
+    $stmt = $pdo->prepare("
         SELECT 
             d.name as department_name,
             COUNT(t.id) as health_issues
         FROM tickets t
         JOIN users u ON t.reg_number = u.reg_number
         JOIN departments d ON u.department_id = d.id
-        WHERE t.category_id = 4  -- Health issues
-        AND t.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        WHERE t.category_id = 4
+        AND t.created_at >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY d.id, d.name
         ORDER BY health_issues DESC
         LIMIT 5
     ");
+    $stmt->execute();
     $health_by_department = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
+    // Hostel occupancy rate
+    $hostel_occupancy = 0;
+    try {
+        $total_capacity = $pdo->query("SELECT SUM(capacity) as total FROM hostel_rooms")->fetch()['total'] ?? 1;
+        $hostel_occupancy = $total_capacity > 0 ? round(($hostel_students / $total_capacity) * 100) : 0;
+    } catch (PDOException $e) {
+        $hostel_occupancy = 0;
+    }
+    
 } catch (PDOException $e) {
-    // Handle general error
     error_log("Minister of Health dashboard statistics error: " . $e->getMessage());
     $health_tickets = $total_students = $hostel_students = $pending_hostel = 0;
+    $health_campaigns = $restaurant_complaints = 0;
     $recent_incidents = $upcoming_events = $recent_tickets = $recent_activities = [];
     $health_by_department = [];
+    $hostel_occupancy = 0;
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Minister of Health Dashboard - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -227,6 +317,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -266,14 +358,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -283,7 +372,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -292,38 +380,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -331,22 +425,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -355,41 +434,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -399,50 +469,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -472,9 +577,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -489,11 +592,18 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -523,7 +633,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -552,13 +662,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -573,7 +684,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -591,7 +702,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -599,7 +710,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -610,11 +721,18 @@ try {
             gap: 1.5rem;
         }
 
+        @media (max-width: 992px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
         .card-header {
@@ -623,6 +741,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-green);
         }
 
         .card-header h3 {
@@ -656,6 +775,10 @@ try {
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -675,6 +798,11 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -685,22 +813,89 @@ try {
 
         .status-open {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-in_progress {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-closed {
-            background: #f8d7da;
-            color: var(--danger);
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
+        /* Department Stats */
+        .department-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+        }
+
+        .department-stat {
+            background: var(--light-gray);
+            padding: 0.75rem;
+            border-radius: var(--border-radius);
+            text-align: center;
+        }
+
+        .department-name {
+            font-size: 0.7rem;
+            color: var(--dark-gray);
+            margin-bottom: 0.25rem;
+        }
+
+        .department-count {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--primary-green);
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 0.75rem;
+            background: var(--white);
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            text-decoration: none;
+            color: var(--text-dark);
+            transition: var(--transition);
+            text-align: center;
+        }
+
+        .action-btn:hover {
+            border-color: var(--primary-green);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .action-btn i {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: var(--primary-green);
+        }
+
+        .action-label {
+            font-weight: 600;
+            font-size: 0.7rem;
         }
 
         /* Activity List */
@@ -739,54 +934,67 @@ try {
         }
 
         .activity-text {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--text-dark);
             margin-bottom: 0.25rem;
         }
 
         .activity-time {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             color: var(--dark-gray);
         }
 
-        /* Quick Actions */
-        .quick-actions {
+        /* Quick Overview */
+        .quick-overview {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
-            margin-top: 1.5rem;
         }
 
-        .action-btn {
+        .overview-item {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            background: var(--white);
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            color: var(--text-dark);
-            transition: var(--transition);
-            text-align: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--medium-gray);
         }
 
-        .action-btn:hover {
-            border-color: var(--primary-green);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+        .overview-item:last-child {
+            border-bottom: none;
         }
 
-        .action-btn i {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
-            color: var(--primary-green);
-        }
-
-        .action-label {
-            font-weight: 600;
+        .overview-label {
+            color: var(--dark-gray);
             font-size: 0.75rem;
+        }
+
+        .overview-value {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.8rem;
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            height: 6px;
+            background: var(--medium-gray);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.25rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--primary-green);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 0.65rem;
+            color: var(--dark-gray);
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.25rem;
         }
 
         /* Alert */
@@ -795,7 +1003,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
-            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-warning {
@@ -814,89 +1024,112 @@ try {
             text-decoration: underline;
         }
 
-        /* Department Stats */
-        .department-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-
-        .department-stat {
-            background: var(--light-gray);
-            padding: 0.75rem;
-            border-radius: var(--border-radius);
+        /* Empty State */
+        .empty-state {
             text-align: center;
-        }
-
-        .department-name {
-            font-size: 0.7rem;
+            padding: 2rem;
             color: var(--dark-gray);
-            margin-bottom: 0.25rem;
         }
 
-        .department-count {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary-green);
-        }
-
-        /* Progress Bars */
-        .progress-bar {
-            height: 6px;
-            background: var(--medium-gray);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-bottom: 0.25rem;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--success);
-            border-radius: 3px;
-        }
-
-        .progress-text {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-            display: flex;
-            justify-content: space-between;
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .quick-actions {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .department-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -904,21 +1137,59 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
+            .quick-actions {
+                grid-template-columns: 1fr;
+            }
+
+            .department-stats {
+                grid-template-columns: 1fr;
+            }
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Minister of Health</h1>
                 </div>
@@ -928,7 +1199,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -958,7 +1232,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" class="active">
@@ -1009,12 +1286,18 @@ try {
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Reports & Analytics</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="meetings.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Meetings</span>
+                        <?php if ($upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1036,18 +1319,18 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Welcome, Health Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 🏥</h1>
-                    <p>Manage student health, welfare, and social affairs for <?php echo date('Y'); ?> academic year</p>
+                    <p>Manage student health, welfare, and social affairs for the academic year</p>
                 </div>
             </div>
 
             <?php if ($password_change_required): ?>
                 <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    <strong>Action Required:</strong> Please <a href="profile.php?tab=security">change your password</a> for security reasons.
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span><strong>Action Required:</strong> Please <a href="profile.php?tab=security">change your password</a> for security reasons.</span>
                 </div>
             <?php endif; ?>
 
@@ -1058,7 +1341,7 @@ try {
                         <i class="fas fa-user-injured"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $health_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($health_tickets); ?></div>
                         <div class="stat-label">Health Issues</div>
                     </div>
                 </div>
@@ -1067,34 +1350,50 @@ try {
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_students; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_students); ?></div>
                         <div class="stat-label">Total Students</div>
                     </div>
                 </div>
-
+                <div class="stat-card info">
+                    <div class="stat-icon">
+                        <i class="fas fa-bed"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number"><?php echo number_format($hostel_occupancy); ?>%</div>
+                        <div class="stat-label">Hostel Occupancy</div>
+                    </div>
+                </div>
                 <div class="stat-card danger">
                     <div class="stat-icon">
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $pending_hostel; ?></div>
+                        <div class="stat-number"><?php echo number_format($pending_hostel); ?></div>
                         <div class="stat-label">Pending Hostel Requests</div>
                     </div>
                 </div>
             </div>
 
             <!-- Additional Stats Grid -->
-            <div class="stats-grid" style="margin-top: 1rem;">
+            <div class="stats-grid">
                 <div class="stat-card info">
                     <div class="stat-icon">
                         <i class="fas fa-bullhorn"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $health_campaigns; ?></div>
+                        <div class="stat-number"><?php echo number_format($health_campaigns); ?></div>
                         <div class="stat-label">Health Campaigns</div>
                     </div>
                 </div>
-
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <i class="fas fa-utensils"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number"><?php echo number_format($restaurant_complaints); ?></div>
+                        <div class="stat-label">Restaurant Complaints</div>
+                    </div>
+                </div>
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-calendar-check"></i>
@@ -1138,36 +1437,40 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Student</th>
-                                        <th>Issue Type</th>
-                                        <th>Date</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php if (empty($recent_tickets)): ?>
+                            <div class="table-container">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td colspan="4" style="text-align: center; color: var(--dark-gray); padding: 2rem;">No recent health issues</td>
+                                            <th>Student</th>
+                                            <th>Issue Type</th>
+                                            <th>Date</th>
+                                            <th>Status</th>
                                         </tr>
-                                    <?php else: ?>
-                                        <?php foreach ($recent_tickets as $ticket): ?>
+                                    </thead>
+                                    <tbody>
+                                        <?php if (empty($recent_tickets)): ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($ticket['full_name']); ?></td>
-                                                <td><?php echo htmlspecialchars($ticket['subject']); ?></td>
-                                                <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $ticket['status']; ?>">
-                                                        <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
-                                                    </span>
-                                                </td>
+                                                <td colspan="4" class="empty-state">No recent health issues</td>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </tbody>
-                            </table>
+                                        <?php else: ?>
+                                            <?php foreach ($recent_tickets as $ticket): ?>
+                                                <tr>
+                                                    <td><strong><?php echo htmlspecialchars($ticket['full_name']); ?></strong><br>
+                                                    <small><?php echo htmlspecialchars($ticket['reg_number']); ?></small>
+                                                </td>
+                                                    <td><?php echo htmlspecialchars($ticket['subject']); ?></td>
+                                                    <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo str_replace('_', '', $ticket['status']); ?>">
+                                                            <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
 
@@ -1182,36 +1485,38 @@ try {
                             </div>
                         </div>
                         <div class="card-body">
-                            <?php if (empty($upcoming_events)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No upcoming health events</p>
-                                </div>
-                            <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Event</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Category</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($upcoming_events as $event): ?>
+                            <div class="table-container">
+                                <?php if (empty($upcoming_events)): ?>
+                                    <div class="empty-state">
+                                        <i class="fas fa-calendar-times"></i>
+                                        <p>No upcoming health events</p>
+                                    </div>
+                                <?php else: ?>
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($event['title']); ?></td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($event['event_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($event['start_time'])); ?></small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($event['location']); ?></td>
-                                                <td><?php echo htmlspecialchars($event['category_name']); ?></td>
+                                                <th>Event</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
+                                                <th>Category</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                            <?php endif; ?>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($upcoming_events as $event): ?>
+                                                <tr>
+                                                    <td><strong><?php echo htmlspecialchars($event['title']); ?></strong></td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($event['event_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($event['start_time'])); ?></small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($event['location']); ?></td>
+                                                    <td><?php echo htmlspecialchars($event['category_name']); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
 
@@ -1222,7 +1527,8 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($health_by_department)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-chart-pie"></i>
                                     <p>No health issues data by department</p>
                                 </div>
                             <?php else: ?>
@@ -1231,9 +1537,7 @@ try {
                                         <div class="department-stat">
                                             <div class="department-name"><?php echo htmlspecialchars($dept['department_name']); ?></div>
                                             <div class="department-count"><?php echo $dept['health_issues']; ?></div>
-                                            <div style="font-size: 0.6rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                issues
-                                            </div>
+                                            <div style="font-size: 0.6rem; color: var(--dark-gray); margin-top: 0.25rem;">issues</div>
                                         </div>
                                     <?php endforeach; ?>
                                 </div>
@@ -1264,28 +1568,36 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
-
-
-                    <!-- Health Statistics -->
+                    <!-- Quick Overview -->
                     <div class="card">
                         <div class="card-header">
                             <h3>Health & Welfare Overview</h3>
                         </div>
                         <div class="card-body">
-                            <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Unread Messages</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $unread_messages; ?></strong>
+                            <div class="quick-overview">
+                                <div class="overview-item">
+                                    <span class="overview-label">Unread Messages</span>
+                                    <span class="overview-value"><?php echo $unread_messages; ?></span>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Pending Hostel Requests</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $pending_hostel; ?></strong>
+                                <div class="overview-item">
+                                    <span class="overview-label">Pending Hostel Requests</span>
+                                    <span class="overview-value"><?php echo $pending_hostel; ?></span>
                                 </div>
-
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Health Campaigns</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $health_campaigns; ?> events</strong>
+                                <div class="overview-item">
+                                    <span class="overview-label">Health Campaigns</span>
+                                    <span class="overview-value"><?php echo $health_campaigns; ?> events</span>
                                 </div>
+                                <div class="overview-item">
+                                    <span class="overview-label">Hostel Occupancy</span>
+                                    <span class="overview-value"><?php echo $hostel_occupancy; ?>%</span>
+                                </div>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: <?php echo $hostel_occupancy; ?>%"></div>
+                            </div>
+                            <div class="progress-text">
+                                <span>Hostel Capacity</span>
+                                <span><?php echo $hostel_students; ?>/<?php echo $total_students; ?> students</span>
                             </div>
                         </div>
                     </div>
@@ -1293,16 +1605,17 @@ try {
                     <!-- Pending Actions Alert -->
                     <?php if ($health_tickets > 0 || $pending_hostel > 0 || $restaurant_complaints > 0): ?>
                         <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i> 
-                            <strong>Action Required:</strong> You have 
-                            <?php
-                            $pending_items = [];
-                            if ($health_tickets > 0) $pending_items[] = "<a href='health_tickets.php'>$health_tickets health issues</a>";
-
-
-                            
-                            echo implode(', ', $pending_items);
-                            ?> pending.
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>
+                                <strong>Action Required:</strong> You have 
+                                <?php
+                                $pending_items = [];
+                                if ($health_tickets > 0) $pending_items[] = "<a href='health_tickets.php'>$health_tickets health issues</a>";
+                                if ($pending_hostel > 0) $pending_items[] = "<a href='hostels.php'>$pending_hostel hostel requests</a>";
+                                if ($restaurant_complaints > 0) $pending_items[] = "<a href='health_tickets.php'>$restaurant_complaints restaurant complaints</a>";
+                                echo implode(', ', $pending_items);
+                                ?> pending.
+                            </span>
                         </div>
                     <?php endif; ?>
 
@@ -1313,22 +1626,23 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($recent_incidents)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-heartbeat"></i>
                                     <p>No recent health incidents</p>
                                 </div>
                             <?php else: ?>
                                 <?php foreach ($recent_incidents as $incident): ?>
                                     <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--medium-gray);">
-                                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
                                             <div>
                                                 <strong style="font-size: 0.8rem;"><?php echo htmlspecialchars($incident['subject']); ?></strong>
                                                 <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
                                                     <?php echo date('M j, Y', strtotime($incident['created_at'])); ?>
                                                 </div>
                                             </div>
-                                            <div style="text-align: right;">
-                                                <span class="status-badge status-<?php echo $incident['status']; ?>" style="font-size: 0.6rem;">
-                                                    <?php echo ucfirst($incident['status']); ?>
+                                            <div>
+                                                <span class="status-badge status-<?php echo str_replace('_', '', $incident['status']); ?>">
+                                                    <?php echo ucfirst(str_replace('_', ' ', $incident['status'])); ?>
                                                 </span>
                                             </div>
                                         </div>
@@ -1353,7 +1667,6 @@ try {
         const themeToggle = document.getElementById('themeToggle');
         const body = document.body;
 
-        // Check for saved theme preference or respect OS preference
         const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         if (savedTheme === 'dark') {
             body.classList.add('dark-mode');
@@ -1367,18 +1680,96 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Auto-refresh dashboard every 3 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Health Dashboard auto-refresh triggered');
-        }, 180000);
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars</i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
             });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

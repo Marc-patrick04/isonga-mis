@@ -140,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Update password
                 $stmt = $pdo->prepare("
                     UPDATE users 
-                    SET password = ?, updated_at = NOW()
+                    SET password = ?, updated_at = NOW(), last_password_change = NOW()
                     WHERE id = ?
                 ");
                 $stmt->execute([$new_password, $user_id]);
@@ -208,8 +208,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $_SESSION['error'] = "Failed to upload profile picture";
                     }
                 } else {
-                    $upload_error = $_FILES['avatar']['error'] ?? 'Unknown error';
-                    $_SESSION['error'] = "Please select a valid image file. Error: " . $upload_error;
+                    $upload_error = $_FILES['avatar']['error'] ?? 'No file selected';
+                    $_SESSION['error'] = "Please select a valid image file. Error code: " . $upload_error;
                 }
                 break;
         }
@@ -224,6 +224,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
     } catch (PDOException $e) {
         $_SESSION['error'] = "Action failed: " . $e->getMessage();
+        header("Location: profile.php?tab=" . $active_tab);
+        exit();
     }
 }
 
@@ -240,19 +242,28 @@ try {
 } catch (PDOException $e) {
     $login_history = [];
 }
-?>
 
+// Helper function to format user agent
+function getDeviceFromUserAgent($user_agent) {
+    if (strpos($user_agent, 'Windows') !== false) return 'Windows';
+    if (strpos($user_agent, 'Mac') !== false) return 'macOS';
+    if (strpos($user_agent, 'Linux') !== false) return 'Linux';
+    if (strpos($user_agent, 'iPhone') !== false) return 'iPhone';
+    if (strpos($user_agent, 'iPad') !== false) return 'iPad';
+    if (strpos($user_agent, 'Android') !== false) return 'Android';
+    return 'Unknown';
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Profile & Settings - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* Reuse all the CSS from dashboard.php */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -266,6 +277,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --finance-primary: #1976D2;
             --finance-secondary: #2196F3;
             --finance-accent: #0D47A1;
@@ -277,6 +289,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -292,11 +306,11 @@ try {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #4dd0e1;
             --finance-primary: #2196F3;
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
         }
 
         * {
@@ -319,14 +333,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -336,7 +347,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -345,38 +355,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -384,22 +400,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -408,41 +409,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -452,57 +444,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -532,9 +552,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -547,6 +565,20 @@ try {
             margin-left: auto;
         }
 
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -563,10 +595,10 @@ try {
             font-size: 0.9rem;
         }
 
-        /* Content Grid */
-        .content-grid {
+        /* Profile Container */
+        .profile-container {
             display: grid;
-            grid-template-columns: 1fr;
+            grid-template-columns: 280px 1fr;
             gap: 1.5rem;
         }
 
@@ -592,152 +624,11 @@ try {
             color: var(--text-dark);
         }
 
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .card-header-btn:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
-        }
-
         .card-body {
             padding: 1.25rem;
         }
 
-        /* Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 1.5rem;
-        }
-
-        .tab {
-            padding: 0.75rem 1.5rem;
-            background: none;
-            border: none;
-            border-bottom: 3px solid transparent;
-            color: var(--dark-gray);
-            cursor: pointer;
-            transition: var(--transition);
-            font-weight: 500;
-        }
-
-        .tab.active {
-            color: var(--finance-primary);
-            border-bottom-color: var(--finance-primary);
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--finance-primary);
-            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: var(--transition);
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .btn-primary {
-            background: var(--finance-primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--finance-accent);
-            transform: translateY(-1px);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: var(--text-dark);
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.75rem;
-        }
-
-        /* Profile Layout */
-        .profile-container {
-            display: grid;
-            grid-template-columns: 300px 1fr;
-            gap: 1.5rem;
-        }
-
+        /* Profile Sidebar */
         .profile-sidebar {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -782,7 +673,7 @@ try {
             justify-content: center;
             cursor: pointer;
             transition: var(--transition);
-            border: 2px solid white;
+            border: 2px solid var(--white);
         }
 
         .avatar-upload:hover {
@@ -806,13 +697,13 @@ try {
         .profile-stats {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 1rem;
+            gap: 0.75rem;
             margin: 1.5rem 0;
         }
 
         .stat-item {
             text-align: center;
-            padding: 1rem;
+            padding: 0.75rem;
             background: var(--light-gray);
             border-radius: var(--border-radius);
         }
@@ -824,11 +715,81 @@ try {
         }
 
         .stat-label {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
-        /* Form sections */
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--medium-gray);
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .tab {
+            padding: 0.75rem 1.25rem;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            color: var(--dark-gray);
+            cursor: pointer;
+            transition: var(--transition);
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+
+        .tab:hover {
+            color: var(--finance-primary);
+        }
+
+        .tab.active {
+            color: var(--finance-primary);
+            border-bottom-color: var(--finance-primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .form-control, .form-select {
+            width: 100%;
+            padding: 0.7rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.8rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--finance-primary);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+        }
+
+        textarea.form-control {
+            resize: vertical;
+        }
+
         .form-section {
             margin-bottom: 2rem;
         }
@@ -838,6 +799,7 @@ try {
             color: var(--text-dark);
             border-bottom: 2px solid var(--finance-light);
             padding-bottom: 0.5rem;
+            font-size: 0.9rem;
         }
 
         .form-row {
@@ -849,35 +811,61 @@ try {
         .checkbox-group {
             display: flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.75rem;
         }
 
         .checkbox-group input[type="checkbox"] {
-            width: auto;
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
         }
 
-        /* Security badges */
-        .security-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
+        /* Buttons */
+        .btn {
+            padding: 0.7rem 1.5rem;
+            border: none;
             border-radius: var(--border-radius);
             font-size: 0.8rem;
             font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
         }
 
-        .security-badge.enabled {
-            background: #d4edda;
-            color: var(--success);
+        .btn-primary {
+            background: var(--finance-primary);
+            color: white;
         }
 
-        .security-badge.disabled {
-            background: #f8d7da;
-            color: var(--danger);
+        .btn-primary:hover {
+            background: var(--finance-accent);
+            transform: translateY(-1px);
         }
 
-        /* Login sessions */
+        /* Password Strength */
+        .password-strength {
+            height: 4px;
+            background: var(--light-gray);
+            border-radius: 2px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+        }
+
+        .password-strength-fill {
+            height: 100%;
+            width: 0;
+            transition: width 0.3s ease;
+        }
+
+        .strength-weak { background: var(--danger); width: 25%; }
+        .strength-fair { background: var(--warning); width: 50%; }
+        .strength-good { background: var(--info); width: 75%; }
+        .strength-strong { background: var(--success); width: 100%; }
+
+        /* Login Sessions */
         .login-session {
             display: flex;
             align-items: center;
@@ -885,7 +873,7 @@ try {
             padding: 1rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
         }
 
         .session-icon {
@@ -897,6 +885,7 @@ try {
             align-items: center;
             justify-content: center;
             color: var(--finance-primary);
+            flex-shrink: 0;
         }
 
         .session-info {
@@ -906,18 +895,20 @@ try {
         .session-location {
             font-weight: 600;
             margin-bottom: 0.25rem;
+            font-size: 0.85rem;
         }
 
         .session-meta {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
         .session-status {
             font-size: 0.7rem;
-            padding: 0.25rem 0.5rem;
+            padding: 0.25rem 0.75rem;
             border-radius: 20px;
             font-weight: 600;
+            flex-shrink: 0;
         }
 
         .status-success {
@@ -925,24 +916,33 @@ try {
             color: var(--success);
         }
 
-        /* Password strength */
-        .password-strength {
-            height: 4px;
-            background: var(--light-gray);
-            border-radius: 2px;
-            margin-top: 0.5rem;
-            overflow: hidden;
+        .status-failed {
+            background: #f8d7da;
+            color: var(--danger);
         }
 
-        .password-strength-fill {
-            height: 100%;
-            transition: var(--transition);
+        /* Alerts */
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
-        .strength-weak { background: var(--danger); width: 25%; }
-        .strength-fair { background: var(--warning); width: 50%; }
-        .strength-good { background: #17a2b8; width: 75%; }
-        .strength-strong { background: var(--success); width: 100%; }
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
+        }
 
         /* Modal */
         .modal {
@@ -967,7 +967,7 @@ try {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-lg);
             width: 90%;
-            max-width: 500px;
+            max-width: 450px;
             max-height: 90vh;
             overflow-y: auto;
         }
@@ -978,6 +978,12 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--finance-light);
+        }
+
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
         }
 
         .modal-body {
@@ -989,7 +995,7 @@ try {
             border-top: 1px solid var(--medium-gray);
             display: flex;
             justify-content: flex-end;
-            gap: 0.5rem;
+            gap: 0.75rem;
         }
 
         .close {
@@ -1021,7 +1027,7 @@ try {
         .file-upload {
             border: 2px dashed var(--medium-gray);
             border-radius: var(--border-radius);
-            padding: 2rem;
+            padding: 1.5rem;
             text-align: center;
             transition: var(--transition);
             cursor: pointer;
@@ -1035,87 +1041,179 @@ try {
         .file-upload i {
             font-size: 2rem;
             color: var(--dark-gray);
+            margin-bottom: 0.75rem;
+        }
+
+        .file-upload p {
+            margin-bottom: 0.25rem;
+            font-weight: 500;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
             margin-bottom: 1rem;
-        }
-
-        /* Alerts */
-        .alert {
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left-color: var(--success);
-        }
-
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border-left-color: var(--danger);
+            opacity: 0.5;
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            #sidebarToggleBtn {
+                display: none;
+            }
+
+            .profile-container {
+                grid-template-columns: 1fr;
+            }
+
+            .profile-sidebar {
+                max-width: 350px;
+                margin: 0 auto;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .profile-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-            
-            .tabs {
-                flex-wrap: wrap;
-            }
-            
-            .tab {
-                flex: 1;
-                min-width: 120px;
-                text-align: center;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+            }
+
+            .tabs {
+                justify-content: center;
+            }
+
+            .tab {
+                padding: 0.6rem 1rem;
+                font-size: 0.75rem;
             }
         }
 
         @media (max-width: 480px) {
             .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
+            .profile-sidebar {
                 padding: 1rem;
+            }
+
+            .profile-avatar {
+                width: 100px;
+                height: 100px;
+                font-size: 1.5rem;
+            }
+
+            .profile-name {
+                font-size: 1rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Profile & Settings</h1>
                 </div>
@@ -1125,7 +1223,10 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
@@ -1152,7 +1253,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1245,7 +1349,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Profile & Settings ⚙️</h1>
@@ -1256,14 +1360,16 @@ try {
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success']; ?>
+                    <i class="fas fa-check-circle"></i>
+                    <span><?php echo $_SESSION['success']; ?></span>
                 </div>
                 <?php unset($_SESSION['success']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error']; ?>
+                    <i class="fas fa-exclamation-circle"></i>
+                    <span><?php echo $_SESSION['error']; ?></span>
                 </div>
                 <?php unset($_SESSION['error']); ?>
             <?php endif; ?>
@@ -1296,12 +1402,12 @@ try {
                         </div>
                     </div>
                     
-                    <div style="text-align: left; margin-top: 1.5rem; font-size: 0.8rem; color: var(--dark-gray);">
-                        <div style="margin-bottom: 0.5rem;">
+                    <div style="text-align: left; margin-top: 1rem; font-size: 0.75rem; color: var(--dark-gray);">
+                        <div style="margin-bottom: 0.75rem;">
                             <strong>Email:</strong><br>
                             <?php echo htmlspecialchars($user['email'] ?? 'Not specified'); ?>
                         </div>
-                        <div style="margin-bottom: 0.5rem;">
+                        <div style="margin-bottom: 0.75rem;">
                             <strong>Phone:</strong><br>
                             <?php echo htmlspecialchars($user['phone'] ?? 'Not specified'); ?>
                         </div>
@@ -1317,21 +1423,20 @@ try {
                     <div class="card-body">
                         <!-- Tabs -->
                         <div class="tabs">
-                            <button class="tab <?php echo $active_tab === 'profile' ? 'active' : ''; ?>" onclick="openTab('profile')">
+                            <button class="tab <?php echo $active_tab === 'profile' ? 'active' : ''; ?>" onclick="openTab(event, 'profile')">
                                 <i class="fas fa-user"></i> Personal Info
                             </button>
-                            <button class="tab <?php echo $active_tab === 'security' ? 'active' : ''; ?>" onclick="openTab('security')">
+                            <button class="tab <?php echo $active_tab === 'security' ? 'active' : ''; ?>" onclick="openTab(event, 'security')">
                                 <i class="fas fa-shield-alt"></i> Security
                             </button>
-                            <button class="tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" onclick="openTab('preferences')">
+                            <button class="tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" onclick="openTab(event, 'preferences')">
                                 <i class="fas fa-cog"></i> Preferences
                             </button>
-                            <button class="tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" onclick="openTab('sessions')">
+                            <button class="tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" onclick="openTab(event, 'sessions')">
                                 <i class="fas fa-history"></i> Login History
                             </button>
                         </div>
 
-                        <!-- Tab Content -->
                         <!-- Personal Info Tab -->
                         <div id="profile-tab" class="tab-content <?php echo $active_tab === 'profile' ? 'active' : ''; ?>">
                             <form method="POST">
@@ -1367,11 +1472,10 @@ try {
                                     
                                     <div class="form-group">
                                         <label class="form-label">Gender</label>
-                                        <select name="gender" class="form-control" required>
+                                        <select name="gender" class="form-control">
                                             <option value="">Select Gender</option>
                                             <option value="male" <?php echo ($user['gender'] ?? '') === 'male' ? 'selected' : ''; ?>>Male</option>
                                             <option value="female" <?php echo ($user['gender'] ?? '') === 'female' ? 'selected' : ''; ?>>Female</option>
-                                            
                                         </select>
                                     </div>
                                 </div>
@@ -1379,14 +1483,14 @@ try {
                                 <div class="form-section">
                                     <h4>Additional Information</h4>
                                     <div class="form-group">
-                                        <label class="form-label">Bio/About Me</label>
-                                        <textarea name="bio" class="form-control" rows="3"
+                                        <label class="form-label">Bio / About Me</label>
+                                        <textarea name="bio" class="form-control" rows="3" 
                                                   placeholder="Tell us about yourself..."><?php echo htmlspecialchars($user['bio'] ?? ''); ?></textarea>
                                     </div>
                                     
                                     <div class="form-group">
                                         <label class="form-label">Address</label>
-                                        <textarea name="address" class="form-control" rows="3"
+                                        <textarea name="address" class="form-control" rows="3" 
                                                   placeholder="Enter your address..."><?php echo htmlspecialchars($user['address'] ?? ''); ?></textarea>
                                     </div>
                                 </div>
@@ -1407,7 +1511,7 @@ try {
                                     </div>
                                 </div>
 
-                                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                                <div style="display: flex; justify-content: flex-end;">
                                     <button type="submit" class="btn btn-primary">
                                         <i class="fas fa-save"></i> Save Changes
                                     </button>
@@ -1429,7 +1533,7 @@ try {
                                     
                                     <div class="form-group">
                                         <label class="form-label">New Password *</label>
-                                        <input type="password" name="new_password" class="form-control" required 
+                                        <input type="password" name="new_password" id="newPassword" class="form-control" required 
                                                onkeyup="checkPasswordStrength(this.value)">
                                         <div class="password-strength">
                                             <div class="password-strength-fill" id="passwordStrength"></div>
@@ -1439,10 +1543,10 @@ try {
                                     
                                     <div class="form-group">
                                         <label class="form-label">Confirm New Password *</label>
-                                        <input type="password" name="confirm_password" class="form-control" required>
+                                        <input type="password" name="confirm_password" id="confirmPassword" class="form-control" required>
                                     </div>
                                     
-                                    <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                                    <div style="display: flex; justify-content: flex-end;">
                                         <button type="submit" class="btn btn-primary">
                                             <i class="fas fa-key"></i> Change Password
                                         </button>
@@ -1453,7 +1557,7 @@ try {
                             <div class="form-section">
                                 <h4>Account Security</h4>
                                 <div style="padding: 1rem; background: var(--light-gray); border-radius: var(--border-radius);">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
                                         <span>Last password change:</span>
                                         <strong><?php echo $user['last_password_change'] ? date('M j, Y g:i A', strtotime($user['last_password_change'])) : 'Never'; ?></strong>
                                     </div>
@@ -1484,7 +1588,7 @@ try {
                                     <div class="form-group">
                                         <div class="checkbox-group">
                                             <input type="checkbox" id="sms_notifications" name="sms_notifications" 
-                                                   <?php echo ($user['sms_notifications'] ?? 1) ? 'checked' : ''; ?>>
+                                                   <?php echo ($user['sms_notifications'] ?? 0) ? 'checked' : ''; ?>>
                                             <label for="sms_notifications">SMS Notifications</label>
                                         </div>
                                         <small style="color: var(--dark-gray);">Receive notifications via SMS</small>
@@ -1507,7 +1611,7 @@ try {
                                     <h4>Appearance</h4>
                                     <div class="form-group">
                                         <label class="form-label">Theme Preference</label>
-                                        <select name="theme_preference" class="form-control">
+                                        <select name="theme_preference" id="themePreferenceSelect" class="form-control">
                                             <option value="auto" <?php echo ($user['theme_preference'] ?? 'auto') === 'auto' ? 'selected' : ''; ?>>Auto (System Default)</option>
                                             <option value="light" <?php echo ($user['theme_preference'] ?? 'auto') === 'light' ? 'selected' : ''; ?>>Light Mode</option>
                                             <option value="dark" <?php echo ($user['theme_preference'] ?? 'auto') === 'dark' ? 'selected' : ''; ?>>Dark Mode</option>
@@ -1515,7 +1619,7 @@ try {
                                     </div>
                                 </div>
 
-                                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                                <div style="display: flex; justify-content: flex-end;">
                                     <button type="submit" class="btn btn-primary">
                                         <i class="fas fa-save"></i> Save Preferences
                                     </button>
@@ -1529,8 +1633,8 @@ try {
                                 <h4>Recent Login Activity</h4>
                                 
                                 <?php if (empty($login_history)): ?>
-                                    <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                        <i class="fas fa-history" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                    <div class="empty-state">
+                                        <i class="fas fa-history"></i>
                                         <p>No login history available</p>
                                     </div>
                                 <?php else: ?>
@@ -1542,23 +1646,13 @@ try {
                                             <div class="session-info">
                                                 <div class="session-location">
                                                     <?php echo htmlspecialchars($session['ip_address']); ?>
-                                                    <?php if (strpos($session['user_agent'], 'Windows') !== false): ?>
-                                                        <span style="color: var(--dark-gray); font-weight: normal;"> • Windows</span>
-                                                    <?php elseif (strpos($session['user_agent'], 'Mac') !== false): ?>
-                                                        <span style="color: var(--dark-gray); font-weight: normal;"> • macOS</span>
-                                                    <?php elseif (strpos($session['user_agent'], 'Linux') !== false): ?>
-                                                        <span style="color: var(--dark-gray); font-weight: normal;"> • Linux</span>
-                                                    <?php elseif (strpos($session['user_agent'], 'iPhone') !== false || strpos($session['user_agent'], 'iPad') !== false): ?>
-                                                        <span style="color: var(--dark-gray); font-weight: normal;"> • iOS</span>
-                                                    <?php elseif (strpos($session['user_agent'], 'Android') !== false): ?>
-                                                        <span style="color: var(--dark-gray); font-weight: normal;"> • Android</span>
-                                                    <?php endif; ?>
+                                                    <span style="color: var(--dark-gray); font-weight: normal;"> • <?php echo getDeviceFromUserAgent($session['user_agent']); ?></span>
                                                 </div>
                                                 <div class="session-meta">
                                                     <?php echo date('M j, Y g:i A', strtotime($session['login_time'])); ?>
                                                 </div>
                                             </div>
-                                            <div class="session-status status-success">
+                                            <div class="session-status <?php echo $session['success'] ? 'status-success' : 'status-failed'; ?>">
                                                 <?php echo $session['success'] ? 'Success' : 'Failed'; ?>
                                             </div>
                                         </div>
@@ -1569,17 +1663,13 @@ try {
                             <div class="form-section">
                                 <h4>Current Session</h4>
                                 <div style="padding: 1rem; background: var(--light-gray); border-radius: var(--border-radius);">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
                                         <span>IP Address:</span>
                                         <strong><?php echo $_SERVER['REMOTE_ADDR']; ?></strong>
                                     </div>
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                                        <span>Browser:</span>
-                                        <strong><?php echo htmlspecialchars($_SERVER['HTTP_USER_AGENT'] ?? 'Unknown'); ?></strong>
-                                    </div>
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span>Last Activity:</span>
-                                        <strong><?php echo date('M j, Y g:i A'); ?></strong>
+                                        <span>Device:</span>
+                                        <strong><?php echo getDeviceFromUserAgent($_SERVER['HTTP_USER_AGENT'] ?? 'Unknown'); ?></strong>
                                     </div>
                                 </div>
                             </div>
@@ -1623,9 +1713,7 @@ try {
                 <button type="submit" form="avatarForm" class="btn btn-primary" id="avatarSubmit" disabled>
                     <i class="fas fa-upload"></i> Upload Picture
                 </button>
-                <button type="button" class="btn" onclick="closeAvatarModal()">
-                    Cancel
-                </button>
+                <button type="button" class="btn" onclick="closeAvatarModal()">Cancel</button>
             </div>
         </div>
     </div>
@@ -1646,18 +1734,104 @@ try {
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            
+            // Update theme preference dropdown
+            const themeSelect = document.getElementById('themePreferenceSelect');
+            if (themeSelect) {
+                if (isDark) {
+                    themeSelect.value = 'dark';
+                } else {
+                    themeSelect.value = 'light';
+                }
+            }
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab functionality
-        function openTab(tabName) {
-            const tabs = document.querySelectorAll('.tab-content');
-            const tabButtons = document.querySelectorAll('.tab');
+        function openTab(event, tabName) {
+            // Hide all tab contents
+            const tabContents = document.querySelectorAll('.tab-content');
+            tabContents.forEach(tab => tab.classList.remove('active'));
             
+            // Remove active class from all tabs
+            const tabs = document.querySelectorAll('.tab');
             tabs.forEach(tab => tab.classList.remove('active'));
-            tabButtons.forEach(button => button.classList.remove('active'));
             
+            // Show selected tab content
             document.getElementById(tabName + '-tab').classList.add('active');
-            event.currentTarget.classList.add('active');
+            
+            // Add active class to clicked tab
+            if (event && event.currentTarget) {
+                event.currentTarget.classList.add('active');
+            } else {
+                // Find the tab button that matches this tabName
+                const tabButtons = document.querySelectorAll('.tab');
+                tabButtons.forEach(btn => {
+                    if (btn.textContent.toLowerCase().includes(tabName.toLowerCase())) {
+                        btn.classList.add('active');
+                    }
+                });
+            }
             
             // Update URL without page reload
             const url = new URL(window.location);
@@ -1668,10 +1842,12 @@ try {
         // Avatar modal functionality
         function openAvatarModal() {
             document.getElementById('avatarModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
         }
 
         function closeAvatarModal() {
             document.getElementById('avatarModal').classList.remove('active');
+            document.body.style.overflow = '';
             // Reset form
             document.getElementById('avatarForm').reset();
             document.getElementById('avatarSubmit').disabled = true;
@@ -1727,6 +1903,20 @@ try {
             }
         }
 
+        // Confirm password validation
+        const newPassword = document.getElementById('newPassword');
+        const confirmPassword = document.getElementById('confirmPassword');
+        
+        if (confirmPassword) {
+            confirmPassword.addEventListener('keyup', function() {
+                if (newPassword.value !== this.value) {
+                    this.setCustomValidity('Passwords do not match');
+                } else {
+                    this.setCustomValidity('');
+                }
+            });
+        }
+
         // Close modal on outside click
         window.addEventListener('click', function(event) {
             const modal = document.getElementById('avatarModal');
@@ -1736,29 +1926,32 @@ try {
         });
 
         // Auto-save preferences when theme is changed via dropdown
-        document.querySelector('select[name="theme_preference"]')?.addEventListener('change', function() {
-            const theme = this.value;
-            if (theme === 'dark') {
-                body.classList.add('dark-mode');
-                localStorage.setItem('theme', 'dark');
-                themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-            } else if (theme === 'light') {
-                body.classList.remove('dark-mode');
-                localStorage.setItem('theme', 'light');
-                themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-            } else {
-                // Auto mode - respect system preference
-                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                if (systemPrefersDark) {
+        const themePreferenceSelect = document.getElementById('themePreferenceSelect');
+        if (themePreferenceSelect) {
+            themePreferenceSelect.addEventListener('change', function() {
+                const theme = this.value;
+                if (theme === 'dark') {
                     body.classList.add('dark-mode');
+                    localStorage.setItem('theme', 'dark');
                     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                } else {
+                } else if (theme === 'light') {
                     body.classList.remove('dark-mode');
+                    localStorage.setItem('theme', 'light');
                     themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
+                } else {
+                    // Auto mode - respect system preference
+                    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    if (systemPrefersDark) {
+                        body.classList.add('dark-mode');
+                        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+                    } else {
+                        body.classList.remove('dark-mode');
+                        themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
+                    }
+                    localStorage.removeItem('theme');
                 }
-                localStorage.removeItem('theme');
-            }
-        });
+            });
+        }
     </script>
 </body>
 </html>

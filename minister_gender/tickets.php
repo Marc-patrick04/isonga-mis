@@ -24,59 +24,59 @@ try {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
-case 'update_status':
-    $ticket_id = $_POST['ticket_id'];
-    $new_status = $_POST['status'];
-    $resolution_notes = $_POST['resolution_notes'] ?? '';
-    
-    error_log("DEBUG: Updating ticket $ticket_id to status $new_status");
-    error_log("DEBUG: User ID: $user_id, Resolution notes: $resolution_notes");
-    
-    try {
-        // First, check if the ticket exists and is assigned to this user
-        $check_stmt = $pdo->prepare("SELECT id, assigned_to FROM tickets WHERE id = ?");
-        $check_stmt->execute([$ticket_id]);
-        $ticket = $check_stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$ticket) {
-            $_SESSION['error_message'] = "Ticket not found!";
-            error_log("DEBUG: Ticket not found - ID: $ticket_id");
-            break;
-        }
-        
-        if ($ticket['assigned_to'] != $user_id) {
-            $_SESSION['error_message'] = "You are not assigned to this ticket!";
-            error_log("DEBUG: User $user_id not assigned to ticket. Assigned to: " . $ticket['assigned_to']);
-            break;
-        }
-        
-        // Update the ticket
-        $stmt = $pdo->prepare("
-            UPDATE tickets 
-            SET status = ?, 
-                resolution_notes = ?, 
-                resolved_at = CASE WHEN ? = 'resolved' THEN NOW() ELSE NULL END, 
-                updated_at = NOW()
-            WHERE id = ? AND assigned_to = ?
-        ");
-        
-        $result = $stmt->execute([$new_status, $resolution_notes, $new_status, $ticket_id, $user_id]);
-        $rowCount = $stmt->rowCount();
-        
-        error_log("DEBUG: Update executed. Result: " . ($result ? 'true' : 'false') . ", Rows affected: $rowCount");
-        
-        if ($rowCount > 0) {
-            $_SESSION['success_message'] = "Ticket status updated successfully from " . $ticket['status'] . " to $new_status!";
-        } else {
-            $_SESSION['error_message'] = "No changes made. Ticket might not exist or you don't have permission.";
-        }
-        
-    } catch (PDOException $e) {
-        $error_msg = "Error updating ticket: " . $e->getMessage();
-        $_SESSION['error_message'] = $error_msg;
-        error_log("DEBUG: PDO Exception: " . $e->getMessage());
-    }
-    break;
+            case 'update_status':
+                $ticket_id = $_POST['ticket_id'];
+                $new_status = $_POST['status'];
+                $resolution_notes = $_POST['resolution_notes'] ?? '';
+                
+                error_log("DEBUG: Updating ticket $ticket_id to status $new_status");
+                error_log("DEBUG: User ID: $user_id, Resolution notes: $resolution_notes");
+                
+                try {
+                    // First, check if the ticket exists and is assigned to this user
+                    $check_stmt = $pdo->prepare("SELECT id, assigned_to FROM tickets WHERE id = ?");
+                    $check_stmt->execute([$ticket_id]);
+                    $ticket = $check_stmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if (!$ticket) {
+                        $_SESSION['error_message'] = "Ticket not found!";
+                        error_log("DEBUG: Ticket not found - ID: $ticket_id");
+                        break;
+                    }
+                    
+                    if ($ticket['assigned_to'] != $user_id) {
+                        $_SESSION['error_message'] = "You are not assigned to this ticket!";
+                        error_log("DEBUG: User $user_id not assigned to ticket. Assigned to: " . $ticket['assigned_to']);
+                        break;
+                    }
+                    
+                    // Update the ticket
+                    $stmt = $pdo->prepare("
+                        UPDATE tickets 
+                        SET status = ?, 
+                            resolution_notes = ?, 
+                            resolved_at = CASE WHEN ? = 'resolved' THEN CURRENT_TIMESTAMP ELSE NULL END, 
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND assigned_to = ?
+                    ");
+                    
+                    $result = $stmt->execute([$new_status, $resolution_notes, $new_status, $ticket_id, $user_id]);
+                    $rowCount = $stmt->rowCount();
+                    
+                    error_log("DEBUG: Update executed. Result: " . ($result ? 'true' : 'false') . ", Rows affected: $rowCount");
+                    
+                    if ($rowCount > 0) {
+                        $_SESSION['success_message'] = "Ticket status updated successfully from " . $ticket['status'] . " to $new_status!";
+                    } else {
+                        $_SESSION['error_message'] = "No changes made. Ticket might not exist or you don't have permission.";
+                    }
+                    
+                } catch (PDOException $e) {
+                    $error_msg = "Error updating ticket: " . $e->getMessage();
+                    $_SESSION['error_message'] = $error_msg;
+                    error_log("DEBUG: PDO Exception: " . $e->getMessage());
+                }
+                break;
                 
             case 'add_comment':
                 $ticket_id = $_POST['ticket_id'];
@@ -86,7 +86,7 @@ case 'update_status':
                 try {
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_comments (ticket_id, user_id, comment, is_internal, created_at) 
-                        VALUES (?, ?, ?, ?, NOW())
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$ticket_id, $user_id, $comment, $is_internal]);
                     
@@ -108,13 +108,13 @@ case 'update_status':
                     $current_assignee = $stmt->fetch(PDO::FETCH_ASSOC)['assigned_to'];
                     
                     // Update ticket assignment
-                    $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ?, escalation_level = escalation_level + 1, updated_at = NOW() WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ?, escalation_level = escalation_level + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $stmt->execute([$escalated_to, $ticket_id]);
                     
                     // Record escalation
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_escalations (ticket_id, escalated_by, escalated_to, reason, escalated_at, previous_assignee) 
-                        VALUES (?, ?, ?, ?, NOW(), ?)
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                     ");
                     $stmt->execute([$ticket_id, $user_id, $escalated_to, $reason, $current_assignee]);
                     
@@ -131,13 +131,13 @@ case 'update_status':
                 
                 try {
                     // Update ticket assignment
-                    $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ?, updated_at = NOW() WHERE id = ?");
+                    $stmt = $pdo->prepare("UPDATE tickets SET assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $stmt->execute([$assigned_to, $ticket_id]);
                     
                     // Record assignment
                     $stmt = $pdo->prepare("
                         INSERT INTO ticket_assignments (ticket_id, assigned_to, assigned_by, assigned_at, reason) 
-                        VALUES (?, ?, ?, NOW(), ?)
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
                     ");
                     $stmt->execute([$ticket_id, $assigned_to, $user_id, $reason]);
                     
@@ -156,7 +156,6 @@ case 'update_status':
 // Get filter parameters
 $status_filter = $_GET['status'] ?? 'all';
 $priority_filter = $_GET['priority'] ?? 'all';
-$category_filter = $_GET['category'] ?? 'all';
 $search_query = $_GET['search'] ?? '';
 
 // Build query for tickets - Gender-related issues (category_id = 7)
@@ -189,7 +188,7 @@ if ($priority_filter !== 'all') {
 }
 
 if ($search_query) {
-    $query .= " AND (t.name LIKE ? OR t.subject LIKE ? OR t.description LIKE ? OR t.reg_number LIKE ?)";
+    $query .= " AND (t.name ILIKE ? OR t.subject ILIKE ? OR t.description ILIKE ? OR t.reg_number ILIKE ?)";
     $search_param = "%$search_query%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -214,7 +213,7 @@ try {
     // Total tickets
     $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM tickets WHERE category_id = 7");
     $stmt->execute();
-    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
     
     // Tickets by status
     $stmt = $pdo->prepare("
@@ -257,13 +256,27 @@ try {
     error_log("Committee members error: " . $e->getMessage());
     $committee_members = [];
 }
+
+// Get unread messages count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Gender Issues Management - Minister of Gender & Protocol</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -289,6 +302,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -327,14 +342,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -344,7 +356,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -353,38 +364,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-purple);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -392,22 +409,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-purple);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -416,41 +418,32 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-purple);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-purple);
         }
 
         .notification-badge {
@@ -460,50 +453,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-purple);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -533,9 +561,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -550,9 +576,15 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .page-header {
@@ -560,6 +592,8 @@ try {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -586,7 +620,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-purple);
+            border-left: 4px solid var(--primary-purple);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -611,13 +645,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -632,7 +667,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -645,7 +680,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -653,7 +688,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -686,7 +721,7 @@ try {
         }
 
         .form-select, .form-input {
-            padding: 0.5rem 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
@@ -702,7 +737,7 @@ try {
         }
 
         .btn {
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1rem;
             border: none;
             border-radius: var(--border-radius);
             font-weight: 600;
@@ -735,16 +770,19 @@ try {
         }
 
         .btn-sm {
-            padding: 0.25rem 0.5rem;
+            padding: 0.3rem 0.6rem;
             font-size: 0.7rem;
         }
 
-        /* Tickets Table */
+        /* Card */
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -753,6 +791,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-purple);
         }
 
         .card-header h3 {
@@ -763,6 +804,11 @@ try {
 
         .card-body {
             padding: 1.25rem;
+        }
+
+        /* Table */
+        .table-container {
+            overflow-x: auto;
         }
 
         .table {
@@ -784,8 +830,13 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-purple);
+        }
+
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -799,21 +850,21 @@ try {
 
         .status-in_progress {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-closed {
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
         }
 
         .priority-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
@@ -826,7 +877,7 @@ try {
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
@@ -870,6 +921,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-purple);
         }
 
         .modal-header h3 {
@@ -884,6 +936,10 @@ try {
             font-size: 1.25rem;
             color: var(--dark-gray);
             cursor: pointer;
+        }
+
+        .modal-close:hover {
+            color: var(--text-dark);
         }
 
         .modal-body {
@@ -918,6 +974,10 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.8rem;
         }
 
         .alert-success {
@@ -932,109 +992,120 @@ try {
             border-left-color: var(--danger);
         }
 
-        /* Ticket Details */
-        .ticket-details {
-            display: grid;
-            gap: 1rem;
-        }
-
-        .detail-section {
-            background: var(--light-gray);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-        }
-
-        .detail-section h4 {
-            margin-bottom: 0.75rem;
-            color: var(--primary-purple);
-            font-size: 0.9rem;
-        }
-
-        .detail-row {
-            display: grid;
-            grid-template-columns: 120px 1fr;
-            margin-bottom: 0.5rem;
-            font-size: 0.8rem;
-        }
-
-        .detail-label {
-            font-weight: 600;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
             color: var(--dark-gray);
         }
 
-        .detail-value {
-            color: var(--text-dark);
-        }
-
-        .comments-section {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .comment {
-            padding: 0.75rem;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .comment:last-child {
-            border-bottom: none;
-        }
-
-        .comment-header {
-            display: flex;
-            justify-content: space-between;
+        .empty-state i {
+            font-size: 2rem;
             margin-bottom: 0.5rem;
-            font-size: 0.7rem;
+            opacity: 0.5;
         }
 
-        .comment-author {
-            font-weight: 600;
-            color: var(--primary-purple);
-        }
-
-        .comment-date {
-            color: var(--dark-gray);
-        }
-
-        .comment-internal {
-            background: #fff3cd;
-            border-left: 3px solid var(--warning);
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-purple);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .filter-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .filter-form {
+                grid-template-columns: 1fr;
+            }
+
             .action-buttons {
                 flex-direction: column;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1042,23 +1113,49 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Minister of Gender & Protocol</h1>
+                    <h1>Isonga - Gender Issues</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -1066,8 +1163,11 @@ try {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1093,79 +1193,82 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-      <nav class="sidebar">
-    <ul class="sidebar-menu">
-        <li class="menu-item">
-            <a href="dashboard.php">
-                <i class="fas fa-tachometer-alt"></i>
-                <span>Dashboard</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="tickets.php" class="active">
-                <i class="fas fa-ticket-alt"></i>
-                <span>Gender Issues</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="protocol.php">
-                <i class="fas fa-handshake"></i>
-                <span>Protocol & Visitors</span>
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="clubs.php">
-                <i class="fas fa-users"></i>
-                <span>Gender Clubs</span>
-            </a>
-        </li>
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <ul class="sidebar-menu">
+                <li class="menu-item">
+                    <a href="dashboard.php">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets.php" class="active">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Gender Issues</span>
+                        <?php if ($total_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $total_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="protocol.php">
+                        <i class="fas fa-handshake"></i>
+                        <span>Protocol & Visitors</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="clubs.php">
+                        <i class="fas fa-users"></i>
+                        <span>Gender Clubs</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="hostel-management.php">
+                        <i class="fas fa-building"></i>
+                        <span>Hostel Management</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="action-funding.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Reports & Analytics</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
 
-        <li class="menu-item">
-            <a href="hostel-management.php">
-                <i class="fas fa-building"></i>
-                <span>Hostel Management</span>
-            </a>
-        </li>
-        
-        <!-- Added Action Funding -->
-        <li class="menu-item">
-            <a href="action-funding.php">
-                <i class="fas fa-money-bill-wave"></i>
-                <span>Action Funding</span>
-            </a>
-        </li>
-        
-        <li class="menu-item">
-            <a href="reports.php">
-                <i class="fas fa-file-alt"></i>
-                <span>Reports & Analytics</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="meetings.php">
-                <i class="fas fa-calendar-alt"></i>
-                <span>Meetings</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="messages.php">
-                <i class="fas fa-comments"></i>
-                <span>Messages</span>
-
-            </a>
-        </li>
-        <li class="menu-item">
-            <a href="profile.php">
-                <i class="fas fa-user-cog"></i>
-                <span>Profile & Settings</span>
-            </a>
-        </li>
-    </ul>
-</nav>
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div class="page-title">
                     <h1>Gender Issues Management</h1>
@@ -1176,14 +1279,14 @@ try {
             <!-- Alert Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1195,7 +1298,7 @@ try {
                         <i class="fas fa-ticket-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_tickets); ?></div>
                         <div class="stat-label">Total Issues</div>
                     </div>
                 </div>
@@ -1223,7 +1326,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $open_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($open_tickets); ?></div>
                         <div class="stat-label">Open Issues</div>
                     </div>
                 </div>
@@ -1232,7 +1335,7 @@ try {
                         <i class="fas fa-spinner"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $in_progress_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($in_progress_tickets); ?></div>
                         <div class="stat-label">In Progress</div>
                     </div>
                 </div>
@@ -1241,7 +1344,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $resolved_tickets; ?></div>
+                        <div class="stat-number"><?php echo number_format($resolved_tickets); ?></div>
                         <div class="stat-label">Resolved</div>
                     </div>
                 </div>
@@ -1291,12 +1394,12 @@ try {
                 </div>
                 <div class="card-body">
                     <?php if (empty($tickets)): ?>
-                        <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                            <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state">
+                            <i class="fas fa-inbox"></i>
                             <p>No gender issues found matching your criteria.</p>
                         </div>
                     <?php else: ?>
-                        <div style="overflow-x: auto;">
+                        <div class="table-container">
                             <table class="table">
                                 <thead>
                                     <tr>
@@ -1319,7 +1422,7 @@ try {
                                             <td>
                                                 <div style="font-weight: 500;"><?php echo htmlspecialchars($ticket['subject']); ?></div>
                                                 <div style="font-size: 0.7rem; color: var(--dark-gray); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                                    <?php echo htmlspecialchars(substr($ticket['description'], 0, 50)); ?>...
+                                                    <?php echo htmlspecialchars(substr($ticket['description'] ?? '', 0, 50)); ?>...
                                                 </div>
                                             </td>
                                             <td>
@@ -1333,9 +1436,9 @@ try {
                                                 </span>
                                             </td>
                                             <td>
-                                                <?php if ($ticket['assigned_to_name']): ?>
+                                                <?php if (!empty($ticket['assigned_to_name'])): ?>
                                                     <div style="font-weight: 500;"><?php echo htmlspecialchars($ticket['assigned_to_name']); ?></div>
-                                                    <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars(str_replace('_', ' ', $ticket['assigned_to_role'])); ?></div>
+                                                    <div style="font-size: 0.7rem; color: var(--dark-gray);"><?php echo htmlspecialchars(str_replace('_', ' ', $ticket['assigned_to_role'] ?? '')); ?></div>
                                                 <?php else: ?>
                                                     <span style="color: var(--dark-gray); font-style: italic;">Unassigned</span>
                                                 <?php endif; ?>
@@ -1375,7 +1478,7 @@ try {
                 <button class="modal-close" onclick="closeModal('viewTicketModal')">&times;</button>
             </div>
             <div class="modal-body" id="ticketDetails">
-                <!-- Ticket details will be loaded here via AJAX -->
+                <div style="text-align: center; padding: 1rem;">Loading ticket details...</div>
             </div>
         </div>
     </div>
@@ -1420,87 +1523,6 @@ try {
         </div>
     </div>
 
-    <!-- Add Comment Modal -->
-    <div id="addCommentModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Add Comment</h3>
-                <button class="modal-close" onclick="closeModal('addCommentModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="addCommentForm" method="POST">
-                    <input type="hidden" name="action" value="add_comment">
-                    <input type="hidden" name="ticket_id" id="comment_ticket_id">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Comment</label>
-                        <textarea name="comment" class="form-textarea" placeholder="Enter your comment..." required></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" name="is_internal" value="1" class="form-checkbox">
-                            Internal Comment (not visible to student)
-                        </label>
-                    </div>
-                    
-                    <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-comment"></i> Add Comment
-                        </button>
-                        <button type="button" class="btn btn-secondary" onclick="closeModal('addCommentModal')">
-                            Cancel
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Escalate Ticket Modal -->
-    <div id="escalateTicketModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Escalate Ticket</h3>
-                <button class="modal-close" onclick="closeModal('escalateTicketModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="escalateTicketForm" method="POST">
-                    <input type="hidden" name="action" value="escalate_ticket">
-                    <input type="hidden" name="ticket_id" id="escalate_ticket_id">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Escalate To</label>
-                        <select name="escalated_to" class="form-select" required>
-                            <option value="">Select Committee Member</option>
-                            <?php foreach ($committee_members as $member): ?>
-                                <?php if ($member['id'] != $user_id): ?>
-                                    <option value="<?php echo $member['id']; ?>">
-                                        <?php echo htmlspecialchars($member['full_name']); ?> - <?php echo htmlspecialchars(str_replace('_', ' ', $member['role'])); ?>
-                                    </option>
-                                <?php endif; ?>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Reason for Escalation</label>
-                        <textarea name="reason" class="form-textarea" placeholder="Explain why you are escalating this ticket..." required></textarea>
-                    </div>
-                    
-                    <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-level-up-alt"></i> Escalate Ticket
-                        </button>
-                        <button type="button" class="btn btn-secondary" onclick="closeModal('escalateTicketModal')">
-                            Cancel
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
     <script>
         // Dark Mode Toggle
         const themeToggle = document.getElementById('themeToggle');
@@ -1519,13 +1541,70 @@ try {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Modal Functions
         function openModal(modalId) {
             document.getElementById(modalId).style.display = 'flex';
+            document.body.style.overflow = 'hidden';
         }
 
         function closeModal(modalId) {
             document.getElementById(modalId).style.display = 'none';
+            document.body.style.overflow = '';
         }
 
         function viewTicket(ticketId) {
@@ -1576,6 +1655,7 @@ try {
             for (let modal of modals) {
                 if (event.target === modal) {
                     modal.style.display = 'none';
+                    document.body.style.overflow = '';
                 }
             }
         }
@@ -1588,11 +1668,25 @@ try {
             }
         });
 
-        document.getElementById('escalateTicketForm')?.addEventListener('submit', function(e) {
-            if (!confirm('Are you sure you want to escalate this ticket?')) {
-                e.preventDefault();
-            }
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
+            });
+        }, 5000);
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
         });
     </script>
 </body>
-</html>
+</html
