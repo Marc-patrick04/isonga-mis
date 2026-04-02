@@ -1162,9 +1162,7 @@ $total_reps = $sidebar_reps_count;
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1176,13 +1174,7 @@ $total_reps = $sidebar_reps_count;
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1284,12 +1276,7 @@ $total_reps = $sidebar_reps_count;
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Class Representative Meetings</h1>
-                    <p>Schedule and manage meetings with class representatives</p>
-                </div>
-            </div>
+           
 
             <!-- Message Alert -->
             <?php if ($message): ?>
@@ -1773,22 +1760,7 @@ $total_reps = $sidebar_reps_count;
     </style>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

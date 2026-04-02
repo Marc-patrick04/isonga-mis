@@ -72,7 +72,7 @@ foreach ($stat_queries as $key => $query) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
-    <meta name="description" content="Isonga - RPSU Management System for Rwanda Polytechnic Musanze College. Empowering students through effective representation.">
+    <meta name="description" content="Isonga - RPSU Management System for Rwanda Polytechnic Musanze College.">
     <title>Isonga - RPSU Management System | RP Musanze College</title>
     
     <!-- Preload critical resources -->
@@ -117,7 +117,7 @@ foreach ($stat_queries as $key => $query) {
             /* Gradients */
             --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
             --gradient-secondary: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%);
-            --gradient-hero: linear-gradient(135deg, rgba(0, 86, 179, 0.92) 0%, rgba(13, 71, 161, 0.92) 100%);
+            --gradient-hero: linear-gradient(135deg, rgba(63, 118, 177, 0.76) 0%, rgba(13, 72, 161, 0.62) 100%);
             
             /* Shadows */
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -683,7 +683,7 @@ foreach ($stat_queries as $key => $query) {
             position: relative;
             background: 
                 var(--gradient-hero),
-                url('assets/images/yesu.jpeg') center/cover no-repeat;
+                url('assets/images/college.jpg') center/cover no-repeat;
         }
 
         @media (min-width: 768px) {
@@ -1855,22 +1855,22 @@ foreach ($stat_queries as $key => $query) {
             <div class="container hero-content">
                 <div class="hero-text" data-aos="fade-up" data-aos-duration="800">
                     <h2 id="hero-title">RPSU Musanze College</h2>
-                    <p>Empowering students through effective representation and innovative solutions. Your voice, our priority.</p>
+                    <p>Empowering students, innovative solutions. Your voice, our priority.</p>
                     
                     <div class="hero-stats">
                         <?php 
                         $stats = [
-                            ['number' => $student_count, 'label' => 'Students'],
-                            ['number' => $resolved_tickets, 'label' => 'Issues Resolved'],
-                            ['number' => $active_committees, 'label' => 'Committee Members'],
-                            ['number' => $active_clubs, 'label' => 'Active Clubs']
+                            // ['number' => $student_count, 'label' => 'Students'],
+                            // ['number' => $resolved_tickets, 'label' => 'Issues Resolved'],
+                            // ['number' => $active_committees, 'label' => 'Committee Members'],
+                            // ['number' => $active_clubs, 'label' => 'Active Clubs']
                         ];
                         
                         foreach ($stats as $index => $stat): ?>
-                            <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                            <!-- <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
                                 <span class="stat-number"><?= htmlspecialchars($stat['number']) ?><?= $stat['label'] === 'Students' || $stat['label'] === 'Issues Resolved' ? '+' : '' ?></span>
                                 <span class="stat-label"><?= htmlspecialchars($stat['label']) ?></span>
-                            </div>
+                            </div> -->
                         <?php endforeach; ?>
                     </div>
 
@@ -2116,12 +2116,8 @@ foreach ($stat_queries as $key => $query) {
                             <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
                                 <i class="fab fa-twitter"></i>
                             </a>
-                            <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
-                                <i class="fab fa-facebook-f"></i>
-                            </a>
-                            <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
-                                <i class="fab fa-linkedin-in"></i>
-                            </a>
+                           
+                            
                             <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
                                 <i class="fab fa-instagram"></i>
                             </a>
@@ -2160,7 +2156,7 @@ foreach ($stat_queries as $key => $query) {
                 </div>
                 
                 <div class="footer-bottom">
-                    <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
+                    <p>&copy; <?php echo date('Y'); ?> Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
                 </div>
             </div>
         </footer>

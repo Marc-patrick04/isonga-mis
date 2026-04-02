@@ -41,7 +41,7 @@ $page = max(1, intval($_GET['page'] ?? 1));
 $limit = 10;
 $offset = ($page - 1) * $limit;
 
-// Build query for meetings list
+// Build query for meetings list (PostgreSQL syntax)
 $query = "
     SELECT m.*, u.full_name as chairperson_name,
            (SELECT COUNT(*) FROM meeting_attendance ma WHERE ma.meeting_id = m.id) as total_attendees,
@@ -56,21 +56,21 @@ $params = [];
 $count_params = [];
 
 if ($search) {
-    $query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
-    $count_query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
+    $query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
+    $count_query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
     $search_term = "%$search%";
     $params = array_merge($params, [$search_term, $search_term, $search_term]);
     $count_params = array_merge($count_params, [$search_term, $search_term, $search_term]);
 }
 
-if ($status_filter) {
+if ($status_filter && $status_filter !== 'all') {
     $query .= " AND m.status = ?";
     $count_query .= " AND m.status = ?";
     $params[] = $status_filter;
     $count_params[] = $status_filter;
 }
 
-if ($type_filter) {
+if ($type_filter && $type_filter !== 'all') {
     $query .= " AND m.meeting_type = ?";
     $count_query .= " AND m.meeting_type = ?";
     $params[] = $type_filter;
@@ -97,7 +97,7 @@ try {
     // Get total count
     $count_stmt = $pdo->prepare($count_query);
     $count_stmt->execute($count_params);
-    $filtered_total = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $filtered_total = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
     $total_pages = ceil($filtered_total / $limit);
     
     // Get meetings
@@ -108,7 +108,7 @@ try {
     // Get user's attendance for each meeting
     if ($committee_member_id && !empty($meetings)) {
         $meeting_ids = array_column($meetings, 'id');
-        $placeholders = str_repeat('?,', count($meeting_ids) - 1) . '?';
+        $placeholders = implode(',', array_fill(0, count($meeting_ids), '?'));
         
         $attendance_stmt = $pdo->prepare("
             SELECT meeting_id, attendance_status, check_in_time, notes 
@@ -147,16 +147,19 @@ try {
     $total_pages = 1;
 }
 
-// Get statistics for dashboard cards
+// Get statistics for dashboard cards (PostgreSQL syntax)
 try {
     // Total meetings
-    $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings");
+    $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // Upcoming meetings
-    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    // Upcoming meetings - PostgreSQL uses CURRENT_DATE
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+    $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Today's meetings
-    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURDATE() AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURRENT_DATE AND status IN ('scheduled', 'ongoing')");
+    $todays_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // User's attendance statistics
     if ($committee_member_id) {
@@ -168,13 +171,13 @@ try {
                 SUM(CASE WHEN ma.attendance_status = 'excused' THEN 1 ELSE 0 END) as excused
             FROM meeting_attendance ma
             JOIN meetings m ON ma.meeting_id = m.id
-            WHERE ma.committee_member_id = ? AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            WHERE ma.committee_member_id = ? AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         ");
         $attendance_stmt->execute([$committee_member_id]);
         $attendance_stats = $attendance_stmt->fetch(PDO::FETCH_ASSOC);
         
-        $attendance_rate = $attendance_stats['total_invited'] > 0 
-            ? round(($attendance_stats['attended'] / $attendance_stats['total_invited']) * 100) 
+        $attendance_rate = ($attendance_stats['total_invited'] ?? 0) > 0 
+            ? round((($attendance_stats['attended'] ?? 0) / ($attendance_stats['total_invited'] ?? 1)) * 100) 
             : 0;
     } else {
         $attendance_stats = ['total_invited' => 0, 'attended' => 0, 'absent' => 0, 'excused' => 0];
@@ -185,12 +188,12 @@ try {
     $stmt = $pdo->query("SELECT DISTINCT meeting_type FROM meetings WHERE meeting_type IS NOT NULL");
     $meeting_types = $stmt->fetchAll(PDO::FETCH_COLUMN);
     
-    // Get upcoming important meetings (next 7 days)
+    // Get upcoming important meetings (next 7 days) - PostgreSQL uses INTERVAL
     $stmt = $pdo->prepare("
         SELECT m.*, u.full_name as chairperson_name
         FROM meetings m
         LEFT JOIN users u ON m.chairperson_id = u.id
-        WHERE m.meeting_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.meeting_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
         AND m.status = 'scheduled'
         ORDER BY m.meeting_date ASC, m.start_time ASC
         LIMIT 5
@@ -243,12 +246,25 @@ try {
 } catch (PDOException $e) {
     $unread_messages = 0;
 }
+
+// Get pending tickets count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    $pending_tickets = 0;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Meetings - Minister of Environment & Security - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -267,6 +283,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -274,22 +291,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-green: #4caf50;
-            --secondary-green: #66bb6a;
-            --accent-green: #388e3c;
-            --light-green: #1b5e20;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -312,14 +315,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -329,7 +329,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -350,26 +349,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -377,22 +388,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -401,12 +397,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -417,25 +412,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -445,50 +439,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -518,9 +547,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -535,23 +562,30 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        .page-header {
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
+        .dashboard-header {
             margin-bottom: 1.5rem;
         }
 
-        .page-title {
+        .welcome-section h1 {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--text-dark);
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
-        .page-description {
+        .welcome-section p {
             color: var(--dark-gray);
             font-size: 0.9rem;
         }
@@ -569,7 +603,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -593,14 +627,19 @@ try {
             border-left-color: var(--danger);
         }
 
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -615,7 +654,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -623,12 +662,17 @@ try {
             color: var(--danger);
         }
 
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -636,12 +680,12 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
         /* Filters */
-        .filters {
+        .filters-card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
@@ -649,26 +693,26 @@ try {
             margin-bottom: 1.5rem;
         }
 
-        .filter-row {
+        .filters-form {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
             align-items: end;
         }
 
-        .filter-group {
+        .form-group {
             display: flex;
             flex-direction: column;
         }
 
-        .filter-label {
+        .form-label {
             font-weight: 600;
             margin-bottom: 0.5rem;
             color: var(--text-dark);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
         }
 
-        .filter-select, .filter-input {
+        .form-control {
             padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
@@ -678,15 +722,18 @@ try {
             transition: var(--transition);
         }
 
-        .filter-select:focus, .filter-input:focus {
+        .form-control:focus {
             outline: none;
             border-color: var(--primary-green);
             box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
         }
 
-        .filter-btn {
-            background: var(--gradient-primary);
-            color: white;
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Buttons */
+        .btn {
             padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
             text-decoration: none;
@@ -700,27 +747,23 @@ try {
             gap: 0.5rem;
         }
 
-        .filter-btn:hover {
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
             transform: translateY(-2px);
             box-shadow: var(--shadow-md);
         }
 
-        .reset-btn {
+        .btn-secondary {
             background: var(--light-gray);
             color: var(--text-dark);
-            padding: 0.6rem 1.2rem;
-            border-radius: var(--border-radius);
-            text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
-            font-size: 0.85rem;
             border: 1px solid var(--medium-gray);
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
         }
 
-        .reset-btn:hover {
+        .btn-secondary:hover {
             background: var(--medium-gray);
         }
 
@@ -744,6 +787,8 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .card-header h3 {
@@ -777,6 +822,10 @@ try {
         }
 
         /* Table */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -796,6 +845,11 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -806,37 +860,37 @@ try {
 
         .status-scheduled {
             background: #cce7ff;
-            color: var(--primary-green);
+            color: #004085;
         }
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .attendance-present {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .attendance-absent {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .attendance-excused {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         /* Pagination */
@@ -848,6 +902,7 @@ try {
             margin-top: 1.5rem;
             padding-top: 1rem;
             border-top: 1px solid var(--medium-gray);
+            flex-wrap: wrap;
         }
 
         .pagination-btn {
@@ -876,6 +931,7 @@ try {
         .pagination-btn.disabled {
             opacity: 0.5;
             cursor: not-allowed;
+            pointer-events: none;
         }
 
         /* Activity List */
@@ -896,8 +952,8 @@ try {
         }
 
         .activity-avatar {
-            width: 32px;
-            height: 32px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -905,19 +961,19 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             flex-shrink: 0;
         }
 
-        .attendance-present {
+        .attendance-present-bg {
             background: var(--success);
         }
 
-        .attendance-absent {
+        .attendance-absent-bg {
             background: var(--danger);
         }
 
-        .attendance-excused {
+        .attendance-excused-bg {
             background: var(--warning);
         }
 
@@ -942,17 +998,17 @@ try {
         }
 
         .progress-bar {
-            height: 6px;
+            height: 8px;
             background: var(--medium-gray);
-            border-radius: 3px;
+            border-radius: 4px;
             overflow: hidden;
-            margin-bottom: 0.25rem;
+            margin-bottom: 0.5rem;
         }
 
         .progress-fill {
             height: 100%;
             background: var(--success);
-            border-radius: 3px;
+            border-radius: 4px;
         }
 
         .progress-text {
@@ -969,47 +1025,122 @@ try {
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-info {
             background: #d1ecf1;
             color: #0c5460;
-            border-left-color: #17a2b8;
+            border-left-color: var(--info);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 0.75rem;
+            opacity: 0.5;
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .content-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
-            .filter-row {
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .filters-form {
                 grid-template-columns: 1fr;
             }
         }
@@ -1018,18 +1149,54 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
+            .table th, .table td {
+                padding: 0.5rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1039,8 +1206,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1072,38 +1239,26 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-       <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="tickets.php" >
-        <i class="fas fa-ticket-alt"></i>
-        <span>Student Tickets</span>
-        <?php 
-        // Get pending tickets count for this minister
-        try {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as pending_tickets 
-                FROM tickets 
-                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-            ");
-            $stmt->execute([$user_id]);
-            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-            
-            if ($pending_tickets > 0): ?>
-                <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-            <?php endif;
-        } catch (PDOException $e) {
-            // Skip badge if error
-        }
-        ?>
-    </a>
-</li>
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="projects.php">
                         <i class="fas fa-leaf"></i>
@@ -1134,7 +1289,6 @@ try {
                         <span>Environmental Clubs</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1166,10 +1320,12 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <div class="page-header">
-                <h1 class="page-title">Meetings & Attendance 📋</h1>
-                <p class="page-description">View scheduled meetings and track your attendance records</p>
+        <main class="main-content" id="mainContent">
+            <div class="dashboard-header">
+                <div class="welcome-section">
+                    <h1>Meetings & Attendance 📋</h1>
+                    <p>View scheduled meetings and track your attendance records</p>
+                </div>
             </div>
 
             <!-- Info Alert -->
@@ -1220,48 +1376,44 @@ try {
             </div>
 
             <!-- Filters -->
-            <div class="filters">
-                <form method="GET" action="meetings.php">
-                    <div class="filter-row">
-                        <div class="filter-group">
-                            <label class="filter-label">Status</label>
-                            <select name="status" class="filter-select">
-                                <option value="all" <?php echo $status_filter === 'all' ? 'selected' : ''; ?>>All Statuses</option>
-                                <option value="scheduled" <?php echo $status_filter === 'scheduled' ? 'selected' : ''; ?>>Scheduled</option>
-                                <option value="ongoing" <?php echo $status_filter === 'ongoing' ? 'selected' : ''; ?>>Ongoing</option>
-                                <option value="completed" <?php echo $status_filter === 'completed' ? 'selected' : ''; ?>>Completed</option>
-                                <option value="cancelled" <?php echo $status_filter === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
-                            </select>
-                        </div>
-                        <div class="filter-group">
-                            <label class="filter-label">Meeting Type</label>
-                            <select name="type" class="filter-select">
-                                <option value="all" <?php echo $type_filter === 'all' ? 'selected' : ''; ?>>All Types</option>
-                                <?php foreach ($meeting_types as $type): ?>
-                                    <option value="<?php echo htmlspecialchars($type); ?>" <?php echo $type_filter === $type ? 'selected' : ''; ?>>
-                                        <?php echo ucfirst(str_replace('_', ' ', $type)); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="filter-group">
-                            <label class="filter-label">Date From</label>
-                            <input type="date" name="date_from" class="filter-input" value="<?php echo htmlspecialchars($date_from); ?>">
-                        </div>
-                        <div class="filter-group">
-                            <label class="filter-label">Date To</label>
-                            <input type="date" name="date_to" class="filter-input" value="<?php echo htmlspecialchars($date_to); ?>">
-                        </div>
-                        <div class="filter-group">
-                            <button type="submit" class="filter-btn">
-                                <i class="fas fa-filter"></i> Apply Filters
-                            </button>
-                        </div>
-                        <div class="filter-group">
-                            <a href="meetings.php" class="reset-btn">
-                                <i class="fas fa-times"></i> Reset
-                            </a>
-                        </div>
+            <div class="filters-card">
+                <form method="GET" action="meetings.php" class="filters-form">
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select name="status" class="form-control">
+                            <option value="all" <?php echo $status_filter === 'all' || $status_filter === '' ? 'selected' : ''; ?>>All Statuses</option>
+                            <option value="scheduled" <?php echo $status_filter === 'scheduled' ? 'selected' : ''; ?>>Scheduled</option>
+                            <option value="ongoing" <?php echo $status_filter === 'ongoing' ? 'selected' : ''; ?>>Ongoing</option>
+                            <option value="completed" <?php echo $status_filter === 'completed' ? 'selected' : ''; ?>>Completed</option>
+                            <option value="cancelled" <?php echo $status_filter === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Meeting Type</label>
+                        <select name="type" class="form-control">
+                            <option value="all" <?php echo $type_filter === 'all' || $type_filter === '' ? 'selected' : ''; ?>>All Types</option>
+                            <?php foreach ($meeting_types as $type): ?>
+                                <option value="<?php echo htmlspecialchars($type); ?>" <?php echo $type_filter === $type ? 'selected' : ''; ?>>
+                                    <?php echo ucfirst(str_replace('_', ' ', $type)); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date From</label>
+                        <input type="date" name="date_from" class="form-control" value="<?php echo htmlspecialchars($date_from); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date To</label>
+                        <input type="date" name="date_to" class="form-control" value="<?php echo htmlspecialchars($date_to); ?>">
+                    </div>
+                    <div class="form-group">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-filter"></i> Apply Filters
+                        </button>
+                        <a href="meetings.php" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Reset
+                        </a>
                     </div>
                 </form>
             </div>
@@ -1282,64 +1434,66 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($meetings)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-times"></i>
                                     <p>No meetings found matching your criteria</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Meeting Title</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Type</th>
-                                            <th>Chairperson</th>
-                                            <th>Status</th>
-                                            <th>Your Attendance</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($meetings as $meeting): ?>
+                                <div class="table-container">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                    <?php if ($meeting['description']): ?>
-                                                        <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
-                                                    <?php if ($meeting['end_time']): ?>
-                                                        - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
-                                                    <?php endif; ?>
-                                                    </small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($meeting['location']); ?></td>
-                                                <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
-                                                <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $meeting['status']; ?>">
-                                                        <?php echo ucfirst($meeting['status']); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <?php if ($meeting['attendance_status']): ?>
-                                                        <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
-                                                            <?php echo ucfirst($meeting['attendance_status']); ?>
-                                                        </span>
-                                                        <?php if ($meeting['check_in_time']): ?>
-                                                            <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
-                                                        <?php endif; ?>
-                                                    <?php else: ?>
-                                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
-                                                    <?php endif; ?>
-                                                </td>
+                                                <th>Meeting Title</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
+                                                <th>Type</th>
+                                                <th>Chairperson</th>
+                                                <th>Status</th>
+                                                <th>Your Attendance</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($meetings as $meeting): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
+                                                        <?php if ($meeting['description']): ?>
+                                                            <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
+                                                        <?php if ($meeting['end_time']): ?>
+                                                            - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
+                                                        <?php endif; ?>
+                                                        </small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($meeting['location']); ?></td>
+                                                    <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
+                                                    <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $meeting['status']; ?>">
+                                                            <?php echo ucfirst($meeting['status']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($meeting['attendance_status']): ?>
+                                                            <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
+                                                                <?php echo ucfirst($meeting['attendance_status']); ?>
+                                                            </span>
+                                                            <?php if ($meeting['check_in_time']): ?>
+                                                                <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
+                                                            <?php endif; ?>
+                                                        <?php else: ?>
+                                                            <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
 
                                 <!-- Pagination -->
                                 <?php if ($total_pages > 1): ?>
@@ -1354,12 +1508,29 @@ try {
                                             </span>
                                         <?php endif; ?>
 
-                                        <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                                        <?php 
+                                        $start_page = max(1, $page - 2);
+                                        $end_page = min($total_pages, $page + 2);
+                                        if ($start_page > 1): ?>
+                                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => 1])); ?>" class="pagination-btn">1</a>
+                                            <?php if ($start_page > 2): ?>
+                                                <span class="pagination-btn disabled">...</span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+
+                                        <?php for ($i = $start_page; $i <= $end_page; $i++): ?>
                                             <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" 
                                                class="pagination-btn <?php echo $i == $page ? 'active' : ''; ?>">
                                                 <?php echo $i; ?>
                                             </a>
                                         <?php endfor; ?>
+
+                                        <?php if ($end_page < $total_pages): ?>
+                                            <?php if ($end_page < $total_pages - 1): ?>
+                                                <span class="pagination-btn disabled">...</span>
+                                            <?php endif; ?>
+                                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $total_pages])); ?>" class="pagination-btn"><?php echo $total_pages; ?></a>
+                                        <?php endif; ?>
 
                                         <?php if ($page < $total_pages): ?>
                                             <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" class="pagination-btn">
@@ -1393,25 +1564,25 @@ try {
                             </div>
                             
                             <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Meetings Attended</span>
-                                    <strong style="color: var(--success);"><?php echo $attendance_stats['attended']; ?></strong>
+                                    <strong style="color: var(--success); font-size: 1rem;"><?php echo $attendance_stats['attended'] ?? 0; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Absent</span>
-                                    <strong style="color: var(--danger);"><?php echo $attendance_stats['absent']; ?></strong>
+                                    <strong style="color: var(--danger); font-size: 1rem;"><?php echo $attendance_stats['absent'] ?? 0; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Excused</span>
-                                    <strong style="color: var(--warning);"><?php echo $attendance_stats['excused']; ?></strong>
+                                    <strong style="color: var(--warning); font-size: 1rem;"><?php echo $attendance_stats['excused'] ?? 0; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Invited</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $attendance_stats['total_invited']; ?></strong>
+                                    <strong style="color: var(--text-dark); font-size: 1rem;"><?php echo $attendance_stats['total_invited'] ?? 0; ?></strong>
                                 </div>
                             </div>
 
-                            <div class="attendance-progress" style="margin-top: 1rem;">
+                            <div class="attendance-progress">
                                 <div class="progress-bar">
                                     <div class="progress-fill" style="width: <?php echo $attendance_rate; ?>%"></div>
                                 </div>
@@ -1430,7 +1601,8 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($upcoming_important)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-week"></i>
                                     <p>No upcoming meetings this week</p>
                                 </div>
                             <?php else: ?>
@@ -1464,7 +1636,8 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($user_attendance_history)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-user-clock"></i>
                                     <p>No attendance records found</p>
                                 </div>
                             <?php else: ?>
@@ -1472,8 +1645,8 @@ try {
                                     <?php foreach ($user_attendance_history as $attendance): ?>
                                         <li class="activity-item">
                                             <div class="activity-avatar 
-                                                <?php echo $attendance['attendance_status'] === 'present' ? 'attendance-present' : 
-                                                      ($attendance['attendance_status'] === 'absent' ? 'attendance-absent' : 'attendance-excused'); ?>">
+                                                <?php echo $attendance['attendance_status'] === 'present' ? 'attendance-present-bg' : 
+                                                      ($attendance['attendance_status'] === 'absent' ? 'attendance-absent-bg' : 'attendance-excused-bg'); ?>">
                                                 <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : 
                                                                    ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" 
                                                    style="font-size: 0.8rem;"></i>
@@ -1502,35 +1675,96 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
-
-        // Auto-refresh page every 5 minutes
-        setInterval(() => {
-            console.log('Meetings page auto-refresh triggered');
-        }, 300000);
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
-            const cards = document.querySelectorAll('.card');
+            const cards = document.querySelectorAll('.stat-card, .filters-card, .card');
             cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
             });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

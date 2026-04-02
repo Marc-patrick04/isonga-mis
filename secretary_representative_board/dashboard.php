@@ -1230,9 +1230,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                  
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1244,13 +1242,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($secretary_name, 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($secretary_name); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1354,8 +1346,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Secretary <?php echo htmlspecialchars($secretary_name); ?>! 📝</h1>
-                    <p>Manage documentation and records for Representative Board activities in <?php echo date('Y'); ?> academic year</p>
+                    <h1>Welcome, Secretary <?php echo htmlspecialchars($secretary_name); ?>!</h1>
+                
                 </div>
             </div>
 
@@ -1411,50 +1403,7 @@ try {
                 <!-- Left Column -->
                 <div class="left-column">
                     <!-- Student Issues Analysis -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Student Issues Analysis (30 Days)</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                                <a href="tickets_analysis.php" class="card-header-btn" title="View Details">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="chart-container">
-                                <canvas id="ticketsChart"></canvas>
-                            </div>
-                            <div style="display: flex; justify-content: space-around; margin-top: 1rem;">
-                                <div style="text-align: center;">
-                                    <div style="font-size: 1.2rem; font-weight: 700; color: var(--success);">
-                                        <?php echo number_format($ticket_stats['resolved_tickets'] ?? 0); ?>
-                                    </div>
-                                    <div style="font-size: 0.7rem; color: var(--dark-gray);">Resolved</div>
-                                </div>
-                                <div style="text-align: center;">
-                                    <div style="font-size: 1.2rem; font-weight: 700; color: var(--warning);">
-                                        <?php echo number_format($ticket_stats['open_tickets'] ?? 0); ?>
-                                    </div>
-                                    <div style="font-size: 0.7rem; color: var(--dark-gray);">Open</div>
-                                </div>
-                                <div style="text-align: center;">
-                                    <div style="font-size: 1.2rem; font-weight: 700; color: var(--info);">
-                                        <?php echo number_format($ticket_stats['in_progress_tickets'] ?? 0); ?>
-                                    </div>
-                                    <div style="font-size: 0.7rem; color: var(--dark-gray);">In Progress</div>
-                                </div>
-                                <div style="text-align: center;">
-                                    <div style="font-size: 1.2rem; font-weight: 700; color: var(--primary-blue);">
-                                        <?php echo number_format($ticket_stats['total_tickets'] ?? 0); ?>
-                                    </div>
-                                    <div style="font-size: 0.7rem; color: var(--dark-gray);">Total</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    
 
                     <!-- Pending Class Representative Reports -->
                     <div class="card">
@@ -1550,109 +1499,7 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Representative Board Team -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Representative Board Team</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($board_team)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-users-slash"></i>
-                                    <p>No team members found</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($board_team as $member): ?>
-                                    <div class="member-info">
-                                        <div class="member-avatar">
-                                            <?php echo strtoupper(substr($member['name'] ?? 'M', 0, 1)); ?>
-                                        </div>
-                                        <div class="member-details">
-                                            <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
-                                            <div class="member-role">
-                                                <?php 
-                                                $role = str_replace('_', ' ', $member['role']);
-                                                echo ucwords(str_replace('representative board', '', $role)); 
-                                                ?>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Upcoming Meetings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Meetings</h3>
-                            <div class="card-header-actions">
-                                <a href="meetings.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_meetings_list)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-calendar-times"></i>
-                                    <p>No upcoming meetings</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($upcoming_meetings_list as $meeting): ?>
-                                    <div class="member-info">
-                                        <div class="member-avatar" style="background: var(--info);">
-                                            <i class="fas fa-calendar-alt"></i>
-                                        </div>
-                                        <div class="member-details">
-                                            <div class="member-name"><?php echo htmlspecialchars($meeting['title']); ?></div>
-                                            <div class="member-role">
-                                                <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?>
-                                                at <?php echo date('g:i A', strtotime($meeting['start_time'])); ?>
-                                                <br>
-                                                <small>Chair: <?php echo htmlspecialchars($meeting['chairperson_name']); ?></small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Recent Activities -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Board Activities</h3>
-                        </div>
-                        <div class="card-body">
-                            <ul class="activity-list">
-                                <?php if (empty($recent_activities)): ?>
-                                    <li class="empty-state">
-                                        <i class="fas fa-history"></i>
-                                        <p>No recent activities</p>
-                                    </li>
-                                <?php else: ?>
-                                    <?php foreach ($recent_activities as $activity): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar">
-                                                <?php echo strtoupper(substr($activity['full_name'] ?? 'U', 0, 1)); ?>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($activity['full_name']); ?></strong>
-                                                    <br><small><?php echo str_replace('_', ' ', $activity['role']); ?></small>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, g:i A', strtotime($activity['login_time'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </ul>
-                        </div>
-                    </div>
-
+                    
                     <!-- Your Meeting Attendance -->
                     <div class="card">
                         <div class="card-header">
@@ -1687,39 +1534,14 @@ try {
                         </div>
                     </div>
 
-                    <!-- Secretary Responsibilities Reminder -->
-                    <div class="alert alert-info">
-                        <i class="fas fa-clipboard-check"></i> 
-                        <strong>Secretarial Responsibilities:</strong>
-                        <ul style="margin: 0.5rem 0 0 1rem; font-size: 0.75rem;">
-                            <li>Record and maintain meeting minutes</li>
-                            <li>Manage documentation and reports</li>
-                            <li>Communicate with class representatives</li>
-                            <li>Track attendance and participation</li>
-                        </ul>
-                    </div>
+                    
                 </div>
             </div>
         </main>
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

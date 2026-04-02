@@ -553,14 +553,15 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
             </div>
             <div class="graphic-content">
                 <h2>Student Portal</h2>
-                <p>Access your student portal to stay updated with campus news, events, and manage your concerns efficiently.</p>
+                <!-- <p>Access your student portal to stay updated with campus news, events, and manage your concerns efficiently.</p> -->
+                   <p>Access your student portal to stay updated.</p>
                 <ul class="features">
-                    <li><i class="fas fa-tachometer-alt"></i> Personalized student dashboard</li>
-                    <li><i class="fas fa-ticket-alt"></i> Submit and track your concerns</li>
-                    <li><i class="fas fa-calendar-alt"></i> View campus events and activities</li>
-                    <li><i class="fas fa-bullhorn"></i> Stay updated with announcements</li>
-                    <li><i class="fas fa-users"></i> Connect with student representatives</li>
-                    <li><i class="fas fa-graduation-cap"></i> Access academic resources</li>
+                    <!-- <li><i class="fas fa-tachometer-alt"></i> Personalized student dashboard</li> -->
+                    <!-- <li><i class="fas fa-ticket-alt"></i> Submit and track your concerns</li> -->
+                    <!-- <li><i class="fas fa-calendar-alt"></i> View campus events and activities</li> -->
+                    <!-- <li><i class="fas fa-bullhorn"></i> Stay updated with announcements</li>
+                    <li><i class="fas fa-users"></i> Connect with student representatives</li> -->
+                    <!-- <li><i class="fas fa-graduation-cap"></i> Access academic resources</li> -->
                 </ul>
             </div>
         </div>
@@ -569,7 +570,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
         <div class="form-side">
             <div class="login-header">
                 <h2 class="form-title">Student Login</h2>
-                <p class="form-subtitle">Enter your credentials to access the student portal</p>
+                <!-- <p class="form-subtitle">Enter your credentials to access the student portal</p> -->
             </div>
 
             <?php if (!empty($errors)): ?>

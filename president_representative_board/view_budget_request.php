@@ -70,23 +70,6 @@ try {
             --transition: all 0.2s ease;
         }
 
-        .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --info: #29b6f6;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
-        }
-
         * {
             margin: 0;
             padding: 0;
@@ -128,6 +111,19 @@ try {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -421,6 +417,38 @@ try {
             border-left-color: #17a2b8;
         }
 
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        @media (max-width: 992px) {
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+        }
+
         @media (max-width: 768px) {
             .info-grid {
                 grid-template-columns: 1fr;
@@ -431,14 +459,43 @@ try {
                 align-items: flex-start;
                 gap: 1rem;
             }
+
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Budget Request Details</h1>
@@ -449,6 +506,51 @@ try {
             </a>
         </div>
     </header>
+
+    <script>
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const sidebar = document.querySelector('.sidebar');
+                if (sidebar) {
+                    const isOpen = sidebar.classList.toggle('mobile-open');
+                    mobileOverlay.classList.toggle('active', isOpen);
+                    mobileMenuToggle.innerHTML = isOpen
+                        ? '<i class="fas fa-times"></i>'
+                        : '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = isOpen ? 'hidden' : '';
+                }
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                const sidebar = document.querySelector('.sidebar');
+                if (sidebar) {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                const sidebar = document.querySelector('.sidebar');
+                if (sidebar) {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            }
+        });
+    </script>
 
     <!-- Main Content -->
     <div class="container">

@@ -278,7 +278,7 @@ $severity_filter = $_GET['severity'] ?? 'all';
 $type_filter = $_GET['type'] ?? 'all';
 $search_term = $_GET['search'] ?? '';
 
-// Build query for security incidents
+// Build query for security incidents (PostgreSQL syntax)
 $query = "SELECT si.*, u.full_name as reporter_name 
           FROM security_incidents si 
           LEFT JOIN users u ON si.reported_by_user = u.id 
@@ -302,7 +302,7 @@ if ($type_filter !== 'all') {
 }
 
 if (!empty($search_term)) {
-    $query .= " AND (si.title LIKE ? OR si.description LIKE ? OR si.location LIKE ? OR si.reported_by LIKE ?)";
+    $query .= " AND (si.title ILIKE ? OR si.description ILIKE ? OR si.location ILIKE ? OR si.reported_by ILIKE ?)";
     $search_param = "%$search_term%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -336,7 +336,7 @@ try {
     $prevention_measures = [];
 }
 
-// Get statistics
+// Get statistics (PostgreSQL syntax)
 try {
     // Total incidents
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM security_incidents");
@@ -350,8 +350,8 @@ try {
     $stmt = $pdo->query("SELECT severity, COUNT(*) as count FROM security_incidents GROUP BY severity");
     $severity_counts = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // Recent incidents (last 7 days)
-    $stmt = $pdo->query("SELECT COUNT(*) as recent FROM security_incidents WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+    // Recent incidents (last 7 days) - PostgreSQL uses INTERVAL
+    $stmt = $pdo->query("SELECT COUNT(*) as recent FROM security_incidents WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'");
     $recent_incidents = $stmt->fetch(PDO::FETCH_ASSOC)['recent'] ?? 0;
     
     // Prevention measures by status
@@ -382,65 +382,75 @@ try {
     $unread_messages = 0;
 }
 
-// Create security_incidents table if it doesn't exist
+// Get pending tickets count
 try {
-    $stmt = $pdo->query("
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    error_log("Pending tickets error: " . $e->getMessage());
+    $pending_tickets = 0;
+}
+
+// Create security_incidents table if it doesn't exist (PostgreSQL syntax)
+try {
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS security_incidents (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             title VARCHAR(255) NOT NULL,
             description TEXT NOT NULL,
-            incident_type ENUM('theft', 'assault', 'vandalism', 'harassment', 'unauthorized_access', 'other') DEFAULT 'other',
+            incident_type VARCHAR(20) DEFAULT 'other' CHECK (incident_type IN ('theft', 'assault', 'vandalism', 'harassment', 'unauthorized_access', 'other')),
             location VARCHAR(255) NOT NULL,
-            severity ENUM('low', 'medium', 'high', 'critical') DEFAULT 'medium',
+            severity VARCHAR(10) DEFAULT 'medium' CHECK (severity IN ('low', 'medium', 'high', 'critical')),
             reported_by VARCHAR(100) NOT NULL,
             reporter_contact VARCHAR(100),
-            status ENUM('reported', 'under_investigation', 'resolved', 'closed') DEFAULT 'reported',
+            status VARCHAR(20) DEFAULT 'reported' CHECK (status IN ('reported', 'under_investigation', 'resolved', 'closed')),
             resolution_notes TEXT,
             action_taken TEXT,
-            reported_by_user INT,
-            resolved_by INT,
+            reported_by_user INTEGER,
+            resolved_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            resolved_at DATETIME,
-            FOREIGN KEY (reported_by_user) REFERENCES users(id),
-            FOREIGN KEY (resolved_by) REFERENCES users(id)
+            resolved_at TIMESTAMP
         )
     ");
 } catch (PDOException $e) {
     error_log("Security incidents table creation error: " . $e->getMessage());
 }
 
-// Create security_prevention_measures table if it doesn't exist
+// Create security_prevention_measures table if it doesn't exist (PostgreSQL syntax)
 try {
-    $stmt = $pdo->query("
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS security_prevention_measures (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             title VARCHAR(255) NOT NULL,
             description TEXT NOT NULL,
-            measure_type ENUM('awareness', 'patrol', 'equipment', 'policy', 'training') DEFAULT 'awareness',
+            measure_type VARCHAR(20) DEFAULT 'awareness' CHECK (measure_type IN ('awareness', 'patrol', 'equipment', 'policy', 'training')),
             target_area VARCHAR(255),
             implementation_date DATE,
-            status ENUM('planned', 'in_progress', 'implemented', 'cancelled') DEFAULT 'planned',
+            status VARCHAR(20) DEFAULT 'planned' CHECK (status IN ('planned', 'in_progress', 'implemented', 'cancelled')),
             notes TEXT,
-            created_by INT,
+            created_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME,
-            FOREIGN KEY (created_by) REFERENCES users(id)
+            updated_at TIMESTAMP
         )
     ");
 } catch (PDOException $e) {
     error_log("Security prevention measures table creation error: " . $e->getMessage());
 }
 
-// Create action_logs table if it doesn't exist
+// Create action_logs table if it doesn't exist (PostgreSQL syntax)
 try {
-    $stmt = $pdo->query("
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS action_logs (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
             action VARCHAR(255) NOT NULL,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            ip_address VARCHAR(45),
-            FOREIGN KEY (user_id) REFERENCES users(id)
+            ip_address VARCHAR(45)
         )
     ");
 } catch (PDOException $e) {
@@ -462,7 +472,7 @@ function logAction($pdo, $user_id, $action) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Campus Security - Minister of Environment & Security</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -481,6 +491,11 @@ function logAction($pdo, $user_id, $action) {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
+            --purple: #6f42c1;
+            --teal: #20c997;
+            --indigo: #6610f2;
+            --orange: #fd7e14;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -488,6 +503,8 @@ function logAction($pdo, $user_id, $action) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -503,6 +520,11 @@ function logAction($pdo, $user_id, $action) {
             --success: #4caf50;
             --warning: #ffb74d;
             --danger: #f44336;
+            --info: #29b6f6;
+            --purple: #9c27b0;
+            --teal: #009688;
+            --indigo: #3f51b5;
+            --orange: #ff9800;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
         }
 
@@ -526,14 +548,11 @@ function logAction($pdo, $user_id, $action) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -543,7 +562,6 @@ function logAction($pdo, $user_id, $action) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -564,26 +582,38 @@ function logAction($pdo, $user_id, $action) {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -591,22 +621,7 @@ function logAction($pdo, $user_id, $action) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -615,12 +630,11 @@ function logAction($pdo, $user_id, $action) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -631,25 +645,24 @@ function logAction($pdo, $user_id, $action) {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -659,50 +672,85 @@ function logAction($pdo, $user_id, $action) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -732,9 +780,7 @@ function logAction($pdo, $user_id, $action) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -749,35 +795,224 @@ function logAction($pdo, $user_id, $action) {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
+        .dashboard-header {
             margin-bottom: 1.5rem;
         }
 
-        .page-title h1 {
+        .welcome-section h1 {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--text-dark);
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
-        .page-title p {
+        .welcome-section p {
             color: var(--dark-gray);
             font-size: 0.9rem;
         }
 
-        .page-actions {
-            display: flex;
-            gap: 0.75rem;
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
 
+        .stat-card {
+            background: var(--white);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            border-left: 4px solid var(--primary-green);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
+
+        .stat-card.danger {
+            border-left-color: var(--danger);
+        }
+
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .stat-card .stat-icon {
+            background: var(--light-green);
+            color: var(--primary-green);
+        }
+
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
+
+        .stat-number {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: var(--text-dark);
+        }
+
+        .stat-label {
+            color: var(--dark-gray);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        /* Tabs */
+        .tabs-container {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--white);
+            border-bottom: 1px solid var(--medium-gray);
+            overflow-x: auto;
+        }
+
+        .tab {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--dark-gray);
+            transition: var(--transition);
+            border-bottom: 2px solid transparent;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        .tab.active {
+            color: var(--primary-green);
+            border-bottom-color: var(--primary-green);
+        }
+
+        .tab:hover {
+            color: var(--primary-green);
+            background: var(--light-green);
+        }
+
+        /* Content Sections */
+        .content-section {
+            display: none;
+            padding: 1.25rem;
+        }
+
+        .content-section.active {
+            display: block;
+        }
+
+        /* Filters */
+        .filters-card {
+            background: var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .filters-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .form-control {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-green);
+            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
@@ -822,130 +1057,33 @@ function logAction($pdo, $user_id, $action) {
             color: black;
         }
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+        .btn-info {
+            background: var(--info);
+            color: white;
         }
 
-        .stat-card {
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+            border-radius: 4px;
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--primary-green);
+            color: var(--primary-green);
+        }
+
+        .btn-outline:hover {
+            background: var(--primary-green);
+            color: white;
+        }
+
+        /* Table */
+        .table-container {
             background: var(--white);
-            padding: 1rem;
             border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .stat-card.success {
-            border-left-color: var(--success);
-        }
-
-        .stat-card.warning {
-            border-left-color: var(--warning);
-        }
-
-        .stat-card.danger {
-            border-left-color: var(--danger);
-        }
-
-        .stat-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-        }
-
-        .stat-card .stat-icon {
-            background: var(--light-green);
-            color: var(--primary-green);
-        }
-
-        .stat-card.success .stat-icon {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .stat-card.warning .stat-icon {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .stat-card.danger .stat-icon {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .stat-content {
-            flex: 1;
-        }
-
-        .stat-number {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-            color: var(--text-dark);
-        }
-
-        .stat-label {
-            color: var(--dark-gray);
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            background: var(--white);
-            border-radius: var(--border-radius) var(--border-radius) 0 0;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 0;
-        }
-
-        .tab {
-            padding: 1rem 1.5rem;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-weight: 600;
-            color: var(--dark-gray);
-            transition: var(--transition);
-            border-bottom: 2px solid transparent;
-        }
-
-        .tab.active {
-            color: var(--primary-green);
-            border-bottom-color: var(--primary-green);
-        }
-
-        .tab:hover {
-            color: var(--primary-green);
-            background: var(--light-green);
-        }
-
-        /* Content Sections */
-        .content-section {
-            display: none;
-            background: var(--white);
-            border-radius: 0 0 var(--border-radius) var(--border-radius);
-            box-shadow: var(--shadow-sm);
-        }
-
-        .content-section.active {
-            display: block;
+            overflow-x: auto;
         }
 
         .section-header {
@@ -954,64 +1092,14 @@ function logAction($pdo, $user_id, $action) {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .section-header h3 {
             font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
-        }
-
-        /* Filters */
-        .filters-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .filters-form {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            align-items: end;
-        }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .form-label {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.85rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-green);
-            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
-        }
-
-        /* Table */
-        .table-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
         }
 
         .table {
@@ -1033,6 +1121,11 @@ function logAction($pdo, $user_id, $action) {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -1043,22 +1136,37 @@ function logAction($pdo, $user_id, $action) {
 
         .status-reported {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-under_investigation {
             background: #cce7ff;
-            color: var(--primary-green);
+            color: #004085;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-closed {
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
+        }
+
+        .status-planned {
+            background: #cce7ff;
+            color: #004085;
+        }
+
+        .status-in_progress {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-implemented {
+            background: #d4edda;
+            color: #155724;
         }
 
         .severity-badge {
@@ -1068,24 +1176,19 @@ function logAction($pdo, $user_id, $action) {
             font-weight: 600;
         }
 
-        .severity-critical {
+        .severity-critical, .severity-high {
             background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .severity-high {
-            background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .severity-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .severity-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .type-badge {
@@ -1094,36 +1197,14 @@ function logAction($pdo, $user_id, $action) {
             font-size: 0.7rem;
             font-weight: 600;
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
         }
 
-        .action-buttons {
-            display: flex;
-            gap: 0.25rem;
-        }
-
-        .btn-sm {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.7rem;
-            border-radius: 4px;
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-info {
-            background: #17a2b8;
-            color: white;
-        }
-
-        /* Prevention Measures Grid */
+        /* Prevention Grid */
         .prevention-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1rem;
-            padding: 1.25rem;
         }
 
         .prevention-card {
@@ -1131,6 +1212,12 @@ function logAction($pdo, $user_id, $action) {
             border-radius: var(--border-radius);
             padding: 1rem;
             border-left: 4px solid var(--primary-green);
+            transition: var(--transition);
+        }
+
+        .prevention-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .prevention-card h4 {
@@ -1151,6 +1238,14 @@ function logAction($pdo, $user_id, $action) {
             justify-content: space-between;
             font-size: 0.7rem;
             color: var(--dark-gray);
+            margin-bottom: 0.5rem;
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
         }
 
         /* Modal */
@@ -1169,7 +1264,7 @@ function logAction($pdo, $user_id, $action) {
 
         .modal-content {
             background: var(--white);
-            border-radius: var(--border-radius);
+            border-radius: var(--border-radius-lg);
             box-shadow: var(--shadow-lg);
             width: 90%;
             max-width: 600px;
@@ -1197,6 +1292,11 @@ function logAction($pdo, $user_id, $action) {
             font-size: 1.2rem;
             color: var(--dark-gray);
             cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
         }
 
         .modal-body {
@@ -1215,6 +1315,7 @@ function logAction($pdo, $user_id, $action) {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1rem;
+            margin-bottom: 1rem;
         }
 
         .form-full {
@@ -1226,13 +1327,16 @@ function logAction($pdo, $user_id, $action) {
             resize: vertical;
         }
 
-        /* Alert */
+        /* Alerts */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -1245,6 +1349,12 @@ function logAction($pdo, $user_id, $action) {
             background: #f8d7da;
             color: #721c24;
             border-left-color: var(--danger);
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border-left-color: var(--warning);
         }
 
         /* Empty State */
@@ -1260,44 +1370,178 @@ function logAction($pdo, $user_id, $action) {
             opacity: 0.5;
         }
 
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .empty-state p {
+            font-size: 0.8rem;
+        }
+
+        /* Incident Details */
+        .incident-details {
+            background: var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 1rem;
+        }
+
+        .detail-row {
+            display: flex;
+            margin-bottom: 0.75rem;
+            font-size: 0.8rem;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            min-width: 120px;
+            color: var(--text-dark);
+        }
+
+        .detail-value {
+            flex: 1;
+            color: var(--dark-gray);
+        }
+
+        /* Charts Grid */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-container {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            padding: 1.25rem;
+        }
+
+        .chart-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-dark);
+            text-align: center;
+        }
+
+        canvas {
+            max-height: 250px;
+        }
+
+        /* Export Options */
+        .export-options {
+            display: flex;
+            gap: 0.5rem;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
             .tabs {
                 flex-wrap: wrap;
             }
-            
+
             .prevention-grid {
                 grid-template-columns: 1fr;
+            }
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .section-header {
+                flex-direction: column;
+                align-items: flex-start;
             }
         }
 
@@ -1305,136 +1549,67 @@ function logAction($pdo, $user_id, $action) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
+
+            .logo {
+                height: 32px;
             }
-            
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
             .filters-form {
                 grid-template-columns: 1fr;
             }
-        }
-        
-        /* Additional styles for new features */
-        .quick-actions {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .quick-action-card {
-            background: var(--white);
-            padding: 1.25rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            text-align: center;
-            transition: var(--transition);
-            cursor: pointer;
-            border-top: 4px solid var(--primary-green);
-        }
-        
-        .quick-action-card:hover {
-            transform: translateY(-3px);
-            box-shadow: var(--shadow-md);
-        }
-        
-        .quick-action-card i {
-            font-size: 2rem;
-            color: var(--primary-green);
-            margin-bottom: 0.75rem;
-        }
-        
-        .quick-action-card h3 {
-            font-size: 0.9rem;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-        }
-        
-        .quick-action-card p {
-            font-size: 0.8rem;
-            color: var(--dark-gray);
-        }
-        
-        .chart-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        .chart-title {
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: var(--text-dark);
-        }
-        
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.5rem;
-        }
-        
-        @media (max-width: 768px) {
-            .charts-grid {
-                grid-template-columns: 1fr;
+
+            .table th, .table td {
+                padding: 0.5rem;
             }
-        }
-        
-        .incident-details {
-            background: var(--light-gray);
-            border-radius: var(--border-radius);
-            padding: 1rem;
-            margin-top: 1rem;
-        }
-        
-        .detail-row {
-            display: flex;
-            margin-bottom: 0.5rem;
-        }
-        
-        .detail-label {
-            font-weight: 600;
-            min-width: 120px;
-            color: var(--text-dark);
-        }
-        
-        .detail-value {
-            flex: 1;
-            color: var(--dark-gray);
-        }
-        
-        .export-options {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 1rem;
-        }
-        
-        .btn-outline {
-            background: transparent;
-            border: 1px solid var(--primary-green);
-            color: var(--primary-green);
-        }
-        
-        .btn-outline:hover {
-            background: var(--primary-green);
-            color: white;
+
+            .detail-row {
+                flex-direction: column;
+            }
+
+            .detail-label {
+                min-width: auto;
+                margin-bottom: 0.25rem;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1446,6 +1621,9 @@ function logAction($pdo, $user_id, $action) {
                 <div class="header-actions">
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
+                    </button>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1477,38 +1655,26 @@ function logAction($pdo, $user_id, $action) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-       <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="tickets.php">
-        <i class="fas fa-ticket-alt"></i>
-        <span>Student Tickets</span>
-        <?php 
-        // Get pending tickets count for this minister
-        try {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as pending_tickets 
-                FROM tickets 
-                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-            ");
-            $stmt->execute([$user_id]);
-            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-            
-            if ($pending_tickets > 0): ?>
-                <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-            <?php endif;
-        } catch (PDOException $e) {
-            // Skip badge if error
-        }
-        ?>
-    </a>
-</li>
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="projects.php">
                         <i class="fas fa-leaf"></i>
@@ -1539,7 +1705,6 @@ function logAction($pdo, $user_id, $action) {
                         <span>Environmental Clubs</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1571,20 +1736,11 @@ function logAction($pdo, $user_id, $action) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <!-- Page Header -->
-            <div class="page-header">
-                <div class="page-title">
-                    <h1>Campus Security Management</h1>
+        <main class="main-content" id="mainContent">
+            <div class="dashboard-header">
+                <div class="welcome-section">
+                    <h1>Campus Security Management 🔒</h1>
                     <p>Monitor and manage security incidents, implement prevention measures, and ensure campus safety</p>
-                </div>
-                <div class="page-actions">
-                    <button class="btn btn-secondary" onclick="window.location.reload()">
-                        <i class="fas fa-sync-alt"></i> Refresh
-                    </button>
-                    <button class="btn btn-primary" onclick="openReportIncidentModal()">
-                        <i class="fas fa-plus"></i> Report Incident
-                    </button>
                 </div>
             </div>
 
@@ -1600,8 +1756,6 @@ function logAction($pdo, $user_id, $action) {
                     <i class="fas fa-exclamation-circle"></i> <?php echo $error_message; ?>
                 </div>
             <?php endif; ?>
-
-
 
             <!-- Statistics -->
             <div class="stats-grid">
@@ -1727,12 +1881,9 @@ function logAction($pdo, $user_id, $action) {
                     <div class="table-container">
                         <div class="section-header">
                             <h3>Security Incidents (<?php echo count($incidents); ?>)</h3>
-                            <div>
-
-                                <button class="btn btn-primary btn-sm" onclick="openReportIncidentModal()">
-                                    <i class="fas fa-plus"></i> New Incident
-                                </button>
-                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="openReportIncidentModal()">
+                                <i class="fas fa-plus"></i> New Incident
+                            </button>
                         </div>
                         <?php if (empty($incidents)): ?>
                             <div class="empty-state">
@@ -1744,71 +1895,73 @@ function logAction($pdo, $user_id, $action) {
                                 </button>
                             </div>
                         <?php else: ?>
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Incident Title</th>
-                                        <th>Type</th>
-                                        <th>Location</th>
-                                        <th>Severity</th>
-                                        <th>Status</th>
-                                        <th>Reported By</th>
-                                        <th>Date</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($incidents as $incident): ?>
+                            <div style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($incident['title']); ?></strong>
-                                                <?php if (strlen($incident['description']) > 100): ?>
-                                                    <br><small><?php echo htmlspecialchars(substr($incident['description'], 0, 100)) . '...'; ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <span class="type-badge">
-                                                    <?php echo str_replace('_', ' ', ucfirst($incident['incident_type'])); ?>
-                                                </span>
-                                            </td>
-                                            <td><?php echo htmlspecialchars($incident['location']); ?></td>
-                                            <td>
-                                                <span class="severity-badge severity-<?php echo $incident['severity']; ?>">
-                                                    <?php echo ucfirst($incident['severity']); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <span class="status-badge status-<?php echo $incident['status']; ?>">
-                                                    <?php echo str_replace('_', ' ', ucfirst($incident['status'])); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <?php echo htmlspecialchars($incident['reported_by']); ?>
-                                                <?php if ($incident['reporter_contact']): ?>
-                                                    <br><small><?php echo htmlspecialchars($incident['reporter_contact']); ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php echo date('M j, Y', strtotime($incident['created_at'])); ?>
-                                                <br><small><?php echo date('g:i A', strtotime($incident['created_at'])); ?></small>
-                                            </td>
-                                            <td>
-                                                <div class="action-buttons">
-                                                    <button class="btn btn-sm btn-info" onclick="viewIncident(<?php echo $incident['id']; ?>)">
-                                                        <i class="fas fa-eye"></i>
-                                                    </button>
-                                                    <button class="btn btn-sm btn-warning" onclick="updateIncident(<?php echo $incident['id']; ?>)">
-                                                        <i class="fas fa-edit"></i>
-                                                    </button>
-                                                    <button class="btn btn-sm btn-danger" onclick="deleteIncident(<?php echo $incident['id']; ?>)">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                </div>
-                                            </td>
+                                            <th>Incident Title</th>
+                                            <th>Type</th>
+                                            <th>Location</th>
+                                            <th>Severity</th>
+                                            <th>Status</th>
+                                            <th>Reported By</th>
+                                            <th>Date</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($incidents as $incident): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($incident['title']); ?></strong>
+                                                    <?php if (strlen($incident['description']) > 100): ?>
+                                                        <br><small><?php echo htmlspecialchars(substr($incident['description'], 0, 100)) . '...'; ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <span class="type-badge">
+                                                        <?php echo str_replace('_', ' ', ucfirst($incident['incident_type'])); ?>
+                                                    </span>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($incident['location']); ?></td>
+                                                <td>
+                                                    <span class="severity-badge severity-<?php echo $incident['severity']; ?>">
+                                                        <?php echo ucfirst($incident['severity']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span class="status-badge status-<?php echo $incident['status']; ?>">
+                                                        <?php echo str_replace('_', ' ', ucfirst($incident['status'])); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <?php echo htmlspecialchars($incident['reported_by']); ?>
+                                                    <?php if ($incident['reporter_contact']): ?>
+                                                        <br><small><?php echo htmlspecialchars($incident['reporter_contact']); ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <?php echo date('M j, Y', strtotime($incident['created_at'])); ?>
+                                                    <br><small><?php echo date('g:i A', strtotime($incident['created_at'])); ?></small>
+                                                </td>
+                                                <td>
+                                                    <div class="action-buttons">
+                                                        <button class="btn btn-info btn-sm" onclick="viewIncident(<?php echo $incident['id']; ?>)">
+                                                            <i class="fas fa-eye"></i>
+                                                        </button>
+                                                        <button class="btn btn-warning btn-sm" onclick="updateIncident(<?php echo $incident['id']; ?>)">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                        <button class="btn btn-danger btn-sm" onclick="deleteIncident(<?php echo $incident['id']; ?>)">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -1835,7 +1988,7 @@ function logAction($pdo, $user_id, $action) {
                             <?php foreach ($prevention_measures as $measure): ?>
                                 <div class="prevention-card">
                                     <h4><?php echo htmlspecialchars($measure['title']); ?></h4>
-                                    <p><?php echo htmlspecialchars($measure['description']); ?></p>
+                                    <p><?php echo htmlspecialchars(substr($measure['description'], 0, 100)) . (strlen($measure['description']) > 100 ? '...' : ''); ?></p>
                                     <div class="prevention-meta">
                                         <span>
                                             <i class="fas fa-tag"></i>
@@ -1843,7 +1996,7 @@ function logAction($pdo, $user_id, $action) {
                                         </span>
                                         <span>
                                             <i class="fas fa-map-marker-alt"></i>
-                                            <?php echo htmlspecialchars($measure['target_area']); ?>
+                                            <?php echo htmlspecialchars($measure['target_area'] ?? 'All Areas'); ?>
                                         </span>
                                     </div>
                                     <?php if ($measure['implementation_date']): ?>
@@ -1853,19 +2006,19 @@ function logAction($pdo, $user_id, $action) {
                                                 <?php echo date('M j, Y', strtotime($measure['implementation_date'])); ?>
                                             </span>
                                             <span class="status-badge status-<?php echo $measure['status']; ?>">
-                                                <?php echo ucfirst($measure['status']); ?>
+                                                <?php echo ucfirst(str_replace('_', ' ', $measure['status'])); ?>
                                             </span>
                                         </div>
                                     <?php endif; ?>
-                                    <div class="action-buttons" style="margin-top: 0.75rem;">
-                                        <button class="btn btn-sm btn-info" onclick="viewPrevention(<?php echo $measure['id']; ?>)">
-                                            <i class="fas fa-eye"></i>
+                                    <div class="action-buttons">
+                                        <button class="btn btn-info btn-sm" onclick="viewPrevention(<?php echo $measure['id']; ?>)">
+                                            <i class="fas fa-eye"></i> View
                                         </button>
-                                        <button class="btn btn-sm btn-warning" onclick="updatePrevention(<?php echo $measure['id']; ?>)">
-                                            <i class="fas fa-edit"></i>
+                                        <button class="btn btn-warning btn-sm" onclick="updatePrevention(<?php echo $measure['id']; ?>)">
+                                            <i class="fas fa-edit"></i> Edit
                                         </button>
-                                        <button class="btn btn-sm btn-danger" onclick="deletePrevention(<?php echo $measure['id']; ?>)">
-                                            <i class="fas fa-trash"></i>
+                                        <button class="btn btn-danger btn-sm" onclick="deletePrevention(<?php echo $measure['id']; ?>)">
+                                            <i class="fas fa-trash"></i> Delete
                                         </button>
                                     </div>
                                 </div>
@@ -1879,10 +2032,10 @@ function logAction($pdo, $user_id, $action) {
                     <div class="section-header">
                         <h3>Security Reports & Analytics</h3>
                         <div class="export-options">
-                            <button class="btn btn-outline" onclick="generateReport('weekly')">
+                            <button class="btn btn-outline btn-sm" onclick="generateReport('weekly')">
                                 <i class="fas fa-file-pdf"></i> Weekly Report
                             </button>
-                            <button class="btn btn-outline" onclick="generateReport('monthly')">
+                            <button class="btn btn-outline btn-sm" onclick="generateReport('monthly')">
                                 <i class="fas fa-file-pdf"></i> Monthly Report
                             </button>
                         </div>
@@ -1891,25 +2044,20 @@ function logAction($pdo, $user_id, $action) {
                     <div class="charts-grid">
                         <div class="chart-container">
                             <div class="chart-title">Incidents by Status</div>
-                            <div id="statusChart" style="height: 300px; display: flex; align-items: center; justify-content: center; background: var(--light-gray); border-radius: var(--border-radius);">
-                                <canvas id="statusChartCanvas"></canvas>
-                            </div>
+                            <canvas id="statusChartCanvas"></canvas>
                         </div>
                         
                         <div class="chart-container">
                             <div class="chart-title">Incidents by Severity</div>
-                            <div id="severityChart" style="height: 300px; display: flex; align-items: center; justify-content: center; background: var(--light-gray); border-radius: var(--border-radius);">
-                                <canvas id="severityChartCanvas"></canvas>
-                            </div>
+                            <canvas id="severityChartCanvas"></canvas>
                         </div>
                     </div>
                     
                     <div class="filters-card">
-                        <div style="text-align: center; padding: 2rem;">
-                            <i class="fas fa-chart-bar" style="font-size: 3rem; color: var(--primary-green); margin-bottom: 1rem;"></i>
-                            <h3>Security Analytics Dashboard</h3>
-                            <p>Comprehensive security reports and analytics</p>
-                            <div class="stats-grid" style="margin-top: 2rem;">
+                        <div style="text-align: center; padding: 1rem;">
+                            <i class="fas fa-chart-bar" style="font-size: 2rem; color: var(--primary-green); margin-bottom: 1rem;"></i>
+                            <h3 style="margin-bottom: 1rem;">Security Analytics Summary</h3>
+                            <div class="stats-grid" style="margin-top: 0;">
                                 <div class="stat-card">
                                     <div class="stat-content">
                                         <div class="stat-number"><?php echo $total_incidents; ?></div>
@@ -2090,31 +2238,8 @@ function logAction($pdo, $user_id, $action) {
                 <button class="modal-close" onclick="closeUpdateIncidentModal()">&times;</button>
             </div>
             <form method="POST">
-                <input type="hidden" name="incident_id" id="update_incident_id">
-                <div class="modal-body">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label class="form-label">Status *</label>
-                            <select name="status" id="update_status" class="form-control" required>
-                                <option value="reported">Reported</option>
-                                <option value="under_investigation">Under Investigation</option>
-                                <option value="resolved">Resolved</option>
-                                <option value="closed">Closed</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group form-full">
-                            <label class="form-label">Action Taken</label>
-                            <textarea name="action_taken" id="update_action_taken" class="form-control" placeholder="Describe actions taken to address this incident..." rows="3"></textarea>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group form-full">
-                            <label class="form-label">Resolution Notes</label>
-                            <textarea name="resolution_notes" id="update_resolution_notes" class="form-control" placeholder="Additional notes about resolution..." rows="3"></textarea>
-                        </div>
-                    </div>
+                <div class="modal-body" id="updateIncidentBody">
+                    <!-- Dynamic content loaded via AJAX -->
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" onclick="closeUpdateIncidentModal()">Cancel</button>
@@ -2132,7 +2257,7 @@ function logAction($pdo, $user_id, $action) {
                 <button class="modal-close" onclick="closeViewIncidentModal()">&times;</button>
             </div>
             <div class="modal-body" id="incidentDetails">
-                <!-- Incident details will be loaded here via AJAX -->
+                <!-- Incident details loaded via AJAX -->
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" onclick="closeViewIncidentModal()">Close</button>
@@ -2157,6 +2282,67 @@ function logAction($pdo, $user_id, $action) {
             const isDark = body.classList.contains('dark-mode');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab Functions
@@ -2196,9 +2382,7 @@ function logAction($pdo, $user_id, $action) {
             document.getElementById('addPreventionModal').style.display = 'none';
         }
 
-        function openUpdateIncidentModal(incidentId) {
-            // In a real implementation, you would fetch incident data via AJAX
-            document.getElementById('update_incident_id').value = incidentId;
+        function openUpdateIncidentModal() {
             document.getElementById('updateIncidentModal').style.display = 'flex';
         }
 
@@ -2214,171 +2398,136 @@ function logAction($pdo, $user_id, $action) {
             document.getElementById('viewIncidentModal').style.display = 'none';
         }
 
-    function viewIncident(incidentId) {
-    // Show loading state
-    document.getElementById('incidentDetails').innerHTML = `
-        <div style="text-align: center; padding: 2rem;">
-            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary-green);"></i>
-            <p>Loading incident details...</p>
-        </div>
-    `;
-    
-    // Fetch real incident data
-    fetch(`security.php?action=get_incident_details&incident_id=${incidentId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                const incident = data.data;
-                document.getElementById('incidentDetails').innerHTML = `
-                    <div class="incident-details">
-                        <div class="detail-row">
-                            <div class="detail-label">Incident ID:</div>
-                            <div class="detail-value">${incident.id}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Title:</div>
-                            <div class="detail-value">${escapeHtml(incident.title)}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Description:</div>
-                            <div class="detail-value">${escapeHtml(incident.description)}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Type:</div>
-                            <div class="detail-value">${formatIncidentType(incident.incident_type)}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Status:</div>
-                            <div class="detail-value"><span class="status-badge status-${incident.status}">${formatStatus(incident.status)}</span></div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Severity:</div>
-                            <div class="detail-value"><span class="severity-badge severity-${incident.severity}">${formatSeverity(incident.severity)}</span></div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Location:</div>
-                            <div class="detail-value">${escapeHtml(incident.location)}</div>
-                        </div>
-                        <div class="detail-row">
-                            <div class="detail-label">Reported By:</div>
-                            <div class="detail-value">${escapeHtml(incident.reported_by)} ${incident.reporter_user_name ? `(${escapeHtml(incident.reporter_user_name)})` : ''}</div>
-                        </div>
-                        ${incident.reporter_contact ? `
-                        <div class="detail-row">
-                            <div class="detail-label">Contact:</div>
-                            <div class="detail-value">${escapeHtml(incident.reporter_contact)}</div>
-                        </div>
-                        ` : ''}
-                        <div class="detail-row">
-                            <div class="detail-label">Date Reported:</div>
-                            <div class="detail-value">${formatDateTime(incident.created_at)}</div>
-                        </div>
-                        ${incident.resolved_at ? `
-                        <div class="detail-row">
-                            <div class="detail-label">Date Resolved:</div>
-                            <div class="detail-value">${formatDateTime(incident.resolved_at)}</div>
-                        </div>
-                        ` : ''}
-                        ${incident.resolver_name ? `
-                        <div class="detail-row">
-                            <div class="detail-label">Resolved By:</div>
-                            <div class="detail-value">${escapeHtml(incident.resolver_name)}</div>
-                        </div>
-                        ` : ''}
-                        ${incident.action_taken ? `
-                        <div class="detail-row">
-                            <div class="detail-label">Action Taken:</div>
-                            <div class="detail-value">${escapeHtml(incident.action_taken)}</div>
-                        </div>
-                        ` : ''}
-                        ${incident.resolution_notes ? `
-                        <div class="detail-row">
-                            <div class="detail-label">Resolution Notes:</div>
-                            <div class="detail-value">${escapeHtml(incident.resolution_notes)}</div>
-                        </div>
-                        ` : ''}
-                    </div>
-                `;
-            } else {
-                document.getElementById('incidentDetails').innerHTML = `
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-circle"></i> ${data.message || 'Error loading incident details'}
-                    </div>
-                `;
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
+        function viewIncident(incidentId) {
+            // Show loading state
             document.getElementById('incidentDetails').innerHTML = `
-                <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> Error loading incident details
+                <div style="text-align: center; padding: 2rem;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary-green);"></i>
+                    <p>Loading incident details...</p>
                 </div>
             `;
-        });
-    
-    openViewIncidentModal();
-}
-
-function updateIncident(incidentId) {
-    // Show loading state
-    document.getElementById('updateIncidentModal').querySelector('.modal-body').innerHTML = `
-        <div style="text-align: center; padding: 2rem;">
-            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary-green);"></i>
-            <p>Loading incident data...</p>
-        </div>
-    `;
-    
-    // Fetch incident data for the update form
-    fetch(`security.php?action=get_incident_update_form&incident_id=${incidentId}`)
-        .then(response => response.text())
-        .then(html => {
-            document.getElementById('updateIncidentModal').querySelector('.modal-body').innerHTML = html;
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            document.getElementById('updateIncidentModal').querySelector('.modal-body').innerHTML = `
-                <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> Error loading incident data
-                </div>
-            `;
-        });
-    
-    openUpdateIncidentModal();
-}
-
-// Helper functions
-function escapeHtml(unsafe) {
-    if (!unsafe) return '';
-    return unsafe
-        .toString()
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-function formatIncidentType(type) {
-    return type ? type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : '';
-}
-
-function formatStatus(status) {
-    return status ? status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : '';
-}
-
-function formatSeverity(severity) {
-    return severity ? severity.charAt(0).toUpperCase() + severity.slice(1) : '';
-}
-
-function formatDateTime(dateTimeString) {
-    if (!dateTimeString) return 'N/A';
-    const date = new Date(dateTimeString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-}
-
+            
+            // Fetch real incident data
+            fetch(`security.php?action=get_incident_details&incident_id=${incidentId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const incident = data.data;
+                        document.getElementById('incidentDetails').innerHTML = `
+                            <div class="incident-details">
+                                <div class="detail-row">
+                                    <div class="detail-label">Incident ID:</div>
+                                    <div class="detail-value">${incident.id}</div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Title:</div>
+                                    <div class="detail-value">${escapeHtml(incident.title)}</div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Description:</div>
+                                    <div class="detail-value">${escapeHtml(incident.description)}</div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Type:</div>
+                                    <div class="detail-value">${formatIncidentType(incident.incident_type)}</div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Status:</div>
+                                    <div class="detail-value"><span class="status-badge status-${incident.status}">${formatStatus(incident.status)}</span></div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Severity:</div>
+                                    <div class="detail-value"><span class="severity-badge severity-${incident.severity}">${formatSeverity(incident.severity)}</span></div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Location:</div>
+                                    <div class="detail-value">${escapeHtml(incident.location)}</div>
+                                </div>
+                                <div class="detail-row">
+                                    <div class="detail-label">Reported By:</div>
+                                    <div class="detail-value">${escapeHtml(incident.reported_by)} ${incident.reporter_user_name ? `(${escapeHtml(incident.reporter_user_name)})` : ''}</div>
+                                </div>
+                                ${incident.reporter_contact ? `
+                                <div class="detail-row">
+                                    <div class="detail-label">Contact:</div>
+                                    <div class="detail-value">${escapeHtml(incident.reporter_contact)}</div>
+                                </div>
+                                ` : ''}
+                                <div class="detail-row">
+                                    <div class="detail-label">Date Reported:</div>
+                                    <div class="detail-value">${formatDateTime(incident.created_at)}</div>
+                                </div>
+                                ${incident.resolved_at ? `
+                                <div class="detail-row">
+                                    <div class="detail-label">Date Resolved:</div>
+                                    <div class="detail-value">${formatDateTime(incident.resolved_at)}</div>
+                                </div>
+                                ` : ''}
+                                ${incident.resolver_name ? `
+                                <div class="detail-row">
+                                    <div class="detail-label">Resolved By:</div>
+                                    <div class="detail-value">${escapeHtml(incident.resolver_name)}</div>
+                                </div>
+                                ` : ''}
+                                ${incident.action_taken ? `
+                                <div class="detail-row">
+                                    <div class="detail-label">Action Taken:</div>
+                                    <div class="detail-value">${escapeHtml(incident.action_taken)}</div>
+                                </div>
+                                ` : ''}
+                                ${incident.resolution_notes ? `
+                                <div class="detail-row">
+                                    <div class="detail-label">Resolution Notes:</div>
+                                    <div class="detail-value">${escapeHtml(incident.resolution_notes)}</div>
+                                </div>
+                                ` : ''}
+                            </div>
+                        `;
+                    } else {
+                        document.getElementById('incidentDetails').innerHTML = `
+                            <div class="alert alert-danger">
+                                <i class="fas fa-exclamation-circle"></i> ${data.message || 'Error loading incident details'}
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('incidentDetails').innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-circle"></i> Error loading incident details
+                        </div>
+                    `;
+                });
+            
+            openViewIncidentModal();
+        }
 
         function updateIncident(incidentId) {
-            openUpdateIncidentModal(incidentId);
+            // Show loading state
+            document.getElementById('updateIncidentBody').innerHTML = `
+                <div style="text-align: center; padding: 2rem;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--primary-green);"></i>
+                    <p>Loading incident data...</p>
+                </div>
+            `;
+            
+            // Fetch incident data for the update form
+            fetch(`security.php?action=get_incident_update_form&incident_id=${incidentId}`)
+                .then(response => response.text())
+                .then(html => {
+                    document.getElementById('updateIncidentBody').innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    document.getElementById('updateIncidentBody').innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fas fa-exclamation-circle"></i> Error loading incident data
+                        </div>
+                    `;
+                });
+            
+            openUpdateIncidentModal();
         }
 
         function deleteIncident(incidentId) {
@@ -2389,12 +2538,10 @@ function formatDateTime(dateTimeString) {
 
         function viewPrevention(measureId) {
             alert('View prevention measure details for ID: ' + measureId);
-            // Implement view functionality
         }
 
         function updatePrevention(measureId) {
             alert('Update prevention measure with ID: ' + measureId);
-            // Implement update functionality
         }
 
         function deletePrevention(measureId) {
@@ -2403,46 +2550,69 @@ function formatDateTime(dateTimeString) {
             }
         }
 
-        function generateReport(type = 'general') {
+        function generateReport(type) {
             alert('Generating ' + type + ' security report...');
-            // In a real implementation, this would generate and download a report
         }
 
-        function exportIncidents(format) {
-            alert('Exporting incidents as ' + format.toUpperCase() + '...');
-            // In a real implementation, this would export the data
+        // Helper functions
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return unsafe
+                .toString()
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function formatIncidentType(type) {
+            return type ? type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : '';
+        }
+
+        function formatStatus(status) {
+            return status ? status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : '';
+        }
+
+        function formatSeverity(severity) {
+            return severity ? severity.charAt(0).toUpperCase() + severity.slice(1) : '';
+        }
+
+        function formatDateTime(dateTimeString) {
+            if (!dateTimeString) return 'N/A';
+            const date = new Date(dateTimeString);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         }
 
         // Initialize Charts
+        let statusChart, severityChart;
+
         function initializeCharts() {
-            // Status Chart
+            // Destroy existing charts if they exist
+            if (statusChart) statusChart.destroy();
+            if (severityChart) severityChart.destroy();
+            
+            // Status Chart Data
+            const statusLabels = [];
+            const statusData = [];
+            <?php foreach ($status_counts as $status): ?>
+                statusLabels.push('<?php echo ucfirst(str_replace('_', ' ', $status['status'])); ?>');
+                statusData.push(<?php echo $status['count']; ?>);
+            <?php endforeach; ?>
+            
             const statusCtx = document.getElementById('statusChartCanvas').getContext('2d');
-            const statusChart = new Chart(statusCtx, {
+            statusChart = new Chart(statusCtx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Reported', 'Under Investigation', 'Resolved', 'Closed'],
+                    labels: statusLabels,
                     datasets: [{
-                        data: [<?php echo $reported_count; ?>, <?php echo $investigation_count; ?>, 
-                               <?php 
-                               $resolved_count = 0;
-                               $closed_count = 0;
-                               foreach ($status_counts as $status) {
-                                   if ($status['status'] === 'resolved') $resolved_count = $status['count'];
-                                   if ($status['status'] === 'closed') $closed_count = $status['count'];
-                               }
-                               echo $resolved_count . ', ' . $closed_count;
-                               ?>],
-                        backgroundColor: [
-                            '#ffc107',
-                            '#17a2b8',
-                            '#28a745',
-                            '#6c757d'
-                        ]
+                        data: statusData,
+                        backgroundColor: ['#ffc107', '#17a2b8', '#28a745', '#6c757d']
                     }]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
+                    maintainAspectRatio: true,
                     plugins: {
                         legend: {
                             position: 'bottom'
@@ -2451,42 +2621,28 @@ function formatDateTime(dateTimeString) {
                 }
             });
 
-            // Severity Chart
+            // Severity Chart Data
+            const severityLabels = [];
+            const severityData = [];
+            <?php foreach ($severity_counts as $severity): ?>
+                severityLabels.push('<?php echo ucfirst($severity['severity']); ?>');
+                severityData.push(<?php echo $severity['count']; ?>);
+            <?php endforeach; ?>
+            
             const severityCtx = document.getElementById('severityChartCanvas').getContext('2d');
-            const severityChart = new Chart(severityCtx, {
+            severityChart = new Chart(severityCtx, {
                 type: 'bar',
                 data: {
-                    labels: ['Low', 'Medium', 'High', 'Critical'],
+                    labels: severityLabels,
                     datasets: [{
                         label: 'Incidents by Severity',
-                        data: [
-                            <?php 
-                            $low_count = 0;
-                            $medium_count = 0;
-                            $high_count = 0;
-                            $critical_count = 0;
-                            foreach ($severity_counts as $severity) {
-                                switch ($severity['severity']) {
-                                    case 'low': $low_count = $severity['count']; break;
-                                    case 'medium': $medium_count = $severity['count']; break;
-                                    case 'high': $high_count = $severity['count']; break;
-                                    case 'critical': $critical_count = $severity['count']; break;
-                                }
-                            }
-                            echo $low_count . ', ' . $medium_count . ', ' . $high_count . ', ' . $critical_count;
-                            ?>
-                        ],
-                        backgroundColor: [
-                            '#28a745',
-                            '#ffc107',
-                            '#fd7e14',
-                            '#dc3545'
-                        ]
+                        data: severityData,
+                        backgroundColor: ['#28a745', '#ffc107', '#fd7e14', '#dc3545']
                     }]
                 },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: false,
+                    maintainAspectRatio: true,
                     scales: {
                         y: {
                             beginAtZero: true,
@@ -2505,24 +2661,45 @@ function formatDateTime(dateTimeString) {
             modals.forEach(modalId => {
                 const modal = document.getElementById(modalId);
                 if (event.target === modal) {
-                    if (modalId === 'reportIncidentModal') closeReportIncidentModal();
-                    if (modalId === 'addPreventionModal') closeAddPreventionModal();
-                    if (modalId === 'updateIncidentModal') closeUpdateIncidentModal();
-                    if (modalId === 'viewIncidentModal') closeViewIncidentModal();
+                    modal.style.display = 'none';
                 }
             });
         }
 
-        // Auto-refresh security data every 5 minutes
-        setInterval(() => {
-            console.log('Security data auto-refresh triggered');
-        }, 300000);
-
-        // Initialize charts if we're on the reports tab
+        // Initialize charts if on reports tab
         document.addEventListener('DOMContentLoaded', function() {
             if (document.getElementById('reports-tab').classList.contains('active')) {
                 initializeCharts();
             }
+            
+            // Add loading animation
+            const cards = document.querySelectorAll('.stat-card, .tabs-container');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

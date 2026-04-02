@@ -1351,9 +1351,9 @@ $pending_tickets = 0;
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
+                    <!-- <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
-                    </button>
+                    </button> -->
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1473,10 +1473,7 @@ $pending_tickets = 0;
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Gallery Management</h1>
-                    <p>Manage gallery categories and images for RPSU</p>
-                </div>
+                
             </div>
 
             <!-- Message Alert -->
@@ -1523,15 +1520,7 @@ $pending_tickets = 0;
                         <div class="stat-label">Total Views</div>
                     </div>
                 </div>
-                <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-star"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($stats['featured_images']); ?></div>
-                        <div class="stat-label">Featured Images</div>
-                    </div>
-                </div>
+                
             </div>
 
             <!-- Quick Actions -->
@@ -1866,21 +1855,21 @@ $pending_tickets = 0;
 
     <script>
         // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
+        // const themeToggle = document.getElementById('themeToggle');
+        // const body = document.body;
 
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
+        // const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        // if (savedTheme === 'dark') {
+        //     body.classList.add('dark-mode');
+        //     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+        // themeToggle.addEventListener('click', () => {
+        //     body.classList.toggle('dark-mode');
+        //     const isDark = body.classList.contains('dark-mode');
+        //     localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        //     themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // });
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

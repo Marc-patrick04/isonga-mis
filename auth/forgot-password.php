@@ -552,12 +552,12 @@
                 <h2>Password Recovery Assistance</h2>
                 <p>We're here to help you regain access to your account securely and efficiently.</p>
                 <ul class="features">
-                    <li><i class="fas fa-shield-alt"></i> Secure verification process</li>
+                    <!-- <li><i class="fas fa-shield-alt"></i> Secure verification process</li>
                     <li><i class="fas fa-user-check"></i> Identity verification required</li>
                     <li><i class="fas fa-clock"></i> Quick response time</li>
                     <li><i class="fas fa-headset"></i> Dedicated support team</li>
                     <li><i class="fas fa-lock"></i> Account security maintained</li>
-                    <li><i class="fas fa-file-alt"></i> Documentation guidance</li>
+                    <li><i class="fas fa-file-alt"></i> Documentation guidance</li> -->
                 </ul>
             </div>
         </div>
@@ -566,7 +566,7 @@
         <div class="form-side">
             <div class="form-header">
                 <h2 class="form-title">Reset Your Password</h2>
-                <p class="form-subtitle">Select your account type and follow the instructions</p>
+                <p class="form-subtitle">Select your account</p>
             </div>
 
             <div class="info-card">
@@ -576,7 +576,7 @@
                 </div>
                 
                 <div class="info-card-body">
-                    <p>For security reasons, password resets require manual verification through the appropriate administrative channels.</p>
+                    <p>For security reasons, password resets require manual verification.</p>
                 </div>
 
                 <div class="user-type-selector">

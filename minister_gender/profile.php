@@ -1223,9 +1223,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1234,13 +1232,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Gender & Protocol</div>
@@ -1396,14 +1388,7 @@ try {
                                     onclick="switchTab('security')">
                                 <i class="fas fa-shield-alt"></i> Security
                             </button>
-                            <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
-                                    onclick="switchTab('preferences')">
-                                <i class="fas fa-cog"></i> Preferences
-                            </button>
-                            <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" 
-                                    onclick="switchTab('sessions')">
-                                <i class="fas fa-history"></i> Login History
-                            </button>
+                           
                         </div>
 
                         <!-- Tab Content -->
@@ -1526,23 +1511,7 @@ try {
                                     </form>
                                 </div>
 
-                                <div class="form-section">
-                                    <h4>Two-Factor Authentication</h4>
-                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-purple); border-radius: var(--border-radius);">
-                                        <div>
-                                            <div style="font-weight: 600; margin-bottom: 0.25rem;">Two-Factor Authentication</div>
-                                            <div style="font-size: 0.9rem; color: var(--dark-gray);">
-                                                <?php echo ($user['two_factor_enabled'] ?? false) ? 'Enabled' : 'Disabled'; ?>
-                                            </div>
-                                        </div>
-                                        <form method="POST" style="margin: 0;">
-                                            <input type="hidden" name="action" value="<?php echo ($user['two_factor_enabled'] ?? false) ? 'disable_2fa' : 'enable_2fa'; ?>">
-                                            <button type="submit" class="btn <?php echo ($user['two_factor_enabled'] ?? false) ? 'btn-secondary' : 'btn-primary'; ?>">
-                                                <?php echo ($user['two_factor_enabled'] ?? false) ? 'Disable' : 'Enable'; ?> 2FA
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
+                                
 
                                 <div class="form-section">
                                     <h4>Account Security</h4>

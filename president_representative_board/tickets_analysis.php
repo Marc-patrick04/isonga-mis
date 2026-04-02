@@ -2,203 +2,168 @@
 session_start();
 require_once '../config/database.php';
 
-// Check if user is logged in and is Vice President of Representative Board
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'vice_president_representative_board') {
+// Check if user is logged in and is President of Representative Board
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'president_representative_board') {
     header('Location: ../auth/login.php');
     exit();
 }
 
 $user_id = $_SESSION['user_id'];
-$vice_president_name = $_SESSION['full_name'];
 
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
     $stmt->execute([$user_id]);
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    $password_change_required = ($user['last_login'] === null);
-    
 } catch (PDOException $e) {
     $user = [];
-    $password_change_required = false;
     error_log("User profile error: " . $e->getMessage());
 }
 
-// Get dashboard statistics for Vice President of Representative Board
+// Get filter parameters
+$filter_status = $_GET['status'] ?? '';
+$filter_priority = $_GET['priority'] ?? '';
+$filter_department = $_GET['department'] ?? '';
+$filter_date_range = $_GET['date_range'] ?? '30';
+
+// Calculate date range
+switch ($filter_date_range) {
+    case '7':
+        $date_condition = 'DATE(t.created_at) >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+        $period_label = 'Last 7 Days';
+        break;
+    case '90':
+        $date_condition = 'DATE(t.created_at) >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)';
+        $period_label = 'Last 90 Days';
+        break;
+    case '180':
+        $date_condition = 'DATE(t.created_at) >= DATE_SUB(CURDATE(), INTERVAL 180 DAY)';
+        $period_label = 'Last 6 Months';
+        break;
+    default:
+        $date_condition = 'DATE(t.created_at) >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+        $period_label = 'Last 30 Days';
+        break;
+}
+
+// Build query conditions
+$where_conditions = [$date_condition];
+$params = [];
+
+if ($filter_status) {
+    $where_conditions[] = 't.status = ?';
+    $params[] = $filter_status;
+}
+
+if ($filter_priority) {
+    $where_conditions[] = 't.priority = ?';
+    $params[] = $filter_priority;
+}
+
+if ($filter_department) {
+    $where_conditions[] = 't.department_id = ?';
+    $params[] = $filter_department;
+}
+
+$where_sql = implode(' AND ', $where_conditions);
+
+// Get ticket statistics
 try {
-    // 1. Total class representatives - from users table
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
-    $total_reps = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
-    
-    // 2. Total students in college
-    $stmt = $pdo->query("SELECT COUNT(*) as total_students FROM users WHERE role = 'student' AND status = 'active'");
-    $total_students = $stmt->fetch(PDO::FETCH_ASSOC)['total_students'] ?? 0;
-    
-    // 3. Pending class rep reports
-    $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
-    $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
-    
-    // 4. Upcoming meetings for Representative Board
-    $stmt = $pdo->query("
-        SELECT COUNT(*) as upcoming_meetings 
-        FROM meetings 
-        WHERE meeting_date >= CURDATE() 
-        AND status = 'scheduled' 
-        AND committee_role = 'representative_board'
-    ");
-    $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
-    
-    // 5. Student tickets analysis
-    $stmt = $pdo->query("
+    // Overall statistics
+    $stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total_tickets,
-            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_tickets,
             SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_tickets,
-            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets
-        FROM tickets 
-        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets,
+            SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_tickets,
+            SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_tickets
+        FROM tickets t
+        WHERE $where_sql
     ");
+    $stmt->execute($params);
     $ticket_stats = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    // 6. Representative Board team members (president and secretary)
-    $stmt = $pdo->query("
-        SELECT cm.* 
-        FROM committee_members cm
-        WHERE cm.role IN ('president_representative_board', 'secretary_representative_board')
-        AND cm.status = 'active'
-        ORDER BY cm.role_order
-    ");
-    $board_team = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 7. Recent Representative Board reports
-    $stmt = $pdo->query("
-        SELECT r.*, u.full_name as author_name
-        FROM reports r
-        JOIN users u ON r.user_id = u.id
-        WHERE r.is_team_report = 1 
-        AND r.team_role IN ('president', 'vice_president', 'secretary', 'combined')
-        ORDER BY r.created_at DESC 
-        LIMIT 5
-    ");
-    $recent_board_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 8. Vice President's attendance in meetings
+
+    // Priority distribution
     $stmt = $pdo->prepare("
         SELECT 
-            COUNT(*) as total_meetings,
-            SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) as attended_meetings,
-            SUM(CASE WHEN ma.attendance_status = 'absent' THEN 1 ELSE 0 END) as absent_meetings
-        FROM meetings m
-        LEFT JOIN meeting_attendance ma ON m.id = ma.meeting_id
-        LEFT JOIN committee_members cm ON ma.committee_member_id = cm.id
-        WHERE cm.role = 'vice_president_representative_board'
-        AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            priority,
+            COUNT(*) as count
+        FROM tickets t
+        WHERE $where_sql
+        GROUP BY priority
+        ORDER BY FIELD(priority, 'high', 'medium', 'low')
     ");
-    $stmt->execute();
-    $attendance_stats = $stmt->fetch(PDO::FETCH_ASSOC);
-    
-    // 9. Recent class representative reports pending review
-    $stmt = $pdo->query("
-        SELECT crr.*, u.full_name, u.department_id, d.name as department_name 
-        FROM class_rep_reports crr
-        JOIN users u ON crr.user_id = u.id
-        LEFT JOIN departments d ON u.department_id = d.id
-        WHERE crr.status = 'submitted'
-        ORDER BY crr.created_at DESC 
-        LIMIT 5
-    ");
-    $pending_class_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 10. Upcoming meetings for the Vice President to attend
-    $stmt = $pdo->query("
-        SELECT m.*, u.full_name as chairperson_name
-        FROM meetings m
-        JOIN users u ON m.chairperson_id = u.id
-        WHERE m.meeting_date >= CURDATE()
-        AND m.status = 'scheduled'
-        AND (m.committee_role = 'representative_board' OR m.meeting_type = 'executive')
-        ORDER BY m.meeting_date ASC, m.start_time ASC
-        LIMIT 5
-    ");
-    $upcoming_meetings_list = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 11. Recent activities of Representative Board team
-    $stmt = $pdo->query("
-        SELECT la.*, u.full_name, u.role 
-        FROM login_activities la 
-        JOIN users u ON la.user_id = u.id 
-        WHERE u.role IN ('president_representative_board', 'vice_president_representative_board', 'secretary_representative_board')
-        ORDER BY la.login_time DESC 
-        LIMIT 6
-    ");
-    $recent_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 12. Vice President's own budget requests (if any)
+    $stmt->execute($params);
+    $priority_distribution = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Status distribution
     $stmt = $pdo->prepare("
-        SELECT cbr.* 
-        FROM committee_budget_requests cbr
-        JOIN committee_members cm ON cbr.committee_id = cm.id
-        WHERE cm.role = 'vice_president_representative_board'
-        AND cbr.requested_by = ?
-        ORDER BY cbr.created_at DESC 
-        LIMIT 3
+        SELECT 
+            status,
+            COUNT(*) as count
+        FROM tickets t
+        WHERE $where_sql
+        GROUP BY status
+        ORDER BY FIELD(status, 'open', 'in_progress', 'resolved', 'closed')
     ");
-    $stmt->execute([$user_id]);
-    $vice_president_budget_requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 13. Department-wise class representative distribution
-    $stmt = $pdo->query("
+    $stmt->execute($params);
+    $status_distribution = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Department breakdown
+    $stmt = $pdo->prepare("
         SELECT 
             d.name as department_name,
-            COUNT(u.id) as rep_count
-        FROM users u
-        JOIN departments d ON u.department_id = d.id
-        WHERE u.is_class_rep = 1
-        AND u.status = 'active'
-        GROUP BY d.id, d.name
-        ORDER BY rep_count DESC
-    ");
-    $department_reps = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 14. Recent student tickets for analysis
-    $stmt = $pdo->query("
-        SELECT t.*, d.name as department_name, p.name as program_name
+            COUNT(t.id) as ticket_count,
+            SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END) as resolved_count
         FROM tickets t
         LEFT JOIN departments d ON t.department_id = d.id
-        LEFT JOIN programs p ON t.program_id = p.id
-        WHERE t.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-        ORDER BY t.created_at DESC
-        LIMIT 5
+        WHERE $where_sql
+        GROUP BY d.id, d.name
+        ORDER BY ticket_count DESC
+        LIMIT 10
     ");
-    $recent_tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // 15. Class representative performance metrics
-    $stmt = $pdo->query("
+    $stmt->execute($params);
+    $department_breakdown = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Recent tickets
+    $stmt = $pdo->prepare("
         SELECT 
-            u.full_name,
-            COUNT(crr.id) as reports_submitted,
-            SUM(CASE WHEN crr.status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
-            SUM(CASE WHEN crr.status = 'rejected' THEN 1 ELSE 0 END) as rejected_reports
-        FROM users u
-        LEFT JOIN class_rep_reports crr ON u.id = crr.user_id
-        WHERE u.is_class_rep = 1
-        AND u.status = 'active'
-        AND crr.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        GROUP BY u.id, u.full_name
-        ORDER BY reports_submitted DESC
-        LIMIT 5
+            t.*,
+            d.name as department_name,
+            u.full_name as created_by_name
+        FROM tickets t
+        LEFT JOIN departments d ON t.department_id = d.id
+        LEFT JOIN users u ON t.created_by = u.id
+        WHERE $where_sql
+        ORDER BY t.created_at DESC
+        LIMIT 10
     ");
-    $rep_performance = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+    $stmt->execute($params);
+    $recent_tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Get departments for filter
+    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = 1 ORDER BY name");
+    $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Get unread messages count
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+
 } catch (PDOException $e) {
-    error_log("Vice President dashboard error: " . $e->getMessage());
-    // Initialize all variables with defaults
-    $total_reps = $total_students = $pending_reports = $upcoming_meetings = 0;
-    $ticket_stats = ['total_tickets' => 0, 'resolved_tickets' => 0, 'open_tickets' => 0, 'in_progress_tickets' => 0];
-    $board_team = $recent_board_reports = $pending_class_reports = $upcoming_meetings_list = [];
-    $recent_activities = $vice_president_budget_requests = $department_reps = $recent_tickets = $rep_performance = [];
-    $attendance_stats = ['total_meetings' => 0, 'attended_meetings' => 0, 'absent_meetings' => 0];
+    error_log("Ticket analysis error: " . $e->getMessage());
+    $ticket_stats = ['total_tickets' => 0, 'open_tickets' => 0, 'in_progress_tickets' => 0, 'resolved_tickets' => 0, 'closed_tickets' => 0];
+    $priority_distribution = [];
+    $status_distribution = [];
+    $department_breakdown = [];
+    $recent_tickets = [];
+    $departments = [];
+    $unread_messages = 0;
 }
 ?>
 <!DOCTYPE html>
@@ -206,7 +171,7 @@ try {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vice President of Representative Board Dashboard - Isonga RPSU</title>
+    <title>Tickets Analysis - President Dashboard</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
@@ -226,10 +191,6 @@ try {
             --warning: #ffc107;
             --danger: #dc3545;
             --info: #17a2b8;
-            --purple: #6f42c1;
-            --teal: #20c997;
-            --indigo: #6610f2;
-            --orange: #fd7e14;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -534,21 +495,18 @@ try {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1rem;
+            padding: 1.25rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 3px solid var(--primary-blue);
             transition: var(--transition);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
         }
 
         .stat-card:hover {
@@ -572,26 +530,20 @@ try {
             border-left-color: var(--info);
         }
 
-        .stat-card.purple {
-            border-left-color: var(--purple);
-        }
-
-        .stat-card.teal {
-            border-left-color: var(--teal);
-        }
-
-        .stat-card.indigo {
-            border-left-color: var(--indigo);
+        .stat-content {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 50px;
+            height: 50px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.2rem;
         }
 
         .stat-card .stat-icon {
@@ -619,27 +571,12 @@ try {
             color: var(--info);
         }
 
-        .stat-card.purple .stat-icon {
-            background: #e2d9f3;
-            color: var(--purple);
-        }
-
-        .stat-card.teal .stat-icon {
-            background: #d1f7e8;
-            color: var(--teal);
-        }
-
-        .stat-card.indigo .stat-icon {
-            background: #e8eaf6;
-            color: var(--indigo);
-        }
-
-        .stat-content {
+        .stat-main {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.8rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -647,7 +584,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.85rem;
             font-weight: 500;
         }
 
@@ -676,26 +613,6 @@ try {
         .card-header h3 {
             font-size: 1rem;
             font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .card-header-btn:hover {
-            background: var(--light-gray);
             color: var(--text-dark);
         }
 
@@ -731,228 +648,109 @@ try {
             text-transform: uppercase;
         }
 
-        .status-open {
-            background: #fff3cd;
-            color: var(--warning);
+        .status-open { background: #f8d7da; color: var(--danger); }
+        .status-in_progress { background: #fff3cd; color: var(--warning); }
+        .status-resolved { background: #d4edda; color: var(--success); }
+        .status-closed { background: #d1ecf1; color: #0c5460; }
+
+        .priority-high { color: var(--danger); font-weight: 600; }
+        .priority-medium { color: var(--warning); font-weight: 600; }
+        .priority-low { color: var(--success); font-weight: 600; }
+
+        /* Filters */
+        .filters-container {
+            background: var(--white);
+            padding: 1.5rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 1.5rem;
         }
 
-        .status-in_progress {
-            background: #cce7ff;
-            color: var(--info);
-        }
-
-        .status-resolved {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-closed {
-            background: #f8f9fa;
-            color: var(--dark-gray);
-        }
-
-        .status-submitted {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-approved {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-rejected {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        /* Activity List */
-        .activity-list {
-            list-style: none;
-        }
-
-        .activity-item {
+        .filters-header {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid var(--medium-gray);
+            margin-bottom: 1rem;
         }
 
-        .activity-item:last-child {
-            border-bottom: none;
-        }
-
-        .activity-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--gradient-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
+        .filters-header h3 {
+            font-size: 1rem;
             font-weight: 600;
-            font-size: 0.7rem;
-            flex-shrink: 0;
-        }
-
-        .activity-content {
-            flex: 1;
-        }
-
-        .activity-text {
-            font-size: 0.8rem;
             color: var(--text-dark);
-            margin-bottom: 0.25rem;
         }
 
-        .activity-time {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-        }
-
-        /* Quick Actions */
-        .quick-actions {
+        .filters-form {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 0.75rem;
-            margin-top: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
         }
 
-        .action-btn {
+        .form-group {
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            background: var(--white);
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .form-control {
+            padding: 0.5rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            text-decoration: none;
+            background: var(--white);
             color: var(--text-dark);
+            font-size: 0.85rem;
             transition: var(--transition);
-            text-align: center;
         }
 
-        .action-btn:hover {
+        .form-control:focus {
+            outline: none;
             border-color: var(--primary-blue);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
         }
 
-        .action-btn i {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
-            color: var(--primary-blue);
-        }
-
-        .action-label {
-            font-weight: 600;
-            font-size: 0.75rem;
-        }
-
-        /* Alert */
-        .alert {
-            padding: 0.75rem 1rem;
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
             border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-            font-size: 0.8rem;
-        }
-
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
-        }
-
-        .alert-info {
-            background: #cce7ff;
-            color: #004085;
-            border-left-color: var(--info);
-        }
-
-        .alert a {
-            color: inherit;
             font-weight: 600;
-            text-decoration: none;
-        }
-
-        .alert a:hover {
-            text-decoration: underline;
-        }
-
-        /* Committee Member Info */
-        .member-info {
-            display: flex;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem;
-            border-radius: var(--border-radius);
-            background: var(--light-gray);
-            margin-bottom: 0.5rem;
         }
 
-        .member-avatar {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: var(--gradient-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        .btn-primary {
+            background: var(--primary-blue);
             color: white;
-            font-weight: 600;
-            font-size: 0.7rem;
         }
 
-        .member-details {
-            flex: 1;
+        .btn-primary:hover {
+            background: var(--secondary-blue);
+            transform: translateY(-1px);
         }
 
-        .member-name {
-            font-weight: 600;
-            font-size: 0.8rem;
+        .btn-secondary {
+            background: var(--light-gray);
+            color: var(--text-dark);
         }
 
-        .member-role {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
+        .btn-secondary:hover {
+            background: var(--medium-gray);
+            transform: translateY(-1px);
         }
 
         /* Chart Container */
         .chart-container {
-            height: 200px;
+            height: 300px;
             margin-top: 1rem;
             position: relative;
-        }
-
-        /* Department Stats */
-        .department-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-
-        .department-stat {
-            background: var(--light-gray);
-            padding: 0.75rem;
-            border-radius: var(--border-radius);
-            text-align: center;
-        }
-
-        .department-name {
-            font-size: 0.7rem;
-            color: var(--dark-gray);
-            margin-bottom: 0.25rem;
-        }
-
-        .department-count {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary-blue);
         }
 
         /* Overlay for mobile */
@@ -1031,10 +829,6 @@ try {
                 grid-template-columns: 1fr 1fr;
             }
             
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
                 gap: 0.5rem;
@@ -1088,16 +882,16 @@ try {
                     <i class="fas fa-bars"></i>
                 </button>
                 <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
                 <div class="brand-text">
-                    <h1>Isonga - Representative Board Vice President</h1>
+                    <h1>Tickets Analysis Dashboard</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <a href="messages.php" class="icon-btn" title="Messages">
-                        <i class="fas fa-envelope"></i>
+                    <a href="dashboard.php" class="icon-btn" title="Back to Dashboard">
+                        <i class="fas fa-tachometer-alt"></i>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1105,12 +899,12 @@ try {
                         <?php if (!empty($user['avatar_url'])): ?>
                             <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
                         <?php else: ?>
-                            <?php echo strtoupper(substr($vice_president_name, 0, 1)); ?>
+                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
                     </div>
                     <div class="user-details">
-                        <div class="user-name"><?php echo htmlspecialchars($vice_president_name); ?></div>
-                        <div class="user-role">Vice President - Representative Board</div>
+                        <div class="user-name"><?php echo htmlspecialchars($user['full_name']); ?></div>
+                        <div class="user-role">President - Representative Board</div>
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
@@ -1123,11 +917,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" class="active">
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1136,9 +929,6 @@ try {
                     <a href="class_reps.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Management</span>
-                        <?php if ($total_reps > 0): ?>
-                            <span class="menu-badge"><?php echo $total_reps; ?></span>
-                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1151,9 +941,6 @@ try {
                     <a href="class_rep_reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Class Rep Reports</span>
-                        <?php if ($pending_reports > 0): ?>
-                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
-                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1167,6 +954,12 @@ try {
                 <li class="menu-section">Other Features</li>
                 
                 <li class="menu-item">
+                    <a href="committee_budget_requests.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-chart-bar"></i>
                         <span>Reports</span>
@@ -1176,15 +969,18 @@ try {
                     <a href="meetings.php">
                         <i class="fas fa-handshake"></i>
                         <span>Meetings</span>
-                        <?php if ($upcoming_meetings > 0): ?>
-                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
-                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets_analysis.php" class="active">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Tickets Analysis</span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1200,54 +996,118 @@ try {
         <main class="main-content">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Vice President <?php echo htmlspecialchars($vice_president_name); ?>!</h1>
-                
+                    <h1>Tickets Analysis & Overview</h1>
+                    <p>Monitor and analyze student tickets for <?php echo $period_label; ?></p>
                 </div>
             </div>
 
-            <?php if ($password_change_required): ?>
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle"></i> 
-                    <strong>Action Required:</strong> Please <a href="profile.php?tab=security">change your password</a> for security reasons.
+            <!-- Filters -->
+            <div class="filters-container">
+                <div class="filters-header">
+                    <h3>Filter Ticket Data</h3>
+                    <button type="button" class="btn btn-secondary" onclick="window.location.href='tickets_analysis.php'">
+                        <i class="fas fa-redo"></i> Reset Filters
+                    </button>
                 </div>
-            <?php endif; ?>
+                <form method="GET" class="filters-form">
+                    <div class="form-group">
+                        <label for="status">Status</label>
+                        <select id="status" name="status" class="form-control">
+                            <option value="">All Statuses</option>
+                            <option value="open" <?php echo $filter_status == 'open' ? 'selected' : ''; ?>>Open</option>
+                            <option value="in_progress" <?php echo $filter_status == 'in_progress' ? 'selected' : ''; ?>>In Progress</option>
+                            <option value="resolved" <?php echo $filter_status == 'resolved' ? 'selected' : ''; ?>>Resolved</option>
+                            <option value="closed" <?php echo $filter_status == 'closed' ? 'selected' : ''; ?>>Closed</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="priority">Priority</label>
+                        <select id="priority" name="priority" class="form-control">
+                            <option value="">All Priorities</option>
+                            <option value="high" <?php echo $filter_priority == 'high' ? 'selected' : ''; ?>>High</option>
+                            <option value="medium" <?php echo $filter_priority == 'medium' ? 'selected' : ''; ?>>Medium</option>
+                            <option value="low" <?php echo $filter_priority == 'low' ? 'selected' : ''; ?>>Low</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="department">Department</label>
+                        <select id="department" name="department" class="form-control">
+                            <option value="">All Departments</option>
+                            <?php foreach ($departments as $dept): ?>
+                                <option value="<?php echo $dept['id']; ?>" <?php echo $filter_department == $dept['id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($dept['name']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="date_range">Time Period</label>
+                        <select id="date_range" name="date_range" class="form-control">
+                            <option value="7" <?php echo $filter_date_range == '7' ? 'selected' : ''; ?>>Last 7 Days</option>
+                            <option value="30" <?php echo $filter_date_range == '30' ? 'selected' : ''; ?>>Last 30 Days</option>
+                            <option value="90" <?php echo $filter_date_range == '90' ? 'selected' : ''; ?>>Last 90 Days</option>
+                            <option value="180" <?php echo $filter_date_range == '180' ? 'selected' : ''; ?>>Last 6 Months</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group" style="grid-column: span 2;">
+                        <button type="submit" class="btn btn-primary" style="width: 100%;">
+                            <i class="fas fa-filter"></i> Apply Filters
+                        </button>
+                    </div>
+                </form>
+            </div>
 
-            <!-- Statistics Grid -->
+            <!-- Performance Statistics -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-users"></i>
-                    </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_reps; ?></div>
-                        <div class="stat-label">Class Representatives</div>
+                        <div class="stat-icon">
+                            <i class="fas fa-ticket-alt"></i>
+                        </div>
+                        <div class="stat-main">
+                            <div class="stat-number"><?php echo $ticket_stats['total_tickets'] ?? 0; ?></div>
+                            <div class="stat-label">Total Tickets</div>
+                        </div>
                     </div>
                 </div>
-                <div class="stat-card info">
-                    <div class="stat-icon">
-                        <i class="fas fa-user-graduate"></i>
-                    </div>
+                
+                <div class="stat-card danger">
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_students; ?></div>
-                        <div class="stat-label">Total Students</div>
+                        <div class="stat-icon">
+                            <i class="fas fa-exclamation-circle"></i>
+                        </div>
+                        <div class="stat-main">
+                            <div class="stat-number"><?php echo $ticket_stats['open_tickets'] ?? 0; ?></div>
+                            <div class="stat-label">Open Tickets</div>
+                        </div>
                     </div>
                 </div>
+                
                 <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-file-alt"></i>
-                    </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $pending_reports; ?></div>
-                        <div class="stat-label">Pending Reports</div>
+                        <div class="stat-icon">
+                            <i class="fas fa-spinner"></i>
+                        </div>
+                        <div class="stat-main">
+                            <div class="stat-number"><?php echo $ticket_stats['in_progress_tickets'] ?? 0; ?></div>
+                            <div class="stat-label">In Progress</div>
+                        </div>
                     </div>
                 </div>
+                
                 <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-check"></i>
-                    </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_meetings; ?></div>
-                        <div class="stat-label">Upcoming Meetings</div>
+                        <div class="stat-icon">
+                            <i class="fas fa-check-circle"></i>
+                        </div>
+                        <div class="stat-main">
+                            <div class="stat-number"><?php echo $ticket_stats['resolved_tickets'] ?? 0; ?></div>
+                            <div class="stat-label">Resolved Tickets</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1256,113 +1116,90 @@ try {
             <div class="content-grid">
                 <!-- Left Column -->
                 <div class="left-column">
-                    
-                    <!-- Pending Class Representative Reports -->
+                    <!-- Recent Tickets -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Pending Class Representative Reports</h3>
-                            <div class="card-header-actions">
-                                <a href="class_rep_reports.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
+                            <h3>Recent Tickets</h3>
                         </div>
                         <div class="card-body">
-                            <?php if (empty($pending_class_reports)): ?>
+                            <?php if (empty($recent_tickets)): ?>
                                 <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-check-circle" style="font-size: 2rem; margin-bottom: 1rem; color: var(--success);"></i>
-                                    <p>No pending class representative reports</p>
+                                    <i class="fas fa-ticket-alt" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                    <p>No tickets found for the selected period</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Representative</th>
-                                            <th>Report Title</th>
-                                            <th>Department</th>
-                                            <th>Date</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($pending_class_reports as $report): ?>
+                                <div style="overflow-x: auto;">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($report['full_name']); ?></strong>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($report['title']); ?></td>
-                                                <td><?php echo htmlspecialchars($report['department_name'] ?? 'N/A'); ?></td>
-                                                <td><?php echo date('M j', strtotime($report['created_at'])); ?></td>
+                                                <th>ID</th>
+                                                <th>Title</th>
+                                                <th>Department</th>
+                                                <th>Priority</th>
+                                                <th>Status</th>
+                                                <th>Created</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($recent_tickets as $ticket): ?>
+                                                <tr>
+                                                    <td>#<?php echo $ticket['id']; ?></td>
+                                                    <td><?php echo htmlspecialchars(substr($ticket['title'], 0, 40)); ?>...</td>
+                                                    <td><?php echo htmlspecialchars($ticket['department_name'] ?? 'N/A'); ?></td>
+                                                    <td>
+                                                        <span class="priority-<?php echo $ticket['priority']; ?>">
+                                                            <?php echo ucfirst($ticket['priority']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $ticket['status']; ?>">
+                                                            <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
                             <?php endif; ?>
                         </div>
                     </div>
-
-                    <!-- Department-wise Class Representatives -->
-                    
-
-                    <!-- Quick Actions -->
-                    <div class="quick-actions">
-                        <a href="class_rep_reports.php?action=review" class="action-btn">
-                            <i class="fas fa-file-check"></i>
-                            <span class="action-label">Review Reports</span>
-                        </a>
-                        <a href="meetings.php?action=schedule" class="action-btn">
-                            <i class="fas fa-calendar-plus"></i>
-                            <span class="action-label">Schedule Meeting</span>
-                        </a>
-                        <a href="reports.php?action=new" class="action-btn">
-                            <i class="fas fa-file-alt"></i>
-                            <span class="action-label">Create Report</span>
-                        </a>
-                        <a href="tickets_analysis.php" class="action-btn">
-                            <i class="fas fa-chart-pie"></i>
-                            <span class="action-label">Analyze Tickets</span>
-                        </a>
-                    </div>
                 </div>
 
-                <!-- Right Column -->
-                <div class="right-column">
-                    
-                                        
-                    <!-- Attendance Statistics -->
+                
+                   
+
+                    <!-- Department Breakdown -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Your Meeting Attendance (30 Days)</h3>
+                            <h3>Top Departments</h3>
                         </div>
                         <div class="card-body">
-                            <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Meetings</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $attendance_stats['total_meetings'] ?? 0; ?></strong>
+                            <?php if (empty($department_breakdown)): ?>
+                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                    <p>No department data available</p>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Meetings Attended</span>
-                                    <strong style="color: var(--success);"><?php echo $attendance_stats['attended_meetings'] ?? 0; ?></strong>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Meetings Missed</span>
-                                    <strong style="color: var(--danger);"><?php echo $attendance_stats['absent_meetings'] ?? 0; ?></strong>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Attendance Rate</span>
-                                    <strong style="color: var(--primary-blue);">
-                                        <?php 
-                                        $total = $attendance_stats['total_meetings'] ?? 0;
-                                        $attended = $attendance_stats['attended_meetings'] ?? 0;
-                                        $rate = $total > 0 ? round(($attended / $total) * 100) : 100;
-                                        echo $rate; 
-                                        ?>%
-                                    </strong>
-                                </div>
-                            </div>
+                            <?php else: ?>
+                                <?php foreach ($department_breakdown as $dept): 
+                                    $resolution_rate = $dept['ticket_count'] > 0 
+                                        ? round(($dept['resolved_count'] / $dept['ticket_count']) * 100, 1) 
+                                        : 0;
+                                ?>
+                                    <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--medium-gray);">
+                                        <div>
+                                            <strong><?php echo htmlspecialchars($dept['department_name'] ?? 'Uncategorized'); ?></strong>
+                                            <br><small style="color: var(--dark-gray);"><?php echo $dept['ticket_count']; ?> tickets</small>
+                                        </div>
+                                        <div style="text-align: right;">
+                                            <span style="color: var(--success); font-weight: 600;"><?php echo $resolution_rate; ?>%</span>
+                                            <br><small style="color: var(--dark-gray);">resolved</small>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </div>
                     </div>
-
-                    
                 </div>
             </div>
         </main>
@@ -1404,29 +1241,16 @@ try {
             }
         });
 
-        // Student Tickets Chart
-        const ticketsCtx = document.getElementById('ticketsChart').getContext('2d');
-        const ticketsChart = new Chart(ticketsCtx, {
+        // Priority Chart
+        const priorityCtx = document.getElementById('priorityChart').getContext('2d');
+        new Chart(priorityCtx, {
             type: 'doughnut',
             data: {
-                labels: ['Resolved', 'Open', 'In Progress'],
+                labels: <?php echo json_encode(array_column($priority_distribution, 'priority')); ?>,
                 datasets: [{
-                    data: [
-                        <?php echo $ticket_stats['resolved_tickets'] ?? 0; ?>,
-                        <?php echo $ticket_stats['open_tickets'] ?? 0; ?>,
-                        <?php echo $ticket_stats['in_progress_tickets'] ?? 0; ?>
-                    ],
-                    backgroundColor: [
-                        'rgba(40, 167, 69, 0.8)',
-                        'rgba(255, 193, 7, 0.8)',
-                        'rgba(23, 162, 184, 0.8)'
-                    ],
-                    borderColor: [
-                        'rgb(40, 167, 69)',
-                        'rgb(255, 193, 7)',
-                        'rgb(23, 162, 184)'
-                    ],
-                    borderWidth: 1
+                    data: <?php echo json_encode(array_column($priority_distribution, 'count')); ?>,
+                    backgroundColor: ['#dc3545', '#ffc107', '#28a745'],
+                    borderWidth: 0
                 }]
             },
             options: {
@@ -1436,20 +1260,40 @@ try {
                     legend: {
                         position: 'bottom',
                         labels: {
-                            padding: 20,
-                            usePointStyle: true,
+                            padding: 15,
+                            usePointStyle: true
                         }
                     }
-                },
-                cutout: '65%'
+                }
             }
         });
 
-        // Auto-refresh dashboard every 5 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Dashboard auto-refresh triggered');
-        }, 300000);
+        // Status Chart
+        const statusCtx = document.getElementById('statusChart').getContext('2d');
+        new Chart(statusCtx, {
+            type: 'pie',
+            data: {
+                labels: <?php echo json_encode(array_map(function($s) { return ucfirst(str_replace('_', ' ', $s)); }, array_column($status_distribution, 'status'))); ?>,
+                datasets: [{
+                    data: <?php echo json_encode(array_column($status_distribution, 'count')); ?>,
+                    backgroundColor: ['#dc3545', '#ffc107', '#28a745', '#17a2b8'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    }
+                }
+            }
+        });
     </script>
 </body>
 </html>

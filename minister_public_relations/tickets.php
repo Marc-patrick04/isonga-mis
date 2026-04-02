@@ -1346,9 +1346,9 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
+                    <!-- <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
-                    </button>
+                    </button> -->
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1357,13 +1357,13 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
+                    <!-- <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
                             <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
-                    </div>
+                    </div> -->
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Public Relations</div>
@@ -1468,10 +1468,7 @@ try {
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Student Tickets Management</h1>
-                    <p>Manage and resolve student issues and concerns</p>
-                </div>
+               
                 <div class="header-actions">
                     <a href="tickets.php" class="btn btn-secondary">
                         <i class="fas fa-list"></i> All Tickets
@@ -1523,7 +1520,7 @@ try {
                         <div class="stat-label">Resolved</div>
                     </div>
                 </div>
-                <div class="stat-card danger">
+                <!-- <div class="stat-card danger">
                     <div class="stat-icon">
                         <i class="fas fa-exclamation-triangle"></i>
                     </div>
@@ -1531,7 +1528,7 @@ try {
                         <div class="stat-number"><?php echo number_format($high_priority_tickets); ?></div>
                         <div class="stat-label">High Priority</div>
                     </div>
-                </div>
+                </div> -->
             </div>
 
             <?php if (!$view_ticket): ?>
@@ -1925,21 +1922,21 @@ try {
 
     <script>
         // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
+        // const themeToggle = document.getElementById('themeToggle');
+        // const body = document.body;
 
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
+        // const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        // if (savedTheme === 'dark') {
+        //     body.classList.add('dark-mode');
+        //     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+        // themeToggle.addEventListener('click', () => {
+        //     body.classList.toggle('dark-mode');
+        //     const isDark = body.classList.contains('dark-mode');
+        //     localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        //     themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // });
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

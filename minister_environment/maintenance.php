@@ -20,57 +20,52 @@ try {
     $user = [];
 }
 
-// Create maintenance_requests table if it doesn't exist
+// Create maintenance_requests table if it doesn't exist (PostgreSQL syntax)
 try {
-    $stmt = $pdo->query("
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS maintenance_requests (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             title VARCHAR(255) NOT NULL,
             description TEXT NOT NULL,
-            facility_id INT,
+            facility_id INTEGER,
             facility_name VARCHAR(255),
             location VARCHAR(255) NOT NULL,
-            issue_type ENUM('electrical', 'plumbing', 'structural', 'furniture', 'equipment', 'cleaning', 'safety', 'other') DEFAULT 'other',
-            priority ENUM('low', 'medium', 'high', 'urgent') DEFAULT 'medium',
+            issue_type VARCHAR(20) DEFAULT 'other' CHECK (issue_type IN ('electrical', 'plumbing', 'structural', 'furniture', 'equipment', 'cleaning', 'safety', 'other')),
+            priority VARCHAR(10) DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
             reported_by VARCHAR(100) NOT NULL,
             reporter_contact VARCHAR(100),
-            status ENUM('reported', 'assigned', 'in_progress', 'completed', 'cancelled') DEFAULT 'reported',
-            assigned_to INT,
+            status VARCHAR(20) DEFAULT 'reported' CHECK (status IN ('reported', 'assigned', 'in_progress', 'completed', 'cancelled')),
+            assigned_to INTEGER,
             estimated_cost DECIMAL(10,2) DEFAULT 0.00,
             actual_cost DECIMAL(10,2) DEFAULT 0.00,
             completion_notes TEXT,
-            reported_by_user INT,
-            assigned_by INT,
-            completed_by INT,
+            reported_by_user INTEGER,
+            assigned_by INTEGER,
+            completed_by INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            assigned_at DATETIME,
-            completed_at DATETIME,
-            due_date DATE,
-            FOREIGN KEY (reported_by_user) REFERENCES users(id),
-            FOREIGN KEY (assigned_to) REFERENCES users(id),
-            FOREIGN KEY (assigned_by) REFERENCES users(id),
-            FOREIGN KEY (completed_by) REFERENCES users(id)
+            assigned_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            due_date DATE
         )
     ");
 } catch (PDOException $e) {
     error_log("Maintenance requests table creation error: " . $e->getMessage());
 }
 
-// Create maintenance_contractors table if it doesn't exist
+// Create maintenance_contractors table if it doesn't exist (PostgreSQL syntax)
 try {
-    $stmt = $pdo->query("
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS maintenance_contractors (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
             contact_person VARCHAR(100),
             phone VARCHAR(20),
             email VARCHAR(100),
-            specialty ENUM('electrical', 'plumbing', 'carpentry', 'painting', 'cleaning', 'general') DEFAULT 'general',
+            specialty VARCHAR(20) DEFAULT 'general' CHECK (specialty IN ('electrical', 'plumbing', 'carpentry', 'painting', 'cleaning', 'general')),
             hourly_rate DECIMAL(8,2) DEFAULT 0.00,
-            status ENUM('active', 'inactive') DEFAULT 'active',
-            created_by INT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (created_by) REFERENCES users(id)
+            status VARCHAR(10) DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ");
 } catch (PDOException $e) {
@@ -179,7 +174,7 @@ $priority_filter = $_GET['priority'] ?? 'all';
 $type_filter = $_GET['type'] ?? 'all';
 $search_term = $_GET['search'] ?? '';
 
-// Build query for maintenance requests
+// Build query for maintenance requests (PostgreSQL syntax with ILIKE)
 $query = "
     SELECT mr.*, 
            u_assigned.full_name as assigned_to_name,
@@ -209,7 +204,7 @@ if ($type_filter !== 'all') {
 }
 
 if (!empty($search_term)) {
-    $query .= " AND (mr.title LIKE ? OR mr.description LIKE ? OR mr.location LIKE ? OR mr.reported_by LIKE ?)";
+    $query .= " AND (mr.title ILIKE ? OR mr.description ILIKE ? OR mr.location ILIKE ? OR mr.reported_by ILIKE ?)";
     $search_param = "%$search_term%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -257,7 +252,7 @@ try {
     $assignment_users = [];
 }
 
-// Get statistics
+// Get statistics (PostgreSQL syntax)
 try {
     // Total requests
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM maintenance_requests");
@@ -305,12 +300,25 @@ try {
 } catch (PDOException $e) {
     $unread_messages = 0;
 }
+
+// Get pending tickets count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    $pending_tickets = 0;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Maintenance Management - Minister of Environment & Security</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -329,6 +337,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -336,22 +345,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-green: #4caf50;
-            --secondary-green: #66bb6a;
-            --accent-green: #388e3c;
-            --light-green: #1b5e20;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -374,14 +369,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -391,7 +383,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -412,26 +403,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -439,22 +442,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -463,12 +451,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -479,25 +466,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -507,50 +493,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -580,9 +601,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -597,35 +616,224 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
+        .dashboard-header {
             margin-bottom: 1.5rem;
         }
 
-        .page-title h1 {
+        .welcome-section h1 {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--text-dark);
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
-        .page-title p {
+        .welcome-section p {
             color: var(--dark-gray);
             font-size: 0.9rem;
         }
 
-        .page-actions {
-            display: flex;
-            gap: 0.75rem;
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
 
+        .stat-card {
+            background: var(--white);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            border-left: 4px solid var(--primary-green);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
+
+        .stat-card.danger {
+            border-left-color: var(--danger);
+        }
+
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .stat-card .stat-icon {
+            background: var(--light-green);
+            color: var(--primary-green);
+        }
+
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
+
+        .stat-number {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: var(--text-dark);
+        }
+
+        .stat-label {
+            color: var(--dark-gray);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        /* Tabs */
+        .tabs-container {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--white);
+            border-bottom: 1px solid var(--medium-gray);
+            overflow-x: auto;
+        }
+
+        .tab {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--dark-gray);
+            transition: var(--transition);
+            border-bottom: 2px solid transparent;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        .tab.active {
+            color: var(--primary-green);
+            border-bottom-color: var(--primary-green);
+        }
+
+        .tab:hover {
+            color: var(--primary-green);
+            background: var(--light-green);
+        }
+
+        /* Content Sections */
+        .content-section {
+            display: none;
+            padding: 1.25rem;
+        }
+
+        .content-section.active {
+            display: block;
+        }
+
+        /* Filters */
+        .filters-card {
+            background: var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .filters-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .form-control {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-green);
+            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
@@ -660,130 +868,32 @@ try {
             background: var(--medium-gray);
         }
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+        .btn-danger {
+            background: var(--danger);
+            color: white;
         }
 
-        .stat-card {
+        .btn-warning {
+            background: var(--warning);
+            color: black;
+        }
+
+        .btn-info {
+            background: var(--info);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+            border-radius: 4px;
+        }
+
+        /* Table */
+        .table-container {
             background: var(--white);
-            padding: 1rem;
             border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .stat-card.success {
-            border-left-color: var(--success);
-        }
-
-        .stat-card.warning {
-            border-left-color: var(--warning);
-        }
-
-        .stat-card.danger {
-            border-left-color: var(--danger);
-        }
-
-        .stat-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-        }
-
-        .stat-card .stat-icon {
-            background: var(--light-green);
-            color: var(--primary-green);
-        }
-
-        .stat-card.success .stat-icon {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .stat-card.warning .stat-icon {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .stat-card.danger .stat-icon {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .stat-content {
-            flex: 1;
-        }
-
-        .stat-number {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-            color: var(--text-dark);
-        }
-
-        .stat-label {
-            color: var(--dark-gray);
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            background: var(--white);
-            border-radius: var(--border-radius) var(--border-radius) 0 0;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 0;
-        }
-
-        .tab {
-            padding: 1rem 1.5rem;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-weight: 600;
-            color: var(--dark-gray);
-            transition: var(--transition);
-            border-bottom: 2px solid transparent;
-        }
-
-        .tab.active {
-            color: var(--primary-green);
-            border-bottom-color: var(--primary-green);
-        }
-
-        .tab:hover {
-            color: var(--primary-green);
-            background: var(--light-green);
-        }
-
-        /* Content Sections */
-        .content-section {
-            display: none;
-            background: var(--white);
-            border-radius: 0 0 var(--border-radius) var(--border-radius);
-            box-shadow: var(--shadow-sm);
-        }
-
-        .content-section.active {
-            display: block;
+            overflow-x: auto;
         }
 
         .section-header {
@@ -792,64 +902,14 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .section-header h3 {
             font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
-        }
-
-        /* Filters */
-        .filters-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .filters-form {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            align-items: end;
-        }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .form-label {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.85rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-green);
-            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
-        }
-
-        /* Table */
-        .table-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
         }
 
         .table {
@@ -871,6 +931,11 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -881,27 +946,27 @@ try {
 
         .status-reported {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-assigned {
             background: #cce7ff;
-            color: var(--primary-green);
+            color: #004085;
         }
 
         .status-in_progress {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
         }
 
         .priority-badge {
@@ -911,24 +976,19 @@ try {
             font-weight: 600;
         }
 
-        .priority-urgent {
+        .priority-urgent, .priority-high {
             background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .priority-high {
-            background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .type-badge {
@@ -937,7 +997,7 @@ try {
             font-size: 0.7rem;
             font-weight: 600;
             background: #e2e3e5;
-            color: var(--dark-gray);
+            color: #383d41;
         }
 
         .action-buttons {
@@ -945,38 +1005,11 @@ try {
             gap: 0.25rem;
         }
 
-        .btn-sm {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.7rem;
-            border-radius: 4px;
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: black;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-info {
-            background: #17a2b8;
-            color: white;
-        }
-
         /* Contractors Grid */
         .contractors-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1rem;
-            padding: 1.25rem;
         }
 
         .contractor-card {
@@ -984,6 +1017,12 @@ try {
             border-radius: var(--border-radius);
             padding: 1rem;
             border-left: 4px solid var(--primary-green);
+            transition: var(--transition);
+        }
+
+        .contractor-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .contractor-card h4 {
@@ -996,7 +1035,7 @@ try {
         .contractor-card p {
             font-size: 0.8rem;
             color: var(--dark-gray);
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
         }
 
         .contractor-meta {
@@ -1004,6 +1043,7 @@ try {
             justify-content: space-between;
             font-size: 0.7rem;
             color: var(--dark-gray);
+            margin-bottom: 0.25rem;
         }
 
         /* Cost Display */
@@ -1032,7 +1072,7 @@ try {
 
         .modal-content {
             background: var(--white);
-            border-radius: var(--border-radius);
+            border-radius: var(--border-radius-lg);
             box-shadow: var(--shadow-lg);
             width: 90%;
             max-width: 600px;
@@ -1060,6 +1100,11 @@ try {
             font-size: 1.2rem;
             color: var(--dark-gray);
             cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
         }
 
         .modal-body {
@@ -1078,6 +1123,7 @@ try {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1rem;
+            margin-bottom: 1rem;
         }
 
         .form-full {
@@ -1089,13 +1135,16 @@ try {
             resize: vertical;
         }
 
-        /* Alert */
+        /* Alerts */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -1123,43 +1172,120 @@ try {
             opacity: 0.5;
         }
 
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .empty-state p {
+            font-size: 0.8rem;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
             .tabs {
                 flex-wrap: wrap;
             }
-            
+
             .contractors-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .section-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .filters-form {
                 grid-template-columns: 1fr;
             }
         }
@@ -1168,28 +1294,54 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
+            .table th, .table td {
+                padding: 0.5rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1199,8 +1351,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1232,38 +1384,26 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-          <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="tickets.php">
-        <i class="fas fa-ticket-alt"></i>
-        <span>Student Tickets</span>
-        <?php 
-        // Get pending tickets count for this minister
-        try {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as pending_tickets 
-                FROM tickets 
-                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-            ");
-            $stmt->execute([$user_id]);
-            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-            
-            if ($pending_tickets > 0): ?>
-                <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-            <?php endif;
-        } catch (PDOException $e) {
-            // Skip badge if error
-        }
-        ?>
-    </a>
-</li>
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="projects.php">
                         <i class="fas fa-leaf"></i>
@@ -1294,7 +1434,6 @@ try {
                         <span>Environmental Clubs</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1325,22 +1464,12 @@ try {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
-            <!-- Page Header -->
-            <div class="page-header">
-                <div class="page-title">
-                    <h1>Campus Maintenance Management</h1>
+        <main class="main-content" id="mainContent">
+            <div class="dashboard-header">
+                <div class="welcome-section">
+                    <h1>Campus Maintenance Management 🔧</h1>
                     <p>Manage maintenance requests, track repairs, and coordinate with contractors</p>
-                </div>
-                <div class="page-actions">
-                    <button class="btn btn-secondary" onclick="window.location.reload()">
-                        <i class="fas fa-sync-alt"></i> Refresh
-                    </button>
-                    <button class="btn btn-primary" onclick="openAddRequestModal()">
-                        <i class="fas fa-plus"></i> New Request
-                    </button>
                 </div>
             </div>
 
@@ -1459,6 +1588,9 @@ try {
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-filter"></i> Apply Filters
                                 </button>
+                                <a href="maintenance.php" class="btn btn-secondary">
+                                    <i class="fas fa-times"></i> Clear
+                                </a>
                             </div>
                         </form>
                     </div>
@@ -1481,95 +1613,97 @@ try {
                                 </button>
                             </div>
                         <?php else: ?>
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Request Title</th>
-                                        <th>Location</th>
-                                        <th>Type</th>
-                                        <th>Priority</th>
-                                        <th>Status</th>
-                                        <th>Cost</th>
-                                        <th>Reported By</th>
-                                        <th>Due Date</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($maintenance_requests as $request): ?>
+                            <div style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($request['title']); ?></strong>
-                                                <?php if (strlen($request['description']) > 100): ?>
-                                                    <br><small><?php echo htmlspecialchars(substr($request['description'], 0, 100)) . '...'; ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php echo htmlspecialchars($request['location']); ?>
-                                                <?php if ($request['facility_name']): ?>
-                                                    <br><small><?php echo htmlspecialchars($request['facility_name']); ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <span class="type-badge">
-                                                    <?php echo ucfirst($request['issue_type']); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <span class="priority-badge priority-<?php echo $request['priority']; ?>">
-                                                    <?php echo ucfirst($request['priority']); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <span class="status-badge status-<?php echo $request['status']; ?>">
-                                                    <?php echo str_replace('_', ' ', ucfirst($request['status'])); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <?php if ($request['actual_cost'] > 0): ?>
-                                                    <span class="cost-display">RWF <?php echo number_format($request['actual_cost'], 0); ?></span>
-                                                <?php elseif ($request['estimated_cost'] > 0): ?>
-                                                    <span class="cost-estimated">RWF <?php echo number_format($request['estimated_cost'], 0); ?></span>
-                                                <?php else: ?>
-                                                    <span style="color: var(--dark-gray);">-</span>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php echo htmlspecialchars($request['reported_by']); ?>
-                                                <?php if ($request['reporter_contact']): ?>
-                                                    <br><small><?php echo htmlspecialchars($request['reporter_contact']); ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <?php if ($request['due_date']): ?>
-                                                    <?php echo date('M j, Y', strtotime($request['due_date'])); ?>
-                                                    <?php 
-                                                    $due_date = new DateTime($request['due_date']);
-                                                    $today = new DateTime();
-                                                    if ($due_date < $today && $request['status'] != 'completed'): ?>
-                                                        <br><small style="color: var(--danger);">Overdue</small>
-                                                    <?php endif; ?>
-                                                <?php else: ?>
-                                                    <span style="color: var(--dark-gray);">-</span>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <div class="action-buttons">
-                                                    <button class="btn btn-sm btn-info" onclick="viewRequest(<?php echo $request['id']; ?>)">
-                                                        <i class="fas fa-eye"></i>
-                                                    </button>
-                                                    <button class="btn btn-sm btn-warning" onclick="updateRequest(<?php echo $request['id']; ?>)">
-                                                        <i class="fas fa-edit"></i>
-                                                    </button>
-                                                    <button class="btn btn-sm btn-danger" onclick="deleteRequest(<?php echo $request['id']; ?>)">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                </div>
-                                            </td>
+                                            <th>Request Title</th>
+                                            <th>Location</th>
+                                            <th>Type</th>
+                                            <th>Priority</th>
+                                            <th>Status</th>
+                                            <th>Cost</th>
+                                            <th>Reported By</th>
+                                            <th>Due Date</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($maintenance_requests as $request): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($request['title']); ?></strong>
+                                                    <?php if (strlen($request['description']) > 100): ?>
+                                                        <br><small><?php echo htmlspecialchars(substr($request['description'], 0, 100)) . '...'; ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <?php echo htmlspecialchars($request['location']); ?>
+                                                    <?php if ($request['facility_name']): ?>
+                                                        <br><small><?php echo htmlspecialchars($request['facility_name']); ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <span class="type-badge">
+                                                        <?php echo ucfirst($request['issue_type']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span class="priority-badge priority-<?php echo $request['priority']; ?>">
+                                                        <?php echo ucfirst($request['priority']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span class="status-badge status-<?php echo $request['status']; ?>">
+                                                        <?php echo str_replace('_', ' ', ucfirst($request['status'])); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <?php if ($request['actual_cost'] > 0): ?>
+                                                        <span class="cost-display">RWF <?php echo number_format($request['actual_cost'], 0); ?></span>
+                                                    <?php elseif ($request['estimated_cost'] > 0): ?>
+                                                        <span class="cost-estimated">RWF <?php echo number_format($request['estimated_cost'], 0); ?></span>
+                                                    <?php else: ?>
+                                                        <span style="color: var(--dark-gray);">-</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <?php echo htmlspecialchars($request['reported_by']); ?>
+                                                    <?php if ($request['reporter_contact']): ?>
+                                                        <br><small><?php echo htmlspecialchars($request['reporter_contact']); ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <?php if ($request['due_date']): ?>
+                                                        <?php echo date('M j, Y', strtotime($request['due_date'])); ?>
+                                                        <?php 
+                                                        $due_date = new DateTime($request['due_date']);
+                                                        $today = new DateTime();
+                                                        if ($due_date < $today && $request['status'] != 'completed'): ?>
+                                                            <br><small style="color: var(--danger);">Overdue</small>
+                                                        <?php endif; ?>
+                                                    <?php else: ?>
+                                                        <span style="color: var(--dark-gray);">-</span>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <div class="action-buttons">
+                                                        <button class="btn btn-info btn-sm" onclick="viewRequest(<?php echo $request['id']; ?>)">
+                                                            <i class="fas fa-eye"></i>
+                                                        </button>
+                                                        <button class="btn btn-warning btn-sm" onclick="updateRequest(<?php echo $request['id']; ?>)">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                        <button class="btn btn-danger btn-sm" onclick="deleteRequest(<?php echo $request['id']; ?>)">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -1632,11 +1766,10 @@ try {
                         <h3>Maintenance Reports & Analytics</h3>
                     </div>
                     <div class="filters-card">
-                        <div style="text-align: center; padding: 2rem;">
-                            <i class="fas fa-chart-bar" style="font-size: 3rem; color: var(--primary-green); margin-bottom: 1rem;"></i>
-                            <h3>Maintenance Analytics Dashboard</h3>
-                            <p>Comprehensive maintenance reports and cost analysis</p>
-                            <div class="stats-grid" style="margin-top: 2rem;">
+                        <div style="text-align: center; padding: 1rem;">
+                            <i class="fas fa-chart-bar" style="font-size: 2rem; color: var(--primary-green); margin-bottom: 1rem;"></i>
+                            <h3 style="margin-bottom: 1rem;">Maintenance Analytics Summary</h3>
+                            <div class="stats-grid" style="margin-top: 0;">
                                 <div class="stat-card">
                                     <div class="stat-content">
                                         <div class="stat-number"><?php echo $total_requests; ?></div>
@@ -1662,23 +1795,23 @@ try {
                                     </div>
                                 </div>
                             </div>
-                            <div style="margin-top: 2rem; display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+                            <div style="margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 2rem;">
                                 <div>
-                                    <h4>Requests by Status</h4>
-                                    <div style="text-align: left; margin-top: 1rem;">
+                                    <h4 style="margin-bottom: 1rem;">Requests by Status</h4>
+                                    <div style="text-align: left;">
                                         <?php foreach ($status_counts as $status): ?>
-                                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                                                <span><?php echo ucfirst($status['status']); ?></span>
+                                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--medium-gray);">
+                                                <span><?php echo ucfirst(str_replace('_', ' ', $status['status'])); ?></span>
                                                 <strong><?php echo $status['count']; ?></strong>
                                             </div>
                                         <?php endforeach; ?>
                                     </div>
                                 </div>
                                 <div>
-                                    <h4>Requests by Priority</h4>
-                                    <div style="text-align: left; margin-top: 1rem;">
+                                    <h4 style="margin-bottom: 1rem;">Requests by Priority</h4>
+                                    <div style="text-align: left;">
                                         <?php foreach ($priority_counts as $priority): ?>
-                                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; padding: 0.25rem 0; border-bottom: 1px solid var(--medium-gray);">
                                                 <span><?php echo ucfirst($priority['priority']); ?></span>
                                                 <strong><?php echo $priority['count']; ?></strong>
                                             </div>
@@ -1896,21 +2029,65 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab Functions
@@ -1960,7 +2137,6 @@ try {
 
         function viewRequest(requestId) {
             alert('View request details for ID: ' + requestId);
-            // Implement view functionality - could show a detailed view modal
         }
 
         function deleteRequest(requestId) {
@@ -2000,12 +2176,36 @@ try {
             });
         }
 
-        // Auto-refresh maintenance data every 3 minutes
-        setInterval(() => {
-            if (!document.querySelector('.modal[style*="display: flex"]')) {
-                window.location.reload();
-            }
-        }, 180000);
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.stat-card, .tabs-container');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
+        });
     </script>
 </body>
 </html>

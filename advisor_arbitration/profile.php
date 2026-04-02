@@ -43,7 +43,7 @@ try {
         SELECT COUNT(*) as upcoming_hearings 
         FROM arbitration_hearings ah 
         JOIN arbitration_cases ac ON ah.case_id = ac.id 
-        WHERE ac.assigned_to = ? AND ah.hearing_date >= CURDATE() AND ah.status = 'scheduled'
+        WHERE ac.assigned_to = ? AND ah.hearing_date >= CURRENT_DATE AND ah.status = 'scheduled'
     ");
     $stmt->execute([$user_id]);
     $upcoming_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_hearings'] ?? 0;
@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE users 
                     SET full_name = ?, email = ?, phone = ?, date_of_birth = ?, gender = ?, 
                         bio = ?, address = ?, emergency_contact_name = ?, emergency_contact_phone = ?,
-                        updated_at = NOW()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([
@@ -159,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Update password
                 $stmt = $pdo->prepare("
                     UPDATE users 
-                    SET password = ?, last_password_change = NOW(), updated_at = NOW()
+                    SET password = ?, last_password_change = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$new_password, $user_id]);
@@ -176,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $pdo->prepare("
                     UPDATE users 
                     SET email_notifications = ?, sms_notifications = ?, 
-                        preferred_language = ?, theme_preference = ?, updated_at = NOW()
+                        preferred_language = ?, theme_preference = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$email_notifications, $sms_notifications, $preferred_language, $theme_preference, $user_id]);
@@ -218,7 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (move_uploaded_file($avatar['tmp_name'], $file_path)) {
                         // Update database with relative path
                         $avatar_url = 'assets/uploads/avatars/' . $filename;
-                        $stmt = $pdo->prepare("UPDATE users SET avatar_url = ?, updated_at = NOW() WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE users SET avatar_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([$avatar_url, $user_id]);
                         
                         $_SESSION['success'] = "Profile picture updated successfully";
@@ -234,13 +234,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
             case 'enable_2fa':
                 // In a real implementation, this would set up 2FA
-                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = TRUE, updated_at = NOW() WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                 $stmt->execute([$user_id]);
                 $_SESSION['success'] = "Two-factor authentication enabled successfully";
                 break;
                 
             case 'disable_2fa':
-                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = FALSE, updated_at = NOW() WHERE id = ?");
+                $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                 $stmt->execute([$user_id]);
                 $_SESSION['success'] = "Two-factor authentication disabled successfully";
                 break;
@@ -285,9 +285,9 @@ try {
     <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
-            --primary-blue: #007bff;
-            --secondary-blue: #0056b3;
-            --accent-blue: #0069d9;
+            --primary-blue: #0056b3;
+            --secondary-blue: #1e88e5;
+            --accent-blue: #0d47a1;
             --light-blue: #e3f2fd;
             --white: #ffffff;
             --light-gray: #f8f9fa;
@@ -305,13 +305,15 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
+            --primary-blue: #1e88e5;
+            --secondary-blue: #64b5f6;
+            --accent-blue: #1565c0;
+            --light-blue: #0d1b2a;
             --white: #1a1a1a;
             --light-gray: #2d2d2d;
             --medium-gray: #3d3d3d;
@@ -344,14 +346,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -362,12 +361,26 @@ try {
             align-items: center;
             padding: 0 1.5rem;
             width: 100%;
+            gap: 0.5rem;
         }
 
         .logo-section {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logos {
@@ -400,8 +413,8 @@ try {
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -409,7 +422,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
+            font-size: 1rem;
             border: 3px solid var(--medium-gray);
             overflow: hidden;
             position: relative;
@@ -434,11 +447,11 @@ try {
         .user-name {
             font-weight: 600;
             color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -449,26 +462,33 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+            transform: translateY(-1px);
         }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
 
         .notification-badge {
             position: absolute;
@@ -477,27 +497,24 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
+            font-weight: 500;
             transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
         }
 
         .logout-btn:hover {
@@ -507,20 +524,58 @@ try {
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -550,9 +605,8 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -582,9 +636,15 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .container {
@@ -597,7 +657,7 @@ try {
         }
 
         .page-title h1 {
-            font-size: 1.75rem;
+            font-size: 1.5rem;
             font-weight: 700;
             color: var(--text-dark);
             margin-bottom: 0.5rem;
@@ -631,8 +691,8 @@ try {
         /* Profile Container */
         .profile-container {
             display: grid;
-            grid-template-columns: 300px 1fr;
-            gap: 2rem;
+            grid-template-columns: 280px 1fr;
+            gap: 1.5rem;
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
@@ -642,15 +702,15 @@ try {
         /* Profile Sidebar */
         .profile-sidebar {
             background: var(--light-blue);
-            padding: 2rem;
+            padding: 1.5rem;
             text-align: center;
         }
 
         .profile-avatar {
             position: relative;
-            width: 120px;
-            height: 120px;
-            margin: 0 auto 1.5rem;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 1.25rem;
         }
 
         .profile-avatar img {
@@ -658,7 +718,7 @@ try {
             height: 100%;
             border-radius: 50%;
             object-fit: cover;
-            border: 4px solid var(--white);
+            border: 3px solid var(--white);
             box-shadow: var(--shadow-md);
         }
 
@@ -671,18 +731,18 @@ try {
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 600;
-            border: 4px solid var(--white);
+            border: 3px solid var(--white);
             box-shadow: var(--shadow-md);
         }
 
         .avatar-upload {
             position: absolute;
-            bottom: 5px;
-            right: 5px;
-            width: 36px;
-            height: 36px;
+            bottom: 2px;
+            right: 2px;
+            width: 32px;
+            height: 32px;
             background: var(--primary-blue);
             color: white;
             border-radius: 50%;
@@ -692,6 +752,7 @@ try {
             cursor: pointer;
             transition: var(--transition);
             border: 2px solid var(--white);
+            font-size: 0.75rem;
         }
 
         .avatar-upload:hover {
@@ -700,7 +761,7 @@ try {
         }
 
         .profile-name {
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             font-weight: 600;
             color: var(--text-dark);
             margin-bottom: 0.25rem;
@@ -715,19 +776,19 @@ try {
         .profile-stats {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
         }
 
         .stat-item {
             background: var(--white);
-            padding: 1rem;
+            padding: 0.75rem;
             border-radius: var(--border-radius);
             text-align: center;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
             margin-bottom: 0.25rem;
@@ -740,27 +801,29 @@ try {
 
         /* Profile Content */
         .profile-content {
-            padding: 2rem;
+            padding: 1.5rem;
         }
 
         .profile-tabs {
             display: flex;
             border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
+            overflow-x: auto;
         }
 
         .profile-tab {
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1rem;
             background: none;
             border: none;
             color: var(--dark-gray);
             cursor: pointer;
             transition: var(--transition);
             border-bottom: 2px solid transparent;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            white-space: nowrap;
         }
 
         .profile-tab:hover {
@@ -773,7 +836,7 @@ try {
         }
 
         .tab-content {
-            min-height: 400px;
+            min-height: 350px;
         }
 
         .tab-pane {
@@ -786,14 +849,14 @@ try {
 
         /* Forms */
         .form-section {
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }
 
         .form-section h4 {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
             padding-bottom: 0.5rem;
             border-bottom: 1px solid var(--medium-gray);
         }
@@ -813,15 +876,15 @@ try {
             margin-bottom: 0.5rem;
             font-weight: 600;
             color: var(--text-dark);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
         }
 
         .form-control {
             width: 100%;
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             transition: var(--transition);
             background: var(--white);
             color: var(--text-dark);
@@ -835,7 +898,7 @@ try {
 
         textarea.form-control {
             resize: vertical;
-            min-height: 100px;
+            min-height: 80px;
         }
 
         .checkbox-group {
@@ -876,10 +939,10 @@ try {
 
         /* Buttons */
         .btn {
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.25rem;
             border: none;
             border-radius: var(--border-radius);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             font-weight: 600;
             cursor: pointer;
             transition: var(--transition);
@@ -919,45 +982,52 @@ try {
         .login-session {
             display: flex;
             align-items: center;
-            gap: 1rem;
-            padding: 1rem;
+            gap: 0.75rem;
+            padding: 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.5rem;
         }
 
         .session-icon {
-            width: 40px;
-            height: 40px;
+            width: 36px;
+            height: 36px;
             background: var(--light-gray);
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             color: var(--dark-gray);
+            font-size: 0.8rem;
         }
 
         .session-info {
             flex: 1;
+            min-width: 0;
         }
 
         .session-location {
             font-weight: 600;
             color: var(--text-dark);
             margin-bottom: 0.25rem;
+            font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .session-meta {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
         .session-status {
-            padding: 0.25rem 0.75rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             font-weight: 600;
             text-transform: uppercase;
+            flex-shrink: 0;
         }
 
         .status-success {
@@ -984,13 +1054,13 @@ try {
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-lg);
             width: 90%;
-            max-width: 500px;
+            max-width: 450px;
             max-height: 90vh;
             overflow-y: auto;
         }
 
         .modal-header {
-            padding: 1.5rem;
+            padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
@@ -998,7 +1068,7 @@ try {
         }
 
         .modal-header h3 {
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             font-weight: 600;
             color: var(--text-dark);
         }
@@ -1016,13 +1086,13 @@ try {
         }
 
         .modal-body {
-            padding: 1.5rem;
+            padding: 1.25rem;
         }
 
         .avatar-preview {
-            width: 150px;
-            height: 150px;
-            margin: 0 auto 1.5rem;
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 1.25rem;
             border-radius: 50%;
             background: var(--light-gray);
             display: flex;
@@ -1039,7 +1109,7 @@ try {
 
         .file-upload {
             display: block;
-            padding: 2rem;
+            padding: 1.5rem;
             border: 2px dashed var(--medium-gray);
             border-radius: var(--border-radius);
             text-align: center;
@@ -1053,64 +1123,160 @@ try {
         }
 
         .file-upload i {
-            font-size: 2rem;
+            font-size: 1.5rem;
             color: var(--dark-gray);
             margin-bottom: 0.5rem;
         }
 
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
             .profile-container {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
             .profile-tabs {
-                flex-wrap: wrap;
+                flex-wrap: nowrap;
+                overflow-x: auto;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .profile-sidebar {
+                padding: 1.25rem;
             }
-            
-            .user-details {
-                display: none;
+
+            .profile-content {
+                padding: 1rem;
             }
         }
 
         @media (max-width: 480px) {
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
             .profile-stats {
                 grid-template-columns: 1fr;
+            }
+
+            .profile-avatar {
+                width: 80px;
+                height: 80px;
+            }
+
+            .profile-avatar > div:first-child:not(.avatar-upload) {
+                font-size: 1.5rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .login-session {
+                flex-wrap: wrap;
+            }
+
+            .session-status {
+                margin-top: 0.25rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1120,6 +1286,9 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
@@ -1153,7 +1322,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-              <nav class="sidebar">
+              <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" >
@@ -1593,8 +1765,6 @@ try {
     <script>
         // Profile Management JavaScript
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded - initializing profile scripts');
-            
             // Modal elements
             const avatarModal = document.getElementById('avatarModal');
             const avatarUploadBtn = document.getElementById('avatarUploadBtn');
@@ -1604,45 +1774,32 @@ try {
             const uploadBtn = document.getElementById('uploadBtn');
             const uploadError = document.getElementById('uploadError');
 
-            // Debug logging
-            console.log('Avatar Modal:', avatarModal);
-            console.log('Avatar Upload Button:', avatarUploadBtn);
-            console.log('Avatar Form:', avatarForm);
-            console.log('Avatar Input:', avatarInput);
-
             // Close modals
             closeButtons.forEach(btn => {
                 btn.addEventListener('click', function() {
-                    console.log('Close button clicked');
                     closeAllModals();
                 });
             });
 
             window.addEventListener('click', function(event) {
                 if (event.target.classList.contains('modal')) {
-                    console.log('Modal background clicked');
                     closeAllModals();
                 }
             });
 
-            // Avatar upload trigger - FIXED
+            // Avatar upload trigger
             if (avatarUploadBtn) {
                 avatarUploadBtn.addEventListener('click', function(e) {
-                    console.log('Avatar upload button clicked');
                     e.preventDefault();
                     e.stopPropagation();
                     avatarModal.style.display = 'block';
-                    document.body.style.overflow = 'hidden'; // Prevent background scrolling
+                    document.body.style.overflow = 'hidden';
                 });
-            } else {
-                console.error('Avatar upload button not found!');
             }
 
             // Avatar form validation
             if (avatarForm) {
                 avatarForm.addEventListener('submit', function(e) {
-                    console.log('Avatar form submitted');
-                    
                     if (!avatarInput.files.length) {
                         e.preventDefault();
                         showUploadError('Please select a file to upload');
@@ -1650,7 +1807,7 @@ try {
                     }
 
                     const file = avatarInput.files[0];
-                    const maxSize = 2 * 1024 * 1024; // 2MB
+                    const maxSize = 2 * 1024 * 1024;
 
                     if (file.size > maxSize) {
                         e.preventDefault();
@@ -1658,25 +1815,18 @@ try {
                         return false;
                     }
 
-                    // Show loading state
                     uploadBtn.disabled = true;
                     uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...';
-                    
-                    console.log('Form submission proceeding...');
                 });
             }
 
             // File input change handler
             if (avatarInput) {
                 avatarInput.addEventListener('change', function(e) {
-                    console.log('File input changed');
                     hideUploadError();
                     const file = e.target.files[0];
                     
                     if (file) {
-                        console.log('File selected:', file.name, file.type, file.size);
-                        
-                        // Validate file type
                         const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/jpg'];
                         if (!allowedTypes.includes(file.type)) {
                             showUploadError('Please select a valid image file (JPG, PNG, GIF)');
@@ -1684,7 +1834,6 @@ try {
                             return;
                         }
 
-                        // Validate file size
                         const maxSize = 2 * 1024 * 1024;
                         if (file.size > maxSize) {
                             showUploadError('File size must be less than 2MB');
@@ -1701,7 +1850,6 @@ try {
             const fileUploadLabel = document.querySelector('.file-upload');
             if (fileUploadLabel) {
                 fileUploadLabel.addEventListener('click', function(e) {
-                    console.log('File upload label clicked');
                     if (avatarInput) {
                         avatarInput.click();
                     }
@@ -1710,13 +1858,11 @@ try {
 
             // Functions
             function closeAllModals() {
-                console.log('Closing all modals');
                 if (avatarModal) {
                     avatarModal.style.display = 'none';
                 }
-                document.body.style.overflow = ''; // Restore scrolling
+                document.body.style.overflow = '';
                 hideUploadError();
-                // Reset form
                 if (avatarInput) {
                     avatarInput.value = '';
                 }
@@ -1727,7 +1873,6 @@ try {
             }
 
             function showUploadError(message) {
-                console.log('Upload error:', message);
                 if (uploadError) {
                     uploadError.textContent = message;
                     uploadError.style.display = 'block';
@@ -1740,20 +1885,16 @@ try {
                 }
             }
 
-            // Dark mode toggle - FIXED
+            // Dark mode toggle
             const themeToggle = document.getElementById('themeToggle');
             const body = document.body;
 
             if (themeToggle) {
-                console.log('Theme toggle found');
-                
-                // Check for saved theme or prefer system theme
                 const savedTheme = localStorage.getItem('theme');
                 const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                 
                 let currentTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
                 
-                // Apply theme
                 if (currentTheme === 'dark') {
                     body.classList.add('dark-mode');
                     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
@@ -1776,11 +1917,8 @@ try {
                         themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
                         themeToggle.title = 'Switch to Dark Mode';
                     }
-                    
-                    console.log('Theme changed to:', isDark ? 'dark' : 'light');
                 });
 
-                // Listen for system theme changes
                 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
                     if (!localStorage.getItem('theme')) {
                         if (e.matches) {
@@ -1792,37 +1930,89 @@ try {
                         }
                     }
                 });
-            } else {
-                console.error('Theme toggle button not found!');
             }
+
+            // Sidebar Toggle
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+            
+            const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+            if (savedSidebarState === 'true') {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('sidebar-collapsed');
+                if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            }
+            
+            function toggleSidebar() {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('sidebar-collapsed');
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                localStorage.setItem('sidebarCollapsed', isCollapsed);
+                const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+                if (sidebarToggle) sidebarToggle.innerHTML = icon;
+                if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+            }
+            
+            if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+            if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+            
+            // Mobile Menu Toggle
+            const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+            const mobileOverlay = document.getElementById('mobileOverlay');
+            
+            if (mobileMenuToggle) {
+                mobileMenuToggle.addEventListener('click', () => {
+                    const isOpen = sidebar.classList.toggle('mobile-open');
+                    mobileOverlay.classList.toggle('active', isOpen);
+                    mobileMenuToggle.innerHTML = isOpen
+                        ? '<i class="fas fa-times"></i>'
+                        : '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = isOpen ? 'hidden' : '';
+                });
+            }
+            
+            if (mobileOverlay) {
+                mobileOverlay.addEventListener('click', () => {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                });
+            }
+
+            // Close mobile nav on resize to desktop
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 992) {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            });
         });
 
         // Tab switching
         function switchTab(tabName) {
-            console.log('Switching to tab:', tabName);
-            
-            // Update URL without reload
             const url = new URL(window.location);
             url.searchParams.set('tab', tabName);
             window.history.replaceState({}, '', url);
             
-            // Hide all tab panes
             document.querySelectorAll('.tab-pane').forEach(pane => {
                 pane.classList.remove('active');
             });
             
-            // Remove active class from all tabs
             document.querySelectorAll('.profile-tab').forEach(tab => {
                 tab.classList.remove('active');
             });
             
-            // Show selected tab
             const targetTab = document.getElementById(tabName + '-tab');
             if (targetTab) {
                 targetTab.classList.add('active');
             }
             
-            // Activate selected tab button
             if (event && event.target) {
                 event.target.classList.add('active');
             }
@@ -1883,9 +2073,6 @@ try {
                 return false;
             }
         });
-
-        // Debug helper
-        console.log('Profile scripts loaded successfully');
     </script>
 </body>
 </html>

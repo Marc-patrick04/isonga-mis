@@ -24,17 +24,20 @@ try {
 try {
     // Total tickets
     $stmt = $pdo->query("SELECT COUNT(*) as total_tickets FROM tickets");
-    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $total_tickets = $result['total_tickets'] ?? 0;
     
     // Open tickets
     $stmt = $pdo->query("SELECT COUNT(*) as open_tickets FROM tickets WHERE status = 'open'");
-    $open_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $open_tickets = $result['open_tickets'] ?? 0;
     
     // Pending reports
     $pending_reports = 0;
     try {
         $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'");
-        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'];
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pending_reports = $result['pending_reports'] ?? 0;
     } catch (PDOException $e) {
         $pending_reports = 0;
     }
@@ -43,7 +46,8 @@ try {
     $pending_docs = 0;
     try {
         $stmt = $pdo->query("SELECT COUNT(*) as pending_docs FROM documents WHERE status = 'draft'");
-        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'];
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pending_docs = $result['pending_docs'] ?? 0;
     } catch (PDOException $e) {
         $pending_docs = 0;
     }
@@ -58,7 +62,8 @@ try {
             WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
         ");
         $stmt->execute([$user_id]);
-        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'];
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $unread_messages = $result['unread_count'] ?? 0;
     } catch (PDOException $e) {
         $unread_messages = 0;
     }
@@ -74,7 +79,8 @@ try {
             AND created_at >= CURRENT_DATE - INTERVAL '7 days'
         ");
         $stmt->execute();
-        $new_students = $stmt->fetch(PDO::FETCH_ASSOC)['new_students'];
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $new_students = $result['new_students'] ?? 0;
     } catch (PDOException $e) {
         $new_students = 0;
     }
@@ -173,7 +179,7 @@ try {
     
     $stmt = $pdo->prepare($count_query);
     $stmt->execute($count_params);
-    $total_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $total_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
     
 } catch (PDOException $e) {
     error_log("Count query error: " . $e->getMessage());
@@ -341,32 +347,38 @@ try {
     // Total tickets
     $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base);
     $stmt->execute($stats_params);
-    $total_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $total_tickets_count = $result['total'] ?? 0;
     
     // Open tickets
     $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.status = 'open'");
     $stmt->execute($stats_params);
-    $open_tickets_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $open_tickets_count = $result['total'] ?? 0;
     
     // In progress tickets
     $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.status = 'in_progress'");
     $stmt->execute($stats_params);
-    $in_progress_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $in_progress_count = $result['total'] ?? 0;
     
     // Resolved tickets
     $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.status = 'resolved'");
     $stmt->execute($stats_params);
-    $resolved_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $resolved_count = $result['total'] ?? 0;
     
     // High priority tickets (PostgreSQL compatible)
     $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.priority = 'high' AND t.status NOT IN ('resolved', 'closed')");
     $stmt->execute($stats_params);
-    $high_priority_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $high_priority_count = $result['total'] ?? 0;
     
     // Overdue tickets (PostgreSQL compatible - using CURRENT_DATE)
     $stmt = $pdo->prepare("SELECT COUNT(*) as total " . $stats_base . " AND t.due_date < CURRENT_DATE AND t.status NOT IN ('resolved', 'closed')");
     $stmt->execute($stats_params);
-    $overdue_count = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $overdue_count = $result['total'] ?? 0;
     
 } catch (PDOException $e) {
     error_log("Statistics error: " . $e->getMessage());
@@ -406,22 +418,6 @@ try {
             --transition: all 0.2s ease;
             --sidebar-width: 260px;
             --sidebar-collapsed-width: 70px;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --info: #4dd0e1;
         }
 
         * {
@@ -466,6 +462,12 @@ try {
             gap: 0.75rem;
         }
 
+        .logos {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
         .logo {
             height: 40px;
             width: auto;
@@ -481,11 +483,12 @@ try {
             display: none;
             background: none;
             border: none;
-            font-size: 1.5rem;
+            font-size: 1.2rem;
             cursor: pointer;
             color: var(--text-dark);
             padding: 0.5rem;
             border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
@@ -511,6 +514,14 @@ try {
             color: white;
             font-weight: 600;
             font-size: 1rem;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
         .user-details {
@@ -527,6 +538,12 @@ try {
             color: var(--dark-gray);
         }
 
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
         .icon-btn {
             width: 40px;
             height: 40px;
@@ -536,12 +553,32 @@ try {
             cursor: pointer;
             color: var(--text-dark);
             transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
             border-color: var(--primary-blue);
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            background: var(--danger);
+            color: white;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
         }
 
         .logout-btn {
@@ -591,6 +628,11 @@ try {
         .sidebar.collapsed .menu-item a {
             justify-content: center;
             padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
         }
 
         .sidebar-toggle {
@@ -739,7 +781,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -1095,6 +1137,9 @@ try {
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -1127,65 +1172,99 @@ try {
             .sidebar {
                 transform: translateX(-100%);
                 position: fixed;
+                top: 0;
+                height: 100vh;
                 z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
             .sidebar.mobile-open {
                 transform: translateX(0);
             }
-            
+
+            .sidebar-toggle {
+                display: none;
+            }
+
             .main-content {
-                margin-left: 0;
+                margin-left: 0 !important;
             }
-            
+
             .main-content.sidebar-collapsed {
-                margin-left: 0;
+                margin-left: 0 !important;
             }
-            
+
             .mobile-menu-toggle {
-                display: block;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
             }
-            
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
             .overlay {
                 display: none;
                 position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0, 0, 0, 0.5);
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
                 z-index: 999;
             }
-            
+
             .overlay.active {
                 display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
         @media (max-width: 768px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
             .main-content {
                 padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .filters-form {
+                grid-template-columns: 1fr;
+            }
+
             .table-header {
                 flex-direction: column;
                 align-items: flex-start;
+            }
+
+            .action-buttons {
+                flex-direction: row;
             }
         }
 
@@ -1193,11 +1272,41 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
             .action-buttons {
                 flex-direction: column;
             }
-            
+
             .action-buttons .btn-sm {
                 width: 100%;
                 justify-content: center;
@@ -1216,23 +1325,22 @@ try {
                 <button class="mobile-menu-toggle" id="mobileMenuToggle">
                     <i class="fas fa-bars"></i>
                 </button>
-                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
+                <div class="logos">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
+                </div>
                 <div class="brand-text">
                     <h1>Isonga - President</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
-                            <span class="notification-badge" style="position: absolute; top: -2px; right: -2px; background: var(--danger); color: white; border-radius: 50%; width: 18px; height: 18px; font-size: 0.6rem; display: flex; align-items: center; justify-content: center;"><?php echo $unread_messages; ?></span>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
                         <?php endif; ?>
                     </a>
                 </div>
@@ -1249,8 +1357,8 @@ try {
                         <div class="user-role">Guild President</div>
                     </div>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1370,42 +1478,42 @@ try {
                 <div class="stat-card">
                     <div class="stat-icon"><i class="fas fa-ticket-alt"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_tickets_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_tickets_count); ?></div>
                         <div class="stat-label">Total Tickets</div>
                     </div>
                 </div>
                 <div class="stat-card warning">
                     <div class="stat-icon"><i class="fas fa-clock"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $open_tickets_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($open_tickets_count); ?></div>
                         <div class="stat-label">Open Tickets</div>
                     </div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon"><i class="fas fa-spinner"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $in_progress_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($in_progress_count); ?></div>
                         <div class="stat-label">In Progress</div>
                     </div>
                 </div>
                 <div class="stat-card success">
                     <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $resolved_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($resolved_count); ?></div>
                         <div class="stat-label">Resolved</div>
                     </div>
                 </div>
                 <div class="stat-card danger">
                     <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $high_priority_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($high_priority_count); ?></div>
                         <div class="stat-label">High Priority</div>
                     </div>
                 </div>
                 <div class="stat-card danger">
                     <div class="stat-icon"><i class="fas fa-calendar-times"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $overdue_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($overdue_count); ?></div>
                         <div class="stat-label">Overdue</div>
                     </div>
                 </div>
@@ -1415,19 +1523,19 @@ try {
             <div class="quick-status-bar">
                 <a href="?status=open<?php echo $priority_filter !== 'all' ? '&priority=' . $priority_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
                    class="status-chip <?php echo $status_filter === 'open' ? 'active' : ''; ?>">
-                    <i class="fas fa-clock"></i> Open (<?php echo $open_tickets_count; ?>)
+                    <i class="fas fa-clock"></i> Open (<?php echo number_format($open_tickets_count); ?>)
                 </a>
                 <a href="?status=in_progress<?php echo $priority_filter !== 'all' ? '&priority=' . $priority_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
                    class="status-chip <?php echo $status_filter === 'in_progress' ? 'active' : ''; ?>">
-                    <i class="fas fa-spinner"></i> In Progress (<?php echo $in_progress_count; ?>)
+                    <i class="fas fa-spinner"></i> In Progress (<?php echo number_format($in_progress_count); ?>)
                 </a>
                 <a href="?status=resolved<?php echo $priority_filter !== 'all' ? '&priority=' . $priority_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
                    class="status-chip <?php echo $status_filter === 'resolved' ? 'active' : ''; ?>">
-                    <i class="fas fa-check-circle"></i> Resolved (<?php echo $resolved_count; ?>)
+                    <i class="fas fa-check-circle"></i> Resolved (<?php echo number_format($resolved_count); ?>)
                 </a>
                 <a href="?priority=high<?php echo $status_filter !== 'all' ? '&status=' . $status_filter : ''; echo $category_filter !== 'all' ? '&category=' . $category_filter : ''; echo !empty($search_query) ? '&search=' . urlencode($search_query) : ''; ?>" 
                    class="status-chip high-priority <?php echo $priority_filter === 'high' ? 'active' : ''; ?>">
-                    <i class="fas fa-exclamation-triangle"></i> High Priority (<?php echo $high_priority_count; ?>)
+                    <i class="fas fa-exclamation-triangle"></i> High Priority (<?php echo number_format($high_priority_count); ?>)
                 </a>
             </div>
 
@@ -1483,11 +1591,11 @@ try {
                         Student Tickets 
                         <?php if ($status_filter !== 'all' || $priority_filter !== 'all' || $category_filter !== 'all' || !empty($search_query)): ?>
                             <small style="font-size: 0.7rem; color: var(--dark-gray); font-weight: normal;">
-                                (Filtered: <?php echo $total_tickets_count; ?> found)
+                                (Filtered: <?php echo number_format($total_tickets_count); ?> found)
                             </small>
                         <?php else: ?>
                             <small style="font-size: 0.7rem; color: var(--dark-gray); font-weight: normal;">
-                                (<?php echo $total_tickets_count; ?> total)
+                                (<?php echo number_format($total_tickets_count); ?> total)
                             </small>
                         <?php endif; ?>
                     </h3>
@@ -1507,97 +1615,99 @@ try {
                         <?php endif; ?>
                     </div>
                 <?php else: ?>
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Student</th>
-                                <th>Subject</th>
-                                <th>Category</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Assigned To</th>
-                                <th>Due Date</th>
-                                <th>Created</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($tickets as $ticket): ?>
+                    <div style="overflow-x: auto;">
+                        <table class="table">
+                            <thead>
                                 <tr>
-                                    <td>#<?php echo $ticket['id']; ?></td>
-                                    <td>
-                                        <div><strong><?php echo htmlspecialchars($ticket['name']); ?></strong></div>
-                                        <div style="font-size: 0.65rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></div>
-                                        <?php if ($ticket['department_name']): ?>
-                                            <div style="font-size: 0.65rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['department_name']); ?></div>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td style="max-width: 200px;">
-                                        <div style="font-weight: 500;"><?php echo htmlspecialchars($ticket['subject']); ?></div>
-                                        <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                            <?php echo strlen($ticket['description']) > 80 ? 
-                                                htmlspecialchars(substr($ticket['description'], 0, 80)) . '...' : 
-                                                htmlspecialchars($ticket['description']); ?>
-                                        </div>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($ticket['category_name'] ?? 'Uncategorized'); ?></td>
-                                    <td>
-                                        <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
-                                            <?php echo ucfirst($ticket['priority']); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="status-badge status-<?php echo $ticket['status']; ?>">
-                                            <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <?php if ($ticket['assigned_name']): ?>
-                                            <?php echo htmlspecialchars($ticket['assigned_name']); ?>
-                                        <?php else: ?>
-                                            <span style="color: var(--dark-gray); font-style: italic;">Unassigned</span>
-                                        <?php endif; ?>
-                                    </                                    </td>
-                                    <td>
-                                        <?php if ($ticket['due_date']): ?>
-                                            <?php 
-                                            try {
-                                                $due_date = new DateTime($ticket['due_date']);
-                                                $today = new DateTime();
-                                                $is_overdue = $due_date < $today && !in_array($ticket['status'], ['resolved', 'closed']);
-                                            } catch (Exception $e) {
-                                                $is_overdue = false;
-                                            }
-                                            ?>
-                                            <span style="color: <?php echo $is_overdue ? 'var(--danger)' : 'var(--text-dark)'; ?>;">
-                                                <?php echo date('M j, Y', strtotime($ticket['due_date'])); ?>
-                                                <?php if ($is_overdue): ?>
-                                                    <br><small style="color: var(--danger);">Overdue</small>
-                                                <?php endif; ?>
-                                            </span>
-                                        <?php else: ?>
-                                            <span style="color: var(--dark-gray);">Not set</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
-                                    <td>
-                                        <div class="action-buttons">
-                                            <button class="btn btn-outline btn-sm" onclick="viewTicket(<?php echo $ticket['id']; ?>)">
-                                                <i class="fas fa-eye"></i>
-                                            </button>
-                                            <button class="btn btn-outline btn-sm" onclick="reassignTicket(<?php echo $ticket['id']; ?>, '<?php echo addslashes($ticket['assigned_name'] ?? 'Unassigned'); ?>')">
-                                                <i class="fas fa-user-edit"></i>
-                                            </button>
-                                            <button class="btn btn-outline btn-sm" onclick="updateStatus(<?php echo $ticket['id']; ?>, '<?php echo $ticket['status']; ?>')">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                        </div>
-                                    </td>
+                                    <th>ID</th>
+                                    <th>Student</th>
+                                    <th>Subject</th>
+                                    <th>Category</th>
+                                    <th>Priority</th>
+                                    <th>Status</th>
+                                    <th>Assigned To</th>
+                                    <th>Due Date</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
                                 </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($tickets as $ticket): ?>
+                                    <tr>
+                                        <td>#<?php echo $ticket['id']; ?></td>
+                                        <td>
+                                            <div><strong><?php echo htmlspecialchars($ticket['name']); ?></strong></div>
+                                            <div style="font-size: 0.65rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['reg_number']); ?></div>
+                                            <?php if ($ticket['department_name']): ?>
+                                                <div style="font-size: 0.65rem; color: var(--dark-gray);"><?php echo htmlspecialchars($ticket['department_name']); ?></div>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td style="max-width: 200px;">
+                                            <div style="font-weight: 500;"><?php echo htmlspecialchars($ticket['subject']); ?></div>
+                                            <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
+                                                <?php echo strlen($ticket['description']) > 80 ? 
+                                                    htmlspecialchars(substr($ticket['description'], 0, 80)) . '...' : 
+                                                    htmlspecialchars($ticket['description']); ?>
+                                            </div>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($ticket['category_name'] ?? 'Uncategorized'); ?></td>
+                                        <td>
+                                            <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
+                                                <?php echo ucfirst($ticket['priority']); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="status-badge status-<?php echo $ticket['status']; ?>">
+                                                <?php echo ucfirst(str_replace('_', ' ', $ticket['status'])); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <?php if ($ticket['assigned_name']): ?>
+                                                <?php echo htmlspecialchars($ticket['assigned_name']); ?>
+                                            <?php else: ?>
+                                                <span style="color: var(--dark-gray); font-style: italic;">Unassigned</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($ticket['due_date']): ?>
+                                                <?php 
+                                                try {
+                                                    $due_date = new DateTime($ticket['due_date']);
+                                                    $today = new DateTime();
+                                                    $is_overdue = $due_date < $today && !in_array($ticket['status'], ['resolved', 'closed']);
+                                                } catch (Exception $e) {
+                                                    $is_overdue = false;
+                                                }
+                                                ?>
+                                                <span style="color: <?php echo $is_overdue ? 'var(--danger)' : 'var(--text-dark)'; ?>;">
+                                                    <?php echo date('M j, Y', strtotime($ticket['due_date'])); ?>
+                                                    <?php if ($is_overdue): ?>
+                                                        <br><small style="color: var(--danger);">Overdue</small>
+                                                    <?php endif; ?>
+                                                </span>
+                                            <?php else: ?>
+                                                <span style="color: var(--dark-gray);">Not set</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><?php echo date('M j, Y', strtotime($ticket['created_at'])); ?></td>
+                                        <td>
+                                            <div class="action-buttons">
+                                                <button class="btn btn-outline btn-sm" onclick="viewTicket(<?php echo $ticket['id']; ?>)">
+                                                    <i class="fas fa-eye"></i>
+                                                </button>
+                                                <button class="btn btn-outline btn-sm" onclick="reassignTicket(<?php echo $ticket['id']; ?>, '<?php echo addslashes($ticket['assigned_name'] ?? 'Unassigned'); ?>')">
+                                                    <i class="fas fa-user-edit"></i>
+                                                </button>
+                                                <button class="btn btn-outline btn-sm" onclick="updateStatus(<?php echo $ticket['id']; ?>, '<?php echo $ticket['status']; ?>')">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 <?php endif; ?>
             </div>
 
@@ -1713,23 +1823,6 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
@@ -1763,8 +1856,12 @@ try {
         
         if (mobileMenuToggle) {
             mobileMenuToggle.addEventListener('click', () => {
-                sidebar.classList.toggle('mobile-open');
-                mobileOverlay.classList.toggle('active');
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
             });
         }
         
@@ -1772,8 +1869,20 @@ try {
             mobileOverlay.addEventListener('click', () => {
                 sidebar.classList.remove('mobile-open');
                 mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
             });
         }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
 
         // Modal Functions
         function openModal(modalId) {
@@ -1819,6 +1928,37 @@ try {
                     if (alert.parentNode) alert.remove();
                 }, 300);
             }, 5000);
+        });
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.stat-card, .filters-container, .table-container');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

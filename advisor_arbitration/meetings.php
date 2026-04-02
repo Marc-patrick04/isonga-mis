@@ -31,7 +31,7 @@ try {
     error_log("Committee member lookup error: " . $e->getMessage());
 }
 
-// Handle filters and pagination
+// Get filters
 $search = $_GET['search'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $type_filter = $_GET['type'] ?? '';
@@ -54,8 +54,9 @@ $params = [];
 $count_params = [];
 
 if ($search) {
-    $query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
-    $count_query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
+    // PostgreSQL uses ILIKE for case-insensitive search
+    $query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
+    $count_query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
     $search_term = "%$search%";
     $params = array_merge($params, [$search_term, $search_term, $search_term]);
     $count_params = array_merge($count_params, [$search_term, $search_term, $search_term]);
@@ -76,15 +77,16 @@ if ($type_filter && $type_filter !== 'all') {
 }
 
 if ($date_from) {
-    $query .= " AND m.meeting_date >= ?";
-    $count_query .= " AND m.meeting_date >= ?";
+    // PostgreSQL uses ::date for casting
+    $query .= " AND m.meeting_date::date >= ?";
+    $count_query .= " AND m.meeting_date::date >= ?";
     $params[] = $date_from;
     $count_params[] = $date_from;
 }
 
 if ($date_to) {
-    $query .= " AND m.meeting_date <= ?";
-    $count_query .= " AND m.meeting_date <= ?";
+    $query .= " AND m.meeting_date::date <= ?";
+    $count_query .= " AND m.meeting_date::date <= ?";
     $params[] = $date_to;
     $count_params[] = $date_to;
 }
@@ -150,13 +152,13 @@ try {
     // Total meetings
     $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
     
-    // Upcoming meetings
-    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    // Upcoming meetings - PostgreSQL uses CURRENT_DATE instead of CURDATE()
+    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'")->fetch()['count'];
     
-    // Today's meetings
-    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURDATE() AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
+    // Today's meetings - PostgreSQL uses ::date for casting
+    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date::date = CURRENT_DATE AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
     
-    // User's attendance statistics
+    // User's attendance statistics - PostgreSQL uses CURRENT_DATE and INTERVAL
     if ($committee_member_id) {
         $attendance_stmt = $pdo->prepare("
             SELECT 
@@ -166,7 +168,7 @@ try {
                 SUM(CASE WHEN ma.attendance_status = 'excused' THEN 1 ELSE 0 END) as excused
             FROM meeting_attendance ma
             JOIN meetings m ON ma.meeting_id = m.id
-            WHERE ma.committee_member_id = ? AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            WHERE ma.committee_member_id = ? AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         ");
         $attendance_stmt->execute([$committee_member_id]);
         $attendance_stats = $attendance_stmt->fetch(PDO::FETCH_ASSOC);
@@ -183,12 +185,12 @@ try {
     $stmt = $pdo->query("SELECT DISTINCT meeting_type FROM meetings WHERE meeting_type IS NOT NULL");
     $meeting_types = $stmt->fetchAll(PDO::FETCH_COLUMN);
     
-    // Get upcoming important meetings (next 7 days)
+    // Get upcoming important meetings (next 7 days) - PostgreSQL uses CURRENT_DATE and INTERVAL
     $stmt = $pdo->prepare("
         SELECT m.*, u.full_name as chairperson_name
         FROM meetings m
         LEFT JOIN users u ON m.chairperson_id = u.id
-        WHERE m.meeting_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.meeting_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
         AND m.status = 'scheduled'
         ORDER BY m.meeting_date ASC, m.start_time ASC
         LIMIT 5
@@ -246,7 +248,7 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Meetings - Arbitration Advisor - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -272,6 +274,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -310,14 +314,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -327,7 +328,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -348,26 +348,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -375,7 +387,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
+            font-size: 1rem;
             border: 3px solid var(--medium-gray);
             overflow: hidden;
             position: relative;
@@ -399,12 +411,12 @@ try {
 
         .user-name {
             font-weight: 600;
+            font-size: 0.9rem;
             color: var(--text-dark);
-            font-size: 0.95rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -415,25 +427,25 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+            transform: translateY(-1px);
         }
 
         .notification-badge {
@@ -443,50 +455,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -516,9 +563,8 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -533,11 +579,18 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             margin-bottom: 1.5rem;
         }
@@ -554,21 +607,6 @@ try {
             font-size: 0.9rem;
         }
 
-        /* Alert */
-        .alert {
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-            font-size: 0.8rem;
-        }
-
-        .alert-info {
-            background: #cce7ff;
-            color: #004085;
-            border-left-color: var(--primary-blue);
-        }
-
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -582,7 +620,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -607,13 +645,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -628,7 +667,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -641,7 +680,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -649,7 +688,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -664,7 +703,7 @@ try {
 
         .filter-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
             align-items: end;
         }
@@ -770,41 +809,27 @@ try {
             color: var(--text-dark);
         }
 
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .card-header-btn:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
-        }
-
         .card-body {
             padding: 1.25rem;
         }
 
         /* Table */
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.8rem;
+            min-width: 900px;
         }
 
         .table th, .table td {
             padding: 0.75rem;
             text-align: left;
             border-bottom: 1px solid var(--medium-gray);
+            white-space: nowrap;
         }
 
         .table th {
@@ -832,37 +857,37 @@ try {
 
         .status-scheduled {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .attendance-present {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .attendance-absent {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .attendance-excused {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         /* Pagination */
@@ -910,10 +935,6 @@ try {
         }
 
         /* Progress Bar */
-        .attendance-progress {
-            margin-top: 1rem;
-        }
-
         .progress-bar {
             width: 100%;
             height: 8px;
@@ -928,12 +949,19 @@ try {
             transition: width 0.3s ease;
         }
 
-        .progress-text {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 0.5rem;
-            font-size: 0.7rem;
-            color: var(--dark-gray);
+        /* Alert */
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            font-size: 0.8rem;
+        }
+
+        .alert-info {
+            background: #cce7ff;
+            color: #004085;
+            border-left-color: var(--primary-blue);
         }
 
         /* Activity List */
@@ -966,18 +994,6 @@ try {
             flex-shrink: 0;
         }
 
-        .activity-avatar.attendance-present {
-            background: var(--success);
-        }
-
-        .activity-avatar.attendance-absent {
-            background: var(--danger);
-        }
-
-        .activity-avatar.attendance-excused {
-            background: var(--warning);
-        }
-
         .activity-content {
             flex: 1;
         }
@@ -993,39 +1009,115 @@ try {
             color: var(--dark-gray);
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .content-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
-            }
-            
+
             .filter-row {
                 grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .table {
                 display: none;
             }
         }
@@ -1034,18 +1126,50 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1055,8 +1179,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1088,16 +1212,19 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-             <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="cases.php" >
+                    <a href="cases.php">
                         <i class="fas fa-balance-scale"></i>
                         <span>My Cases</span>
                     </a>
@@ -1114,7 +1241,6 @@ try {
                         <span>Elections</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1136,7 +1262,6 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1147,10 +1272,12 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="page-header">
-                <h1 class="page-title">Committee Meetings 📋</h1>
-                <p class="page-description">View all committee meetings and track your attendance records</p>
+                <div class="page-title">
+                    <h1>Committee Meetings 📋</h1>
+                    <p class="page-description">View all committee meetings and track your attendance records</p>
+                </div>
             </div>
 
             <!-- Info Alert -->
@@ -1206,7 +1333,7 @@ try {
                         <div class="filter-group">
                             <label class="filter-label">Status</label>
                             <select name="status" class="filter-select">
-                                <option value="all" <?php echo $status_filter === 'all' ? 'selected' : ''; ?>>All Statuses</option>
+                                <option value="all">All Statuses</option>
                                 <option value="scheduled" <?php echo $status_filter === 'scheduled' ? 'selected' : ''; ?>>Scheduled</option>
                                 <option value="ongoing" <?php echo $status_filter === 'ongoing' ? 'selected' : ''; ?>>Ongoing</option>
                                 <option value="completed" <?php echo $status_filter === 'completed' ? 'selected' : ''; ?>>Completed</option>
@@ -1216,7 +1343,7 @@ try {
                         <div class="filter-group">
                             <label class="filter-label">Meeting Type</label>
                             <select name="type" class="filter-select">
-                                <option value="all" <?php echo $type_filter === 'all' ? 'selected' : ''; ?>>All Types</option>
+                                <option value="all">All Types</option>
                                 <?php foreach ($meeting_types as $type): ?>
                                     <option value="<?php echo htmlspecialchars($type); ?>" <?php echo $type_filter === $type ? 'selected' : ''; ?>>
                                         <?php echo ucfirst(str_replace('_', ' ', $type)); ?>
@@ -1234,7 +1361,7 @@ try {
                         </div>
                         <div class="filter-group">
                             <button type="submit" class="filter-btn">
-                                <i class="fas fa-filter"></i> Apply Filters
+                                <i class="fas fa-filter"></i> Apply
                             </button>
                         </div>
                         <div class="filter-group">
@@ -1254,72 +1381,60 @@ try {
                     <div class="card">
                         <div class="card-header">
                             <h3>All Committee Meetings</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                            </div>
                         </div>
                         <div class="card-body">
                             <?php if (empty($meetings)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No meetings found matching your criteria</p>
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-times"></i>
+                                    <h3>No meetings found</h3>
+                                    <p>No meetings match your current filters.</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Meeting Title</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Type</th>
-                                            <th>Chairperson</th>
-                                            <th>Status</th>
-                                            <th>Your Attendance</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($meetings as $meeting): ?>
+                                <div class="table-wrapper">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                    <?php if ($meeting['description']): ?>
-                                                        <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
-                                                    <?php if ($meeting['end_time']): ?>
-                                                        - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
-                                                    <?php endif; ?>
-                                                    </small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($meeting['location']); ?></td>
-                                                <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
-                                                <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $meeting['status']; ?>">
-                                                        <?php echo ucfirst($meeting['status']); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <?php if ($meeting['attendance_status']): ?>
-                                                        <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
-                                                            <?php echo ucfirst($meeting['attendance_status']); ?>
-                                                        </span>
-                                                        <?php if ($meeting['check_in_time']): ?>
-                                                            <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
-                                                        <?php endif; ?>
-                                                    <?php else: ?>
-                                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
-                                                    <?php endif; ?>
-                                                </td>
+                                                <th>Meeting Title</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
+                                                <th>Type</th>
+                                                <th>Chairperson</th>
+                                                <th>Status</th>
+                                                <th>Your Attendance</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($meetings as $meeting): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
+                                                    </td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?></small>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($meeting['location']); ?></td>
+                                                    <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
+                                                    <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $meeting['status']; ?>">
+                                                            <?php echo ucfirst($meeting['status']); ?>
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <?php if ($meeting['attendance_status']): ?>
+                                                            <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
+                                                                <?php echo ucfirst($meeting['attendance_status']); ?>
+                                                            </span>
+                                                        <?php else: ?>
+                                                            <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
+                                                        <?php endif; ?>
+                                                    </td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
 
                                 <!-- Pagination -->
                                 <?php if ($total_pages > 1): ?>
@@ -1329,9 +1444,7 @@ try {
                                                 <i class="fas fa-chevron-left"></i> Previous
                                             </a>
                                         <?php else: ?>
-                                            <span class="pagination-btn disabled">
-                                                <i class="fas fa-chevron-left"></i> Previous
-                                            </span>
+                                            <span class="pagination-btn disabled">Previous</span>
                                         <?php endif; ?>
 
                                         <?php for ($i = 1; $i <= $total_pages; $i++): ?>
@@ -1346,9 +1459,7 @@ try {
                                                 Next <i class="fas fa-chevron-right"></i>
                                             </a>
                                         <?php else: ?>
-                                            <span class="pagination-btn disabled">
-                                                Next <i class="fas fa-chevron-right"></i>
-                                            </span>
+                                            <span class="pagination-btn disabled">Next</span>
                                         <?php endif; ?>
                                     </div>
                                 <?php endif; ?>
@@ -1362,42 +1473,32 @@ try {
                     <!-- Your Attendance Statistics -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Your Attendance Statistics</h3>
+                            <h3>Your Attendance</h3>
                         </div>
                         <div class="card-body">
-                            <div style="text-align: center; margin-bottom: 1.5rem;">
-                                <div style="font-size: 2rem; font-weight: 700; color: var(--primary-blue); margin-bottom: 0.5rem;">
+                            <div style="text-align: center; margin-bottom: 1rem;">
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--primary-blue);">
                                     <?php echo $attendance_rate; ?>%
                                 </div>
-                                <div style="font-size: 0.8rem; color: var(--dark-gray);">Overall Attendance Rate</div>
+                                <div style="font-size: 0.8rem; color: var(--dark-gray);">Attendance Rate</div>
                             </div>
                             
-                            <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Meetings Attended</span>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: <?php echo $attendance_rate; ?>%"></div>
+                            </div>
+                            
+                            <div style="display: grid; gap: 0.5rem; margin-top: 1rem;">
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="font-size: 0.8rem; color: var(--dark-gray);">Attended</span>
                                     <strong style="color: var(--success);"><?php echo $attendance_stats['attended']; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Absent</span>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="font-size: 0.8rem; color: var(--dark-gray);">Absent</span>
                                     <strong style="color: var(--danger);"><?php echo $attendance_stats['absent']; ?></strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Excused</span>
+                                <div style="display: flex; justify-content: space-between;">
+                                    <span style="font-size: 0.8rem; color: var(--dark-gray);">Excused</span>
                                     <strong style="color: var(--warning);"><?php echo $attendance_stats['excused']; ?></strong>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Invited</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $attendance_stats['total_invited']; ?></strong>
-                                </div>
-                            </div>
-
-                            <div class="attendance-progress" style="margin-top: 1rem;">
-                                <div class="progress-bar">
-                                    <div class="progress-fill" style="width: <?php echo $attendance_rate; ?>%"></div>
-                                </div>
-                                <div class="progress-text">
-                                    <span>Last 3 months</span>
-                                    <span><?php echo $attendance_rate; ?>%</span>
                                 </div>
                             </div>
                         </div>
@@ -1411,7 +1512,7 @@ try {
                         <div class="card-body">
                             <?php if (empty($upcoming_important)): ?>
                                 <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No upcoming meetings this week</p>
+                                    <p>No upcoming meetings</p>
                                 </div>
                             <?php else: ?>
                                 <ul class="activity-list">
@@ -1425,9 +1526,7 @@ try {
                                                     <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
                                                 </div>
                                                 <div class="activity-time">
-                                                    <?php echo date('D, M j', strtotime($meeting['meeting_date'])); ?> 
-                                                    at <?php echo date('g:i A', strtotime($meeting['start_time'])); ?>
-                                                    • <?php echo htmlspecialchars($meeting['location']); ?>
+                                                    <?php echo date('M j, g:i A', strtotime($meeting['meeting_date'])); ?>
                                                 </div>
                                             </div>
                                         </li>
@@ -1440,34 +1539,26 @@ try {
                     <!-- Your Recent Attendance -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Your Recent Attendance</h3>
+                            <h3>Recent Attendance</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($user_attendance_history)): ?>
                                 <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No attendance records found</p>
+                                    <p>No attendance records</p>
                                 </div>
                             <?php else: ?>
                                 <ul class="activity-list">
                                     <?php foreach ($user_attendance_history as $attendance): ?>
                                         <li class="activity-item">
-                                            <div class="activity-avatar 
-                                                <?php echo $attendance['attendance_status'] === 'present' ? 'attendance-present' : 
-                                                      ($attendance['attendance_status'] === 'absent' ? 'attendance-absent' : 'attendance-excused'); ?>">
-                                                <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : 
-                                                                   ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" 
-                                                   style="font-size: 0.8rem;"></i>
+                                            <div class="activity-avatar attendance-<?php echo $attendance['attendance_status']; ?>">
+                                                <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" style="font-size: 0.8rem;"></i>
                                             </div>
                                             <div class="activity-content">
                                                 <div class="activity-text">
                                                     <?php echo htmlspecialchars($attendance['title']); ?>
                                                 </div>
                                                 <div class="activity-time">
-                                                    <?php echo date('M j, Y', strtotime($attendance['meeting_date'])); ?> 
-                                                    • 
-                                                    <span class="status-badge attendance-<?php echo $attendance['attendance_status']; ?>">
-                                                        <?php echo ucfirst($attendance['attendance_status']); ?>
-                                                    </span>
+                                                    <?php echo date('M j, Y', strtotime($attendance['meeting_date'])); ?>
                                                 </div>
                                             </div>
                                         </li>
@@ -1482,35 +1573,65 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
-        // Auto-refresh page every 5 minutes
-        setInterval(() => {
-            console.log('Meetings page auto-refresh triggered');
-        }, 300000);
-
-        // Add loading animations
-        document.addEventListener('DOMContentLoaded', function() {
-            const cards = document.querySelectorAll('.card');
-            cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
-            });
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
     </script>
 </body>

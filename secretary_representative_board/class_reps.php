@@ -1038,9 +1038,7 @@ if ($total_reps == 0) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1052,13 +1050,7 @@ if ($total_reps == 0) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1160,12 +1152,7 @@ if ($total_reps == 0) {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Manage Class Representatives</h1>
-                    <p>Add, view, and manage class representatives across all departments</p>
-                </div>
-            </div>
+            
 
             <!-- Message Alert -->
             <?php if ($message): ?>
@@ -1387,48 +1374,14 @@ if ($total_reps == 0) {
                     </div>
 
                     <!-- Information Card -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>About Class Representatives</h3>
-                        </div>
-                        <div class="card-body">
-                            <div style="font-size: 0.8rem; color: var(--text-dark);">
-                                <p><strong>Class Representatives</strong> are students who represent their classmates and serve as a liaison between students and the administration.</p>
-                                <br>
-                                <p><strong>Responsibilities:</strong></p>
-                                <ul style="margin-left: 1rem; margin-bottom: 1rem;">
-                                    <li>Represent class interests</li>
-                                    <li>Attend representative meetings</li>
-                                    <li>Submit regular reports</li>
-                                    <li>Communicate student issues</li>
-                                </ul>
-                                <p>Each class should have at least one representative to ensure proper representation.</p>
-                            </div>
-                        </div>
-                    </div>
+                    
                 </div>
             </div>
         </main>
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
+        
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');

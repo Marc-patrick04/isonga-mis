@@ -616,23 +616,6 @@ try {
             --transition: all 0.2s ease;
         }
 
-        .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --info: #29b6f6;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
-        }
-
         * {
             margin: 0;
             padding: 0;
@@ -677,6 +660,19 @@ try {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logos {
@@ -1539,7 +1535,55 @@ try {
             overflow-y: auto;
         }
 
-        /* Responsive */
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+        }
+
         @media (max-width: 1024px) {
             .content-grid {
                 grid-template-columns: 1fr;
@@ -1560,7 +1604,11 @@ try {
             }
             
             .sidebar {
-                display: none;
+                display: none !important;
+            }
+            
+            .sidebar.mobile-open {
+                display: flex !important;
             }
             
             .stats-grid {
@@ -1583,10 +1631,19 @@ try {
             
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
             
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
             }
         }
 
@@ -1596,9 +1653,21 @@ try {
             }
             
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
             .template-grid {
                 grid-template-columns: 1fr;
             }
@@ -1610,22 +1679,25 @@ try {
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 </div>
                 <div class="brand-text">
-                    <h1>Isonga - Vice President Reports</h1>
+                    <h1>Isonga - Reports</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1656,7 +1728,8 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-       <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" >
@@ -1728,12 +1801,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Vice President Reports</h1>
-                    <p>Create individual reports or collaborate with your team on comprehensive board reports</p>
-                </div>
-            </div>
+            
 
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
@@ -2207,40 +2275,7 @@ try {
                         <div class="card-header">
                             <h3>Team Collaboration</h3>
                         </div>
-                        <div class="card-body">
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i>
-                                <strong>Team Collaboration Features:</strong> As Vice President of the Representative Board, you can create collaborative reports where different team members can contribute to different sections. This ensures comprehensive reporting while distributing the workload.
-                            </div>
-                            
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1.5rem;">
-                                <div style="background: var(--light-blue); padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--primary-blue);">
-                                    <h4><i class="fas fa-user-tie"></i> President Role</h4>
-                                    <p>Overall coordination, executive oversight, and final report compilation.</p>
-                                </div>
-                                
-                                <div style="background: #e8f5e8; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--success);">
-                                    <h4><i class="fas fa-user-check"></i> Vice President Role</h4>
-                                    <p>Class representative coordination, student issue tracking, and meeting management.</p>
-                                </div>
-                                
-                                <div style="background: #fff3cd; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--warning);">
-                                    <h4><i class="fas fa-clipboard-list"></i> Secretary Role</h4>
-                                    <p>Documentation, record keeping, and communication coordination.</p>
-                                </div>
-                            </div>
-                            
-                            <div style="margin-top: 2rem;">
-                                <h4>Vice President Responsibilities in Team Reports</h4>
-                                <ul style="margin-left: 1.5rem; color: var(--text-dark);">
-                                    <li>Coordinate with class representatives for input</li>
-                                    <li>Track student issues and resolutions</li>
-                                    <li>Monitor class representative performance</li>
-                                    <li>Support the President in report compilation</li>
-                                    <li>Ensure timely submission of representative reports</li>
-                                </ul>
-                            </div>
-                        </div>
+                        
                     </div>
                 </div>
             <?php endif; ?>
@@ -2261,21 +2296,39 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        const sidebar = document.getElementById('sidebar');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab functionality

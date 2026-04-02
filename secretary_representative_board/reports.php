@@ -1830,9 +1830,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1844,13 +1842,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1952,12 +1944,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Secretary Reports</h1>
-                    <p>Create documentation reports, meeting summaries, and collaborate with your team</p>
-                </div>
-            </div>
+            
 
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
@@ -2433,10 +2420,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
                             <h3>Team Collaboration</h3>
                         </div>
                         <div class="card-body">
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i>
-                                <strong>Team Collaboration Features:</strong> As Secretary of the Representative Board, you can create collaborative reports where different team members can contribute to different sections. This ensures comprehensive reporting while distributing the workload.
-                            </div>
+                            
                             
                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1.5rem;">
                                 <div style="background: var(--light-blue); padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--primary-blue);">
@@ -2486,23 +2470,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
+        
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');

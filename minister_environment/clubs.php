@@ -26,7 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Add new environmental club
         $name = $_POST['name'];
         $description = $_POST['description'];
-        $category = 'environment'; // Environmental clubs fall under cultural category
+        $category = 'environment';
         $department = $_POST['department'];
         $established_date = $_POST['established_date'];
         $meeting_schedule = $_POST['meeting_schedule'];
@@ -93,7 +93,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $file_path = $upload_dir . $file_name;
             
             if (move_uploaded_file($_FILES['logo']['tmp_name'], $file_path)) {
-                // Delete old logo if exists
                 if ($logo_url && file_exists('../' . $logo_url)) {
                     unlink('../' . $logo_url);
                 }
@@ -133,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("
                 INSERT INTO club_members 
                 (club_id, reg_number, name, email, phone, department_id, program_id, academic_year, role, join_date, status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, 'active')
             ");
             $stmt->execute([
                 $club_id, $reg_number, $name, $email, $phone, $department_id, 
@@ -150,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $success_message = "Member added to club successfully!";
         } catch (PDOException $e) {
-            if ($e->getCode() == 23000) { // Duplicate entry
+            if ($e->getCode() == 23505) { // PostgreSQL duplicate key error code
                 $error_message = "This student is already a member of this club!";
             } else {
                 $error_message = "Error adding member: " . $e->getMessage();
@@ -266,7 +265,7 @@ $status_filter = $_GET['status'] ?? 'active';
 $category_filter = $_GET['category'] ?? 'environment';
 $search_term = $_GET['search'] ?? '';
 
-// Build query for environmental clubs - FIXED to include member count
+// Build query for environmental clubs - PostgreSQL syntax with ILIKE
 $query = "
     SELECT c.*, 
            COUNT(cm.id) as actual_members_count 
@@ -277,14 +276,13 @@ $query = "
 
 $params = [];
 
-// Apply filters
 if ($status_filter !== 'all') {
     $query .= " AND c.status = ?";
     $params[] = $status_filter;
 }
 
 if (!empty($search_term)) {
-    $query .= " AND (c.name LIKE ? OR c.description LIKE ? OR c.department LIKE ? OR c.faculty_advisor LIKE ?)";
+    $query .= " AND (c.name ILIKE ? OR c.description ILIKE ? OR c.department ILIKE ? OR c.faculty_advisor ILIKE ?)";
     $search_param = "%$search_term%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -361,17 +359,17 @@ if (isset($_GET['view_club'])) {
 
 // Get departments and programs for dropdowns
 try {
-    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = 1 ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
     $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    $stmt = $pdo->query("SELECT id, name FROM programs WHERE is_active = 1 ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name FROM programs WHERE is_active = true ORDER BY name");
     $programs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $departments = [];
     $programs = [];
 }
 
-// Get statistics
+// Get statistics (PostgreSQL syntax)
 try {
     // Total environmental clubs
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM clubs WHERE category = 'environment'");
@@ -390,12 +388,12 @@ try {
     ");
     $total_members = $stmt->fetch(PDO::FETCH_ASSOC)['total_members'] ?? 0;
     
-    // Recent activities
+    // Recent activities (PostgreSQL uses CURRENT_DATE and INTERVAL)
     $stmt = $pdo->query("
         SELECT COUNT(*) as recent_activities 
         FROM club_activities ca 
         JOIN clubs c ON ca.club_id = c.id 
-        WHERE c.category = 'environment' AND ca.activity_date >= CURDATE()
+        WHERE c.category = 'environment' AND ca.activity_date >= CURRENT_DATE
     ");
     $recent_activities = $stmt->fetch(PDO::FETCH_ASSOC)['recent_activities'] ?? 0;
     
@@ -416,12 +414,25 @@ try {
 } catch (PDOException $e) {
     $unread_messages = 0;
 }
+
+// Get pending tickets count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    $pending_tickets = 0;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Environmental Clubs - Minister of Environment & Security</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -440,6 +451,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -447,22 +459,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-green: #4caf50;
-            --secondary-green: #66bb6a;
-            --accent-green: #388e3c;
-            --light-green: #1b5e20;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -485,14 +483,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -502,7 +497,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -523,26 +517,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -550,22 +556,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -574,12 +565,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -590,25 +580,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -618,50 +607,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -691,9 +715,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -708,35 +730,224 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        .page-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
+        .dashboard-header {
             margin-bottom: 1.5rem;
         }
 
-        .page-title h1 {
+        .welcome-section h1 {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--text-dark);
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
-        .page-title p {
+        .welcome-section p {
             color: var(--dark-gray);
             font-size: 0.9rem;
         }
 
-        .page-actions {
-            display: flex;
-            gap: 0.75rem;
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
 
+        .stat-card {
+            background: var(--white);
+            padding: 1rem;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            border-left: 4px solid var(--primary-green);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
+
+        .stat-card.danger {
+            border-left-color: var(--danger);
+        }
+
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
+        .stat-icon {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .stat-card .stat-icon {
+            background: var(--light-green);
+            color: var(--primary-green);
+        }
+
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
+
+        .stat-number {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: var(--text-dark);
+        }
+
+        .stat-label {
+            color: var(--dark-gray);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        /* Tabs */
+        .tabs-container {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+        }
+
+        .tabs {
+            display: flex;
+            background: var(--white);
+            border-bottom: 1px solid var(--medium-gray);
+            overflow-x: auto;
+        }
+
+        .tab {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--dark-gray);
+            transition: var(--transition);
+            border-bottom: 2px solid transparent;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        .tab.active {
+            color: var(--primary-green);
+            border-bottom-color: var(--primary-green);
+        }
+
+        .tab:hover {
+            color: var(--primary-green);
+            background: var(--light-green);
+        }
+
+        /* Content Sections */
+        .content-section {
+            display: none;
+            padding: 1.25rem;
+        }
+
+        .content-section.active {
+            display: block;
+        }
+
+        /* Filters */
+        .filters-card {
+            background: var(--light-gray);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .filters-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .form-control {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-green);
+            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+        }
+
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
@@ -771,8 +982,8 @@ try {
             background: var(--medium-gray);
         }
 
-        .btn-success {
-            background: var(--success);
+        .btn-danger {
+            background: var(--danger);
             color: white;
         }
 
@@ -781,141 +992,27 @@ try {
             color: black;
         }
 
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
         .btn-info {
-            background: #17a2b8;
+            background: var(--info);
             color: white;
         }
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+        .btn-success {
+            background: var(--success);
+            color: white;
         }
 
-        .stat-card {
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+            border-radius: 4px;
+        }
+
+        /* Table */
+        .table-container {
             background: var(--white);
-            padding: 1rem;
             border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
-            transition: var(--transition);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .stat-card.success {
-            border-left-color: var(--success);
-        }
-
-        .stat-card.warning {
-            border-left-color: var(--warning);
-        }
-
-        .stat-card.danger {
-            border-left-color: var(--danger);
-        }
-
-        .stat-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1rem;
-        }
-
-        .stat-card .stat-icon {
-            background: var(--light-green);
-            color: var(--primary-green);
-        }
-
-        .stat-card.success .stat-icon {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .stat-card.warning .stat-icon {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .stat-card.danger .stat-icon {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .stat-content {
-            flex: 1;
-        }
-
-        .stat-number {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-            color: var(--text-dark);
-        }
-
-        .stat-label {
-            color: var(--dark-gray);
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            background: var(--white);
-            border-radius: var(--border-radius) var(--border-radius) 0 0;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 0;
-            flex-wrap: wrap;
-        }
-
-        .tab {
-            padding: 1rem 1.5rem;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-weight: 600;
-            color: var(--dark-gray);
-            transition: var(--transition);
-            border-bottom: 2px solid transparent;
-        }
-
-        .tab.active {
-            color: var(--primary-green);
-            border-bottom-color: var(--primary-green);
-        }
-
-        .tab:hover {
-            color: var(--primary-green);
-            background: var(--light-green);
-        }
-
-        /* Content Sections */
-        .content-section {
-            display: none;
-            background: var(--white);
-            border-radius: 0 0 var(--border-radius) var(--border-radius);
-            box-shadow: var(--shadow-sm);
-        }
-
-        .content-section.active {
-            display: block;
+            overflow-x: auto;
         }
 
         .section-header {
@@ -924,6 +1021,8 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .section-header h3 {
@@ -932,56 +1031,35 @@ try {
             color: var(--text-dark);
         }
 
-        /* Filters */
-        .filters-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .filters-form {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            align-items: end;
-        }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .form-label {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--text-dark);
+        .table {
+            width: 100%;
+            border-collapse: collapse;
             font-size: 0.8rem;
         }
 
-        .form-control {
-            padding: 0.6rem 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.85rem;
-            transition: var(--transition);
+        .table th, .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--medium-gray);
         }
 
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-green);
-            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+        .table th {
+            background: var(--light-gray);
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .table tbody tr:hover {
+            background: var(--light-green);
         }
 
         /* Clubs Grid */
         .clubs-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1.5rem;
-            padding: 1.5rem;
+            padding: 1.25rem;
         }
 
         .club-card {
@@ -1016,7 +1094,7 @@ try {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.5rem;
+            font-size: 2rem;
             color: var(--primary-green);
             border: 4px solid var(--white);
             overflow: hidden;
@@ -1033,7 +1111,7 @@ try {
         }
 
         .club-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
             color: var(--text-dark);
@@ -1082,6 +1160,7 @@ try {
             background: var(--light-gray);
         }
 
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -1105,15 +1184,64 @@ try {
             color: var(--danger);
         }
 
-        .action-buttons {
-            display: flex;
-            gap: 0.25rem;
+        .role-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
         }
 
-        .btn-sm {
+        .role-president {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .role-vice_president {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
+        .role-secretary {
+            background: #e2e3e5;
+            color: var(--dark-gray);
+        }
+
+        .role-treasurer {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .role-member {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .activity-status {
             padding: 0.25rem 0.5rem;
+            border-radius: 20px;
             font-size: 0.7rem;
-            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-scheduled {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-ongoing {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
+        .status-completed {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .status-cancelled {
+            background: #f8d7da;
+            color: var(--danger);
         }
 
         /* Club Details */
@@ -1132,6 +1260,7 @@ try {
             display: flex;
             align-items: center;
             gap: 1.5rem;
+            flex-wrap: wrap;
         }
 
         .club-details-logo {
@@ -1160,7 +1289,7 @@ try {
         }
 
         .club-details-title {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 700;
             margin-bottom: 0.5rem;
             color: var(--text-dark);
@@ -1205,92 +1334,10 @@ try {
             line-height: 1.4;
         }
 
-        /* Tables */
-        .table-container {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            overflow: hidden;
-            margin-bottom: 1.5rem;
-        }
-
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8rem;
-        }
-
-        .table th, .table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.75rem;
-        }
-
-        .role-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .role-president {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .role-vice_president {
-            background: #cce7ff;
-            color: var(--primary-green);
-        }
-
-        .role-secretary {
-            background: #e2e3e5;
-            color: var(--dark-gray);
-        }
-
-        .role-treasurer {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .role-member {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .activity-status {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-scheduled {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-ongoing {
-            background: #cce7ff;
-            color: var(--primary-green);
-        }
-
-        .status-completed {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-cancelled {
-            background: #f8d7da;
-            color: var(--danger);
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         /* Modal */
@@ -1309,7 +1356,7 @@ try {
 
         .modal-content {
             background: var(--white);
-            border-radius: var(--border-radius);
+            border-radius: var(--border-radius-lg);
             box-shadow: var(--shadow-lg);
             width: 90%;
             max-width: 600px;
@@ -1337,6 +1384,11 @@ try {
             font-size: 1.2rem;
             color: var(--dark-gray);
             cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
         }
 
         .modal-body {
@@ -1355,6 +1407,7 @@ try {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 1rem;
+            margin-bottom: 1rem;
         }
 
         .form-full {
@@ -1394,13 +1447,16 @@ try {
             color: var(--dark-gray);
         }
 
-        /* Alert */
+        /* Alerts */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -1428,57 +1484,134 @@ try {
             opacity: 0.5;
         }
 
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .empty-state p {
+            font-size: 0.8rem;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .clubs-grid {
-                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
+            .tabs {
+                flex-wrap: wrap;
+            }
+
             .clubs-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .club-details-header {
                 flex-direction: column;
                 text-align: center;
             }
-            
+
             .info-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .tabs {
+
+            .section-header {
                 flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .filters-form {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -1486,21 +1619,41 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
             }
-            
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
+
+            .table th, .table td {
+                padding: 0.5rem;
+            }
+
             .club-meta {
                 grid-template-columns: 1fr;
             }
@@ -1508,10 +1661,16 @@ try {
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1521,8 +1680,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1554,38 +1713,26 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-         <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="tickets.php">
-        <i class="fas fa-ticket-alt"></i>
-        <span>Student Tickets</span>
-        <?php 
-        // Get pending tickets count for this minister
-        try {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as pending_tickets 
-                FROM tickets 
-                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-            ");
-            $stmt->execute([$user_id]);
-            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-            
-            if ($pending_tickets > 0): ?>
-                <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-            <?php endif;
-        } catch (PDOException $e) {
-            // Skip badge if error
-        }
-        ?>
-    </a>
-</li>
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="projects.php">
                         <i class="fas fa-leaf"></i>
@@ -1616,7 +1763,6 @@ try {
                         <span>Environmental Clubs</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1647,22 +1793,12 @@ try {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
-            <!-- Page Header -->
-            <div class="page-header">
-                <div class="page-title">
-                    <h1>Environmental Clubs Management</h1>
+        <main class="main-content" id="mainContent">
+            <div class="dashboard-header">
+                <div class="welcome-section">
+                    <h1>Environmental Clubs Management 🌿</h1>
                     <p>Manage environmental clubs, members, and activities across campus</p>
-                </div>
-                <div class="page-actions">
-                    <button class="btn btn-secondary" onclick="window.location.reload()">
-                        <i class="fas fa-sync-alt"></i> Refresh
-                    </button>
-                    <button class="btn btn-primary" onclick="openAddClubModal()">
-                        <i class="fas fa-plus"></i> New Club
-                    </button>
                 </div>
             </div>
 
@@ -1760,87 +1896,88 @@ try {
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-filter"></i> Apply Filters
                                 </button>
+                                <a href="clubs.php" class="btn btn-secondary">
+                                    <i class="fas fa-times"></i> Clear
+                                </a>
                             </div>
                         </form>
                     </div>
 
                     <!-- Clubs Grid -->
-<!-- Clubs Grid -->
-<div class="table-container">
-    <div class="section-header">
-        <h3>Environmental Clubs (<?php echo count($clubs); ?>)</h3>
-        <button class="btn btn-primary btn-sm" onclick="openAddClubModal()">
-            <i class="fas fa-plus"></i> New Club
-        </button>
-    </div>
-    <?php if (empty($clubs)): ?>
-        <div class="empty-state">
-            <i class="fas fa-users"></i>
-            <h3>No Environmental Clubs Found</h3>
-            <p>No environmental clubs match your current filters.</p>
-            <button class="btn btn-primary" onclick="openAddClubModal()">
-                <i class="fas fa-plus"></i> Create First Club
-            </button>
-        </div>
-    <?php else: ?>
-        <div class="clubs-grid">
-            <?php foreach ($clubs as $club): 
-                // Use actual members count from the query
-                $member_count = $club['actual_members_count'] ?? $club['members_count'] ?? 0;
-            ?>
-                <div class="club-card">
-                    <div class="club-header">
-                        <div class="club-logo">
-                            <?php if ($club['logo_url']): ?>
-                                <img src="../<?php echo htmlspecialchars($club['logo_url']); ?>" alt="<?php echo htmlspecialchars($club['name']); ?>">
-                            <?php else: ?>
-                                <i class="fas fa-leaf"></i>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    <div class="club-body">
-                        <h3 class="club-title"><?php echo htmlspecialchars($club['name']); ?></h3>
-                        <p class="club-description"><?php echo htmlspecialchars($club['description']); ?></p>
-                        <div class="club-meta">
-                            <div class="meta-item">
-                                <span class="meta-label">Department</span>
-                                <span class="meta-value"><?php echo htmlspecialchars($club['department'] ?? 'General'); ?></span>
-                            </div>
-                            <div class="meta-item">
-                                <span class="meta-label">Members</span>
-                                <span class="meta-value"><?php echo $member_count; ?> students</span>
-                            </div>
-                            <div class="meta-item">
-                                <span class="meta-label">Advisor</span>
-                                <span class="meta-value"><?php echo htmlspecialchars($club['faculty_advisor'] ?? 'Not assigned'); ?></span>
-                            </div>
-                            <div class="meta-item">
-                                <span class="meta-label">Established</span>
-                                <span class="meta-value"><?php echo $club['established_date'] ? date('M Y', strtotime($club['established_date'])) : 'N/A'; ?></span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="club-footer">
-                        <span class="status-badge status-<?php echo $club['status']; ?>">
-                            <?php echo ucfirst($club['status']); ?>
-                        </span>
-                        <div class="action-buttons">
-                            <a href="?view_club=<?php echo $club['id']; ?>" class="btn btn-sm btn-info" title="View Club Details">
-                                <i class="fas fa-eye"></i>
-                            </a>
-                            <a href="?view_club=<?php echo $club['id']; ?>&edit=true" class="btn btn-sm btn-warning" title="Edit Club">
-                                <i class="fas fa-edit"></i>
-                            </a>
-                            <button class="btn btn-sm btn-danger" onclick="deleteClub(<?php echo $club['id']; ?>)" title="Deactivate Club">
-                                <i class="fas fa-trash"></i>
+                    <div class="table-container">
+                        <div class="section-header">
+                            <h3>Environmental Clubs (<?php echo count($clubs); ?>)</h3>
+                            <button class="btn btn-primary btn-sm" onclick="openAddClubModal()">
+                                <i class="fas fa-plus"></i> New Club
                             </button>
                         </div>
+                        <?php if (empty($clubs)): ?>
+                            <div class="empty-state">
+                                <i class="fas fa-users"></i>
+                                <h3>No Environmental Clubs Found</h3>
+                                <p>No environmental clubs match your current filters.</p>
+                                <button class="btn btn-primary" onclick="openAddClubModal()">
+                                    <i class="fas fa-plus"></i> Create First Club
+                                </button>
+                            </div>
+                        <?php else: ?>
+                            <div class="clubs-grid">
+                                <?php foreach ($clubs as $club): 
+                                    $member_count = $club['actual_members_count'] ?? $club['members_count'] ?? 0;
+                                ?>
+                                    <div class="club-card">
+                                        <div class="club-header">
+                                            <div class="club-logo">
+                                                <?php if ($club['logo_url']): ?>
+                                                    <img src="../<?php echo htmlspecialchars($club['logo_url']); ?>" alt="<?php echo htmlspecialchars($club['name']); ?>">
+                                                <?php else: ?>
+                                                    <i class="fas fa-leaf"></i>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                        <div class="club-body">
+                                            <h3 class="club-title"><?php echo htmlspecialchars($club['name']); ?></h3>
+                                            <p class="club-description"><?php echo htmlspecialchars(substr($club['description'], 0, 120)) . (strlen($club['description']) > 120 ? '...' : ''); ?></p>
+                                            <div class="club-meta">
+                                                <div class="meta-item">
+                                                    <span class="meta-label">Department</span>
+                                                    <span class="meta-value"><?php echo htmlspecialchars($club['department'] ?? 'General'); ?></span>
+                                                </div>
+                                                <div class="meta-item">
+                                                    <span class="meta-label">Members</span>
+                                                    <span class="meta-value"><?php echo $member_count; ?> students</span>
+                                                </div>
+                                                <div class="meta-item">
+                                                    <span class="meta-label">Advisor</span>
+                                                    <span class="meta-value"><?php echo htmlspecialchars($club['faculty_advisor'] ?? 'Not assigned'); ?></span>
+                                                </div>
+                                                <div class="meta-item">
+                                                    <span class="meta-label">Established</span>
+                                                    <span class="meta-value"><?php echo $club['established_date'] ? date('M Y', strtotime($club['established_date'])) : 'N/A'; ?></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="club-footer">
+                                            <span class="status-badge status-<?php echo $club['status']; ?>">
+                                                <?php echo ucfirst($club['status']); ?>
+                                            </span>
+                                            <div class="action-buttons">
+                                                <a href="?view_club=<?php echo $club['id']; ?>" class="btn btn-info btn-sm" title="View Club Details">
+                                                    <i class="fas fa-eye"></i>
+                                                </a>
+                                                <a href="?view_club=<?php echo $club['id']; ?>&edit=true" class="btn btn-warning btn-sm" title="Edit Club">
+                                                    <i class="fas fa-edit"></i>
+                                                </a>
+                                                <button class="btn btn-danger btn-sm" onclick="deleteClub(<?php echo $club['id']; ?>)" title="Deactivate Club">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
-                </div>
-            <?php endforeach; ?>
-        </div>
-    <?php endif; ?>
-</div>
                 </div>
 
                 <!-- Club Details Tab -->
@@ -1922,58 +2059,60 @@ try {
                                 </button>
                             </div>
                         <?php else: ?>
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Student</th>
-                                        <th>Registration Number</th>
-                                        <th>Department</th>
-                                        <th>Program</th>
-                                        <th>Academic Year</th>
-                                        <th>Role</th>
-                                        <th>Join Date</th>
-                                        <th>Status</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($club_members as $member): ?>
+                            <div style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($member['name']); ?></strong>
-                                                <?php if ($member['email']): ?>
-                                                    <br><small><?php echo htmlspecialchars($member['email']); ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td><?php echo htmlspecialchars($member['reg_number']); ?></td>
-                                            <td><?php echo htmlspecialchars($member['department_name'] ?? 'N/A'); ?></td>
-                                            <td><?php echo htmlspecialchars($member['program_name'] ?? 'N/A'); ?></td>
-                                            <td><?php echo htmlspecialchars($member['academic_year']); ?></td>
-                                            <td>
-                                                <span class="role-badge role-<?php echo $member['role']; ?>">
-                                                    <?php echo str_replace('_', ' ', ucfirst($member['role'])); ?>
-                                                </span>
-                                            </td>
-                                            <td><?php echo date('M j, Y', strtotime($member['join_date'])); ?></td>
-                                            <td>
-                                                <span class="status-badge status-<?php echo $member['status']; ?>">
-                                                    <?php echo ucfirst($member['status']); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <div class="action-buttons">
-                                                    <button class="btn btn-sm btn-warning" onclick="openUpdateMemberModal(<?php echo $member['id']; ?>)">
-                                                        <i class="fas fa-edit"></i>
-                                                    </button>
-                                                    <button class="btn btn-sm btn-danger" onclick="deleteMember(<?php echo $member['id']; ?>)">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                </div>
-                                            </td>
+                                            <th>Student</th>
+                                            <th>Registration Number</th>
+                                            <th>Department</th>
+                                            <th>Program</th>
+                                            <th>Academic Year</th>
+                                            <th>Role</th>
+                                            <th>Join Date</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($club_members as $member): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($member['name']); ?></strong>
+                                                    <?php if ($member['email']): ?>
+                                                        <br><small><?php echo htmlspecialchars($member['email']); ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($member['reg_number']); ?></td>
+                                                <td><?php echo htmlspecialchars($member['department_name'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($member['program_name'] ?? 'N/A'); ?></td>
+                                                <td><?php echo htmlspecialchars($member['academic_year']); ?>                                                <tr>
+                                                <td>
+                                                    <span class="role-badge role-<?php echo $member['role']; ?>">
+                                                        <?php echo str_replace('_', ' ', ucfirst($member['role'])); ?>
+                                                    </span>
+                                                </td>
+                                                <td><?php echo date('M j, Y', strtotime($member['join_date'])); ?></td>
+                                                <td>
+                                                    <span class="status-badge status-<?php echo $member['status']; ?>">
+                                                        <?php echo ucfirst($member['status']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <div class="action-buttons">
+                                                        <button class="btn btn-warning btn-sm" onclick="openUpdateMemberModal(<?php echo $member['id']; ?>)">
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                        <button class="btn btn-danger btn-sm" onclick="deleteMember(<?php echo $member['id']; ?>)">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -1997,44 +2136,46 @@ try {
                                 </button>
                             </div>
                         <?php else: ?>
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Activity Title</th>
-                                        <th>Type</th>
-                                        <th>Date & Time</th>
-                                        <th>Location</th>
-                                        <th>Budget</th>
-                                        <th>Status</th>
-                                        <th>Participants</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($club_activities as $activity): ?>
+                            <div style="overflow-x: auto;">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($activity['title']); ?></strong>
-                                                <?php if ($activity['description']): ?>
-                                                    <br><small><?php echo htmlspecialchars(substr($activity['description'], 0, 100)) . '...'; ?></small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td><?php echo str_replace('_', ' ', ucfirst($activity['activity_type'])); ?></td>
-                                            <td>
-                                                <?php echo date('M j, Y', strtotime($activity['activity_date'])); ?>
-                                                <br><small><?php echo date('g:i A', strtotime($activity['start_time'])); ?> - <?php echo date('g:i A', strtotime($activity['end_time'])); ?></small>
-                                            </td>
-                                            <td><?php echo htmlspecialchars($activity['location']); ?></td>
-                                            <td><?php echo number_format($activity['budget'], 2); ?> RWF</td>
-                                            <td>
-                                                <span class="activity-status status-<?php echo $activity['status']; ?>">
-                                                    <?php echo ucfirst($activity['status']); ?>
-                                                </span>
-                                            </td>
-                                            <td><?php echo $activity['participants_count']; ?> students</td>
+                                            <th>Activity Title</th>
+                                            <th>Type</th>
+                                            <th>Date & Time</th>
+                                            <th>Location</th>
+                                            <th>Budget</th>
+                                            <th>Status</th>
+                                            <th>Participants</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($club_activities as $activity): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($activity['title']); ?></strong>
+                                                    <?php if ($activity['description']): ?>
+                                                        <br><small><?php echo htmlspecialchars(substr($activity['description'], 0, 100)) . '...'; ?></small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td><?php echo str_replace('_', ' ', ucfirst($activity['activity_type'])); ?></td>
+                                                <td>
+                                                    <?php echo date('M j, Y', strtotime($activity['activity_date'])); ?>
+                                                    <br><small><?php echo date('g:i A', strtotime($activity['start_time'])); ?> - <?php echo date('g:i A', strtotime($activity['end_time'])); ?></small>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($activity['location']); ?></td>
+                                                <td><?php echo number_format($activity['budget'], 2); ?> RWF</td>
+                                                <td>
+                                                    <span class="activity-status status-<?php echo $activity['status']; ?>">
+                                                        <?php echo ucfirst($activity['status']); ?>
+                                                    </span>
+                                                </td>
+                                                <td><?php echo $activity['participants_count']; ?> students</td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -2138,7 +2279,7 @@ try {
                     <div class="form-row">
                         <div class="form-group">
                             <label class="form-label">Email</label>
-                                                      <input type="email" name="email" class="form-control">
+                            <input type="email" name="email" class="form-control">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Phone</label>
@@ -2264,144 +2405,188 @@ try {
         </div>
     </div>
 
+    <!-- Edit Club Modal -->
     <div id="editClubModal" class="modal" style="display: <?php echo $edit_mode && $club_details ? 'flex' : 'none'; ?>;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Edit Environmental Club</h3>
-            <button class="modal-close" onclick="closeEditClubModal()">&times;</button>
-        </div>
-        <?php if ($club_details): ?>
-        <form method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="club_id" value="<?php echo $club_details['id']; ?>">
-            <input type="hidden" name="current_logo" value="<?php echo htmlspecialchars($club_details['logo_url'] ?? ''); ?>">
-            <div class="modal-body">
-                <div class="form-row">
-                    <div class="form-group form-full">
-                        <label class="form-label">Club Name *</label>
-                        <input type="text" name="name" class="form-control" value="<?php echo htmlspecialchars($club_details['name']); ?>" required>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Environmental Club</h3>
+                <button class="modal-close" onclick="closeEditClubModal()">&times;</button>
+            </div>
+            <?php if ($club_details): ?>
+            <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="club_id" value="<?php echo $club_details['id']; ?>">
+                <input type="hidden" name="current_logo" value="<?php echo htmlspecialchars($club_details['logo_url'] ?? ''); ?>">
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group form-full">
+                            <label class="form-label">Club Name *</label>
+                            <input type="text" name="name" class="form-control" value="<?php echo htmlspecialchars($club_details['name']); ?>" required>
+                        </div>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group form-full">
-                        <label class="form-label">Description *</label>
-                        <textarea name="description" class="form-control" required rows="4"><?php echo htmlspecialchars($club_details['description']); ?></textarea>
+                    <div class="form-row">
+                        <div class="form-group form-full">
+                            <label class="form-label">Description *</label>
+                            <textarea name="description" class="form-control" required rows="4"><?php echo htmlspecialchars($club_details['description']); ?></textarea>
+                        </div>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Department</label>
-                        <input type="text" name="department" class="form-control" value="<?php echo htmlspecialchars($club_details['department'] ?? ''); ?>">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Department</label>
+                            <input type="text" name="department" class="form-control" value="<?php echo htmlspecialchars($club_details['department'] ?? ''); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Established Date</label>
+                            <input type="date" name="established_date" class="form-control" value="<?php echo htmlspecialchars($club_details['established_date'] ?? ''); ?>">
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Established Date</label>
-                        <input type="date" name="established_date" class="form-control" value="<?php echo htmlspecialchars($club_details['established_date'] ?? ''); ?>">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Meeting Schedule</label>
+                            <input type="text" name="meeting_schedule" class="form-control" value="<?php echo htmlspecialchars($club_details['meeting_schedule'] ?? ''); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Meeting Location</label>
+                            <input type="text" name="meeting_location" class="form-control" value="<?php echo htmlspecialchars($club_details['meeting_location'] ?? ''); ?>">
+                        </div>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Meeting Schedule</label>
-                        <input type="text" name="meeting_schedule" class="form-control" value="<?php echo htmlspecialchars($club_details['meeting_schedule'] ?? ''); ?>">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Faculty Advisor</label>
+                            <input type="text" name="faculty_advisor" class="form-control" value="<?php echo htmlspecialchars($club_details['faculty_advisor'] ?? ''); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Advisor Contact</label>
+                            <input type="text" name="advisor_contact" class="form-control" value="<?php echo htmlspecialchars($club_details['advisor_contact'] ?? ''); ?>">
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Meeting Location</label>
-                        <input type="text" name="meeting_location" class="form-control" value="<?php echo htmlspecialchars($club_details['meeting_location'] ?? ''); ?>">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Status</label>
+                            <select name="status" class="form-control">
+                                <option value="active" <?php echo $club_details['status'] === 'active' ? 'selected' : ''; ?>>Active</option>
+                                <option value="inactive" <?php echo $club_details['status'] === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
+                                <option value="suspended" <?php echo $club_details['status'] === 'suspended' ? 'selected' : ''; ?>>Suspended</option>
+                            </select>
+                        </div>
                     </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Faculty Advisor</label>
-                        <input type="text" name="faculty_advisor" class="form-control" value="<?php echo htmlspecialchars($club_details['faculty_advisor'] ?? ''); ?>">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Advisor Contact</label>
-                        <input type="text" name="advisor_contact" class="form-control" value="<?php echo htmlspecialchars($club_details['advisor_contact'] ?? ''); ?>">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <select name="status" class="form-control">
-                            <option value="active" <?php echo $club_details['status'] === 'active' ? 'selected' : ''; ?>>Active</option>
-                            <option value="inactive" <?php echo $club_details['status'] === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
-                            <option value="suspended" <?php echo $club_details['status'] === 'suspended' ? 'selected' : ''; ?>>Suspended</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group form-full">
-                        <label class="form-label">Club Logo</label>
-                        <?php if ($club_details['logo_url']): ?>
-                            <div style="margin-bottom: 10px;">
-                                <img src="../<?php echo htmlspecialchars($club_details['logo_url']); ?>" alt="Current Logo" style="max-width: 100px; max-height: 100px; border-radius: 8px;">
+                    <div class="form-row">
+                        <div class="form-group form-full">
+                            <label class="form-label">Club Logo</label>
+                            <?php if ($club_details['logo_url']): ?>
+                                <div style="margin-bottom: 10px;">
+                                    <img src="../<?php echo htmlspecialchars($club_details['logo_url']); ?>" alt="Current Logo" style="max-width: 100px; max-height: 100px; border-radius: 8px;">
+                                </div>
+                            <?php endif; ?>
+                            <div class="file-upload">
+                                <input type="file" name="logo" id="editClubLogo" accept="image/*">
+                                <label for="editClubLogo">
+                                    <i class="fas fa-upload"></i> Change Logo
+                                </label>
+                                <div class="file-preview" id="editClubLogoPreview">No file chosen</div>
                             </div>
-                        <?php endif; ?>
-                        <div class="file-upload">
-                            <input type="file" name="logo" id="editClubLogo" accept="image/*">
-                            <label for="editClubLogo">
-                                <i class="fas fa-upload"></i> Change Logo
-                            </label>
-                            <div class="file-preview" id="editClubLogoPreview">No file chosen</div>
                         </div>
                     </div>
                 </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" onclick="closeEditClubModal()">Cancel</button>
-                <button type="submit" name="update_club" class="btn btn-primary">Update Club</button>
-            </div>
-        </form>
-        <?php endif; ?>
-    </div>
-</div>
-
-<!-- Update Member Status Modal -->
-<div id="updateMemberModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Update Member Status</h3>
-            <button class="modal-close" onclick="closeUpdateMemberModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form id="updateMemberForm" method="GET">
-                <input type="hidden" name="update_member_status" id="update_member_id">
-                <div class="form-group">
-                    <label class="form-label">Status</label>
-                    <select name="status" class="form-control" required>
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                        <option value="graduated">Graduated</option>
-                    </select>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeEditClubModal()">Cancel</button>
+                    <button type="submit" name="update_club" class="btn btn-primary">Update Club</button>
                 </div>
             </form>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="closeUpdateMemberModal()">Cancel</button>
-            <button type="button" class="btn btn-primary" onclick="submitMemberUpdate()">Update Status</button>
+            <?php endif; ?>
         </div>
     </div>
-</div>
+
+    <!-- Update Member Status Modal -->
+    <div id="updateMemberModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Update Member Status</h3>
+                <button class="modal-close" onclick="closeUpdateMemberModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="updateMemberForm" method="GET">
+                    <input type="hidden" name="update_member_status" id="update_member_id">
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select name="status" class="form-control" required>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                            <option value="graduated">Graduated</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeUpdateMemberModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitMemberUpdate()">Update Status</button>
+            </div>
+        </div>
+    </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab Functions
         function showTab(tabName) {
-            // Hide all tabs
             document.querySelectorAll('.content-section').forEach(tab => {
                 tab.classList.remove('active');
             });
@@ -2409,7 +2594,6 @@ try {
                 tab.classList.remove('active');
             });
             
-            // Show selected tab
             document.getElementById(tabName + '-tab').classList.add('active');
             event.target.classList.add('active');
         }
@@ -2442,13 +2626,24 @@ try {
         }
 
         function openEditClubModal(clubId) {
-            // For now, redirect to view with edit parameter
             window.location.href = '?view_club=' + clubId + '&edit=true';
         }
 
+        function closeEditClubModal() {
+            window.location.href = '?view_club=<?php echo $club_details['id'] ?? ''; ?>';
+        }
+
         function openUpdateMemberModal(memberId) {
-            // Implement member update modal
-            alert('Update member functionality for ID: ' + memberId);
+            document.getElementById('update_member_id').value = memberId;
+            document.getElementById('updateMemberModal').style.display = 'flex';
+        }
+
+        function closeUpdateMemberModal() {
+            document.getElementById('updateMemberModal').style.display = 'none';
+        }
+
+        function submitMemberUpdate() {
+            document.getElementById('updateMemberForm').submit();
         }
 
         function deleteClub(clubId) {
@@ -2464,10 +2659,19 @@ try {
         }
 
         // File Upload Preview
-        document.getElementById('clubLogo').addEventListener('change', function(e) {
+        document.getElementById('clubLogo')?.addEventListener('change', function(e) {
             const file = e.target.files[0];
             const preview = document.getElementById('clubLogoPreview');
-            
+            if (file) {
+                preview.textContent = file.name + ' (' + (file.size / 1024).toFixed(2) + ' KB)';
+            } else {
+                preview.textContent = 'No file chosen';
+            }
+        });
+
+        document.getElementById('editClubLogo')?.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const preview = document.getElementById('editClubLogoPreview');
             if (file) {
                 preview.textContent = file.name + ' (' + (file.size / 1024).toFixed(2) + ' KB)';
             } else {
@@ -2477,13 +2681,15 @@ try {
 
         // Close modal when clicking outside
         window.onclick = function(event) {
-            const modals = ['addClubModal', 'addMemberModal', 'addActivityModal'];
+            const modals = ['addClubModal', 'addMemberModal', 'addActivityModal', 'editClubModal', 'updateMemberModal'];
             modals.forEach(modalId => {
                 const modal = document.getElementById(modalId);
                 if (event.target === modal) {
                     if (modalId === 'addClubModal') closeAddClubModal();
                     if (modalId === 'addMemberModal') closeAddMemberModal();
                     if (modalId === 'addActivityModal') closeAddActivityModal();
+                    if (modalId === 'editClubModal') closeEditClubModal();
+                    if (modalId === 'updateMemberModal') closeUpdateMemberModal();
                 }
             });
         }
@@ -2496,7 +2702,6 @@ try {
                 activityDate.value = today;
             }
 
-            // Set default times for activity
             const startTime = document.querySelector('input[name="start_time"]');
             const endTime = document.querySelector('input[name="end_time"]');
             if (startTime && !startTime.value) {
@@ -2505,120 +2710,41 @@ try {
             if (endTime && !endTime.value) {
                 endTime.value = '16:00';
             }
-        });
 
-        // Auto-refresh clubs data every 5 minutes
-        setInterval(() => {
-            console.log('Clubs data auto-refresh triggered');
-        }, 300000);
+            // Auto-open edit modal if in edit mode
+            <?php if ($edit_mode && $club_details): ?>
+            document.getElementById('editClubModal').style.display = 'flex';
+            <?php endif; ?>
 
-        // Search functionality
-        function searchClubs() {
-            const searchTerm = document.querySelector('input[name="search"]').value.toLowerCase();
-            const clubCards = document.querySelectorAll('.club-card');
-            
-            clubCards.forEach(card => {
-                const clubName = card.querySelector('.club-title').textContent.toLowerCase();
-                const clubDesc = card.querySelector('.club-description').textContent.toLowerCase();
-                const clubDept = card.querySelector('.meta-value').textContent.toLowerCase();
-                
-                if (clubName.includes(searchTerm) || clubDesc.includes(searchTerm) || clubDept.includes(searchTerm)) {
-                    card.style.display = 'block';
-                } else {
-                    card.style.display = 'none';
-                }
+            // Add loading animations
+            const cards = document.querySelectorAll('.stat-card, .tabs-container');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
             });
-        }
-
-        // Add event listener for search input
-        document.addEventListener('DOMContentLoaded', function() {
-            const searchInput = document.querySelector('input[name="search"]');
-            if (searchInput) {
-                searchInput.addEventListener('input', searchClubs);
-            }
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
-
-        function openEditClubModal(clubId) {
-        window.location.href = '?view_club=' + clubId + '&edit=true';
-    }
-
-    function closeEditClubModal() {
-        window.location.href = '?view_club=<?php echo $club_details['id'] ?? ''; ?>';
-    }
-
-    // Member Status Update Functions
-    function openUpdateMemberModal(memberId) {
-        document.getElementById('update_member_id').value = memberId;
-        document.getElementById('updateMemberModal').style.display = 'flex';
-    }
-
-    function closeUpdateMemberModal() {
-        document.getElementById('updateMemberModal').style.display = 'none';
-    }
-
-    function submitMemberUpdate() {
-        document.getElementById('updateMemberForm').submit();
-    }
-
-    // Enhanced delete functions with confirmation
-    function deleteClub(clubId) {
-        if (confirm('Are you sure you want to deactivate this club? This will make it inactive but preserve all data.')) {
-            window.location.href = '?delete_club=' + clubId;
-        }
-    }
-
-    function deleteMember(memberId) {
-        if (confirm('Are you sure you want to remove this member from the club?')) {
-            window.location.href = '?delete_member=' + memberId;
-        }
-    }
-
-    // File Upload Preview for Edit Modal
-    document.getElementById('editClubLogo').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        const preview = document.getElementById('editClubLogoPreview');
-        
-        if (file) {
-            preview.textContent = file.name + ' (' + (file.size / 1024).toFixed(2) + ' KB)';
-        } else {
-            preview.textContent = 'No file chosen';
-        }
-    });
-
-    // Auto-open edit modal if in edit mode
-    document.addEventListener('DOMContentLoaded', function() {
-        <?php if ($edit_mode && $club_details): ?>
-        document.getElementById('editClubModal').style.display = 'flex';
-        <?php endif; ?>
-    });
-
-    // Enhanced member management
-    function updateMemberStatus(memberId, status) {
-        if (confirm('Are you sure you want to update this member\'s status?')) {
-            window.location.href = '?update_member_status=' + memberId + '&status=' + status;
-        }
-    }
-
-    // Close modals when clicking outside
-    window.onclick = function(event) {
-        const modals = ['addClubModal', 'addMemberModal', 'addActivityModal', 'editClubModal', 'updateMemberModal'];
-        modals.forEach(modalId => {
-            const modal = document.getElementById(modalId);
-            if (event.target === modal) {
-                if (modalId === 'addClubModal') closeAddClubModal();
-                if (modalId === 'addMemberModal') closeAddMemberModal();
-                if (modalId === 'addActivityModal') closeAddActivityModal();
-                if (modalId === 'editClubModal') closeEditClubModal();
-                if (modalId === 'updateMemberModal') closeUpdateMemberModal();
-            }
-        });
-    }
-
-    // Refresh member count when members are added/removed
-    function refreshMemberCount(clubId) {
-        // This would typically be done via AJAX, but for now we'll reload
-        window.location.reload();
-    }
     </script>
 </body>
 </html>

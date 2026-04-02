@@ -1619,12 +1619,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                     <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
                         <i class="fab fa-twitter"></i>
                     </a>
-                    <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
-                        <i class="fab fa-facebook-f"></i>
-                    </a>
-                    <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
-                        <i class="fab fa-linkedin-in"></i>
-                    </a>
+                    
                     <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
                         <i class="fab fa-instagram"></i>
                     </a>
@@ -1662,9 +1657,9 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
             </div>
         </div>
         
-        <div class="footer-bottom">
-            <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
-        </div>
+       <div class="footer-bottom">
+                    <p>&copy; <?php echo date('Y'); ?> Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
+                </div>
     </footer>
 
     <!-- Scripts -->

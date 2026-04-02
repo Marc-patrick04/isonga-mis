@@ -1072,7 +1072,7 @@ function getImageUrl($imagePath) {
             margin-bottom: 0.5rem;
             font-size: 0.7rem;
             display: -webkit-box;
-            -webkit-line-clamp: 2;
+            /* -webkit-line-clamp: 2; */
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -2131,12 +2131,7 @@ function getImageUrl($imagePath) {
                     <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
                         <i class="fab fa-twitter"></i>
                     </a>
-                    <a href="https://www.facebook.com/RP-Musanze-College" target="_blank" rel="noopener noreferrer" aria-label="Facebook">
-                        <i class="fab fa-facebook-f"></i>
-                    </a>
-                    <a href="https://www.linkedin.com/in/rp-musanze-college-3963b0203" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn">
-                        <i class="fab fa-linkedin-in"></i>
-                    </a>
+                    
                     <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
                         <i class="fab fa-instagram"></i>
                     </a>
@@ -2158,7 +2153,7 @@ function getImageUrl($imagePath) {
                 <ul class="footer-links">
                     <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                     <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
-                    <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
+                    <li><a href="/assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
                     <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                 </ul>
             </div>
@@ -2175,8 +2170,8 @@ function getImageUrl($imagePath) {
         </div>
         
         <div class="footer-bottom">
-            <p>&copy; 2025 Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
-        </div>
+                    <p>&copy; <?php echo date('Y'); ?> Rwanda Polytechnic Musanze - RPSU Isonga Management System. All rights reserved.</p>
+                </div>
     </footer>
 
     <!-- Scripts -->

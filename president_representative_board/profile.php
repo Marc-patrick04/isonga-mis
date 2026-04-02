@@ -295,23 +295,6 @@ try {
             --transition: all 0.2s ease;
         }
 
-        .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --info: #29b6f6;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
-        }
-
         * {
             margin: 0;
             padding: 0;
@@ -356,6 +339,19 @@ try {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logos {
@@ -1046,7 +1042,55 @@ try {
             margin-bottom: 0.5rem;
         }
 
-        /* Responsive */
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+        }
+
         @media (max-width: 1024px) {
             .profile-container {
                 grid-template-columns: 1fr;
@@ -1063,7 +1107,11 @@ try {
             }
             
             .sidebar {
-                display: none;
+                display: none !important;
+            }
+            
+            .sidebar.mobile-open {
+                display: flex !important;
             }
             
             .form-row {
@@ -1076,29 +1124,56 @@ try {
             
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
             
             .user-details {
                 display: none;
             }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
         }
 
         @media (max-width: 480px) {
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
             
             .profile-stats {
                 grid-template-columns: 1fr;
             }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1108,9 +1183,6 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1141,7 +1213,8 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-                <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" >
@@ -1214,12 +1287,7 @@ try {
         <main class="main-content">
             <div class="container">
                 <!-- Page Header -->
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1>Profile & Settings</h1>
-                        <p>Manage your personal information and account preferences</p>
-                    </div>
-                </div>
+                
 
                 <?php if (isset($_SESSION['success'])): ?>
                     <div class="alert alert-success">
@@ -1282,14 +1350,14 @@ try {
                                     onclick="switchTab('security')">
                                 <i class="fas fa-shield-alt"></i> Security
                             </button>
-                            <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
+                            <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
                                     onclick="switchTab('preferences')">
                                 <i class="fas fa-cog"></i> Preferences
                             </button>
                             <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" 
                                     onclick="switchTab('sessions')">
                                 <i class="fas fa-history"></i> Login History
-                            </button>
+                            </button> -->
                         </div>
 
                         <!-- Tab Content -->
@@ -1412,7 +1480,7 @@ try {
                                     </form>
                                 </div>
 
-                                <div class="form-section">
+                                <!-- <div class="form-section">
                                     <h4>Two-Factor Authentication</h4>
                                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-blue); border-radius: var(--border-radius);">
                                         <div>
@@ -1428,7 +1496,7 @@ try {
                                             </button>
                                         </form>
                                     </div>
-                                </div>
+                                </div> -->
 
                                 <div class="form-section">
                                     <h4>Account Security</h4>
@@ -1739,61 +1807,40 @@ try {
                 }
             }
 
-            // Dark mode toggle - FIXED
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            if (themeToggle) {
-                console.log('Theme toggle found');
-                
-                // Check for saved theme or prefer system theme
-                const savedTheme = localStorage.getItem('theme');
-                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                
-                let currentTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
-                
-                // Apply theme
-                if (currentTheme === 'dark') {
-                    body.classList.add('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                    themeToggle.title = 'Switch to Light Mode';
-                } else {
-                    body.classList.remove('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                    themeToggle.title = 'Switch to Dark Mode';
-                }
-
-                themeToggle.addEventListener('click', () => {
-                    body.classList.toggle('dark-mode');
-                    const isDark = body.classList.contains('dark-mode');
-                    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                    
-                    if (isDark) {
-                        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        themeToggle.title = 'Switch to Light Mode';
-                    } else {
-                        themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        themeToggle.title = 'Switch to Dark Mode';
-                    }
-                    
-                    console.log('Theme changed to:', isDark ? 'dark' : 'light');
+            // Mobile Menu Toggle
+            const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+            const mobileOverlay = document.getElementById('mobileOverlay');
+            const sidebar = document.getElementById('sidebar');
+            
+            if (mobileMenuToggle) {
+                mobileMenuToggle.addEventListener('click', () => {
+                    const isOpen = sidebar.classList.toggle('mobile-open');
+                    mobileOverlay.classList.toggle('active', isOpen);
+                    mobileMenuToggle.innerHTML = isOpen
+                        ? '<i class="fas fa-times"></i>'
+                        : '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = isOpen ? 'hidden' : '';
                 });
-
-                // Listen for system theme changes
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-                    if (!localStorage.getItem('theme')) {
-                        if (e.matches) {
-                            body.classList.add('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        } else {
-                            body.classList.remove('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        }
-                    }
-                });
-            } else {
-                console.error('Theme toggle button not found!');
             }
+            
+            if (mobileOverlay) {
+                mobileOverlay.addEventListener('click', () => {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                });
+            }
+
+            // Close mobile nav on resize to desktop
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 992) {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            });
         });
 
         // Tab switching

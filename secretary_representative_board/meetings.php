@@ -1276,9 +1276,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1290,13 +1288,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($secretary_name, 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($secretary_name); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1403,8 +1395,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Secretary <?php echo htmlspecialchars($secretary_name); ?>! 📝</h1>
-                    <p>Manage documentation and records for Representative Board activities in <?php echo date('Y'); ?> academic year</p>
+                    <h1>Welcome, Secretary <?php echo htmlspecialchars($secretary_name); ?>!</h1>
+                 
                 </div>
             </div>
 
@@ -1716,81 +1708,9 @@ try {
                         </div>
                     </div>
 
-                    <!-- Upcoming Representative Board Meetings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Board Meetings</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_important)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-calendar-check"></i>
-                                    <p>No upcoming representative board meetings</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($upcoming_important as $meeting): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar" style="background: var(--primary-blue);">
-                                                <i class="fas fa-users" style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('D, M j', strtotime($meeting['meeting_date'])); ?> 
-                                                    at <?php echo date('g:i A', strtotime($meeting['start_time'])); ?>
-                                                    • <?php echo htmlspecialchars($meeting['location']); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
-                    <!-- Your Recent Attendance -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Your Recent Attendance</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($user_attendance_history)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-history"></i>
-                                    <p>No attendance records found</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($user_attendance_history as $attendance): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar 
-                                                <?php echo $attendance['attendance_status'] === 'present' ? 'attendance-present' : 
-                                                      ($attendance['attendance_status'] === 'absent' ? 'attendance-absent' : 'attendance-excused'); ?>">
-                                                <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : 
-                                                                   ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" 
-                                                   style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <?php echo htmlspecialchars($attendance['title']); ?>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, Y', strtotime($attendance['meeting_date'])); ?> 
-                                                    • 
-                                                    <span class="status-badge attendance-<?php echo $attendance['attendance_status']; ?>">
-                                                        <?php echo ucfirst($attendance['attendance_status']); ?>
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
                 </div>
             </div>
         </main>
@@ -1814,22 +1734,7 @@ try {
     </style>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

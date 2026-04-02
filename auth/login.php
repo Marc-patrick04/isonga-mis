@@ -555,14 +555,15 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
             </div>
             <div class="graphic-content">
                 <h2>RPSU Committee Portal</h2>
-                <p>Access your dedicated dashboard to manage student concerns, track issues, and collaborate with your team members efficiently.</p>
+                <!-- <p>Access your dedicated dashboard to manage student concerns, track issues, and collaborate with your team members efficiently.</p> -->
+                  <p>Access your dedicated dashboard to manage student concerns.</p>
                 <ul class="features">
-                    <li><i class="fas fa-tachometer-alt"></i> Personalized role-based dashboard</li>
-                    <li><i class="fas fa-ticket-alt"></i> Manage and resolve student tickets</li>
-                    <li><i class="fas fa-chart-line"></i> Track performance and generate reports</li>
-                    <li><i class="fas fa-users"></i> Collaborate with committee members</li>
-                    <li><i class="fas fa-calendar-alt"></i> Schedule and manage campus events</li>
-                    <li><i class="fas fa-bullhorn"></i> Publish announcements to students</li>
+                    <!-- <li><i class="fas fa-tachometer-alt"></i> Personalized role-based dashboard</li> -->
+                    <!-- <li><i class="fas fa-ticket-alt"></i> Manage and resolve student tickets</li> -->
+                    <!-- <li><i class="fas fa-chart-line"></i> Track performance and generate reports</li> -->
+                    <!-- <li><i class="fas fa-users"></i> Collaborate with committee members</li> -->
+                    <!-- <li><i class="fas fa-calendar-alt"></i> Schedule and manage campus events</li> -->
+                    <!-- <li><i class="fas fa-bullhorn"></i> Publish announcements to students</li> -->
                 </ul>
             </div>
         </div>
@@ -571,7 +572,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
         <div class="form-side">
             <div class="login-header">
                 <h2 class="form-title">Committee Member Login</h2>
-                <p class="form-subtitle">Enter your credentials to access the management system</p>
+                <!-- <p class="form-subtitle">Enter your credentials to access the management system</p> -->
             </div>
 
             <?php if (!empty($errors)): ?>

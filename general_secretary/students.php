@@ -1207,7 +1207,7 @@ try {
                 </button>
                 <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - General Secretary</h1>
+                    <h1>Isonga - Student Management</h1>
                 </div>
             </div>
             <div class="user-menu">
@@ -1226,13 +1226,13 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
+                    <!-- <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
                             <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
-                    </div>
+                    </div> -->
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">General Secretary</div>
@@ -1330,14 +1330,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="page-header">
-                <h1 class="page-title">Student Management 👨‍🎓</h1>
-                <div>
-                    <button class="btn btn-primary" onclick="openAddModal()">
-                        <i class="fas fa-plus"></i> Add New Student
-                    </button>
-                </div>
-            </div>
+           
 
             <!-- Alert Messages -->
             <?php if ($message): ?>

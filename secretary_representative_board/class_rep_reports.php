@@ -1249,9 +1249,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1263,13 +1261,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1374,12 +1366,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Class Representative Reports</h1>
-                    <p>Review and manage reports submitted by class representatives</p>
-                </div>
-            </div>
+            
 
             <!-- Message Alert -->
             <?php if ($message): ?>
@@ -1594,29 +1581,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Report Types Statistics -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Reports by Type</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($type_counts)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-chart-pie"></i>
-                                    <p>No report type statistics available</p>
-                                </div>
-                            <?php else: ?>
-                                <div class="type-stats">
-                                    <?php foreach ($type_counts as $type): ?>
-                                        <div class="type-stat">
-                                            <span class="type-name"><?php echo ucfirst($type['report_type']); ?></span>
-                                            <span class="type-count"><?php echo $type['count']; ?></span>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Quick Actions -->
                     <div class="card">
@@ -1638,36 +1603,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
                         </div>
                     </div>
 
-                    <!-- Information Card -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Report Status Guide</h3>
-                        </div>
-                        <div class="card-body">
-                            <div style="font-size: 0.8rem; color: var(--text-dark);">
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
-                                    <span class="status-badge status-draft">Draft</span>
-                                    <span> - Report is being prepared by representative</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
-                                    <span class="status-badge status-submitted">Submitted</span>
-                                    <span> - Awaiting your review</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
-                                    <span class="status-badge status-reviewed">Reviewed</span>
-                                    <span> - You have reviewed the report</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
-                                    <span class="status-badge status-approved">Approved</span>
-                                    <span> - Report has been approved</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                    <span class="status-badge status-rejected">Rejected</span>
-                                    <span> - Report needs revision</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    
                 </div>
             </div>
         </main>
@@ -1728,22 +1664,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+        
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

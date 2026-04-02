@@ -264,27 +264,6 @@ try {
             --transition: all 0.2s ease;
         }
 
-        .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --info: #29b6f6;
-            --purple: #9c27b0;
-            --teal: #009688;
-            --indigo: #3f51b5;
-            --orange: #ff9800;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
-        }
-
         * {
             margin: 0;
             padding: 0;
@@ -329,6 +308,19 @@ try {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logos {
@@ -917,7 +909,55 @@ try {
             color: var(--dark-gray);
         }
 
-        /* Responsive */
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+        }
+
         @media (max-width: 1024px) {
             .content-grid {
                 grid-template-columns: 1fr;
@@ -934,7 +974,11 @@ try {
             }
             
             .sidebar {
-                display: none;
+                display: none !important;
+            }
+            
+            .sidebar.mobile-open {
+                display: flex !important;
             }
             
             .stats-grid {
@@ -943,10 +987,19 @@ try {
             
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
             
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
             }
         }
 
@@ -956,20 +1009,38 @@ try {
             }
             
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
             
             .filters-form {
                 grid-template-columns: 1fr;
             }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -979,9 +1050,6 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
                     <a href="dashboard.php" class="icon-btn" title="Back to Dashboard">
                         <i class="fas fa-tachometer-alt"></i>
                     </a>
@@ -1009,7 +1077,8 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-                <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" >
@@ -1070,6 +1139,12 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
+                 <li class="menu-item">
+                    <a href="tickets_analysis.php" >
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Tickets Analysis</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1081,12 +1156,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Class Representative Performance Tracking</h1>
-                    <p>Monitor and analyze performance metrics of class representatives for <?php echo $period_label; ?></p>
-                </div>
-            </div>
+            
 
             <!-- Filters -->
             <div class="filters-container">
@@ -1180,18 +1250,7 @@ try {
                     </div>
                 </div>
                 
-                <div class="stat-card info">
-                    <div class="stat-content">
-                        <div class="stat-icon">
-                            <i class="fas fa-chart-line"></i>
-                        </div>
-                        <div class="stat-main">
-                            <div class="stat-number"><?php echo round($overall_stats['avg_reporting_rate'] ?? 0, 1); ?>%</div>
-                            <div class="stat-label">Average Reporting Rate</div>
-                            <div class="stat-sub">Active representatives</div>
-                        </div>
-                    </div>
-                </div>
+               
                 
                 <div class="stat-card warning">
                     <div class="stat-content">
@@ -1211,22 +1270,7 @@ try {
             <div class="content-grid">
                 <!-- Left Column -->
                 <div class="left-column">
-                    <!-- Performance Chart -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Report Submission Trend (12 Months)</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="chart-container">
-                                <canvas id="submissionChart"></canvas>
-                            </div>
-                        </div>
-                    </div>
+                   
 
                     <!-- Individual Performance -->
                     <div class="card">
@@ -1348,42 +1392,7 @@ try {
                         </div>
                     </div>
 
-                    <!-- Department Performance -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Department Performance</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($department_performance)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No department data</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($department_performance as $dept): 
-                                    $reporting_rate = $dept['reporting_rate'] ?? 0;
-                                    $total_reports = $dept['total_reports'] ?? 0;
-                                    $rep_count = $dept['rep_count'] ?? 0;
-                                    
-                                    // Calculate average reports per rep
-                                    $avg_reports = $rep_count > 0 ? round($total_reports / $rep_count, 1) : 0;
-                                ?>
-                                    <div class="member-info">
-                                        <div class="member-avatar" style="background: var(--info);">
-                                            <?php echo $rep_count; ?>
-                                        </div>
-                                        <div class="member-details">
-                                            <div class="member-name"><?php echo htmlspecialchars($dept['department_name']); ?></div>
-                                            <div class="member-role"><?php echo $rep_count; ?> representatives</div>
-                                            <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                <?php echo $total_reports; ?> reports • <?php echo round($reporting_rate, 1); ?>% active
-                                                <br>Avg: <?php echo $avg_reports; ?> reports/rep
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Recent Submissions -->
                     <div class="card">
@@ -1417,61 +1426,41 @@ try {
                         </div>
                     </div>
 
-                    <!-- Performance Metrics -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Performance Metrics</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="metrics-grid">
-                                <div class="metric-item">
-                                    <div class="metric-value"><?php echo $overall_stats['approved_reports'] ?? 0; ?></div>
-                                    <div class="metric-label">Approved Reports</div>
-                                </div>
-                                <div class="metric-item">
-                                    <div class="metric-value"><?php echo $overall_stats['rejected_reports'] ?? 0; ?></div>
-                                    <div class="metric-label">Rejected Reports</div>
-                                </div>
-                                <div class="metric-item">
-                                    <?php
-                                    $avg_reports_per_rep = $overall_stats['total_reps'] > 0 ? 
-                                        round($overall_stats['total_reports'] / $overall_stats['total_reps'], 1) : 0;
-                                    ?>
-                                    <div class="metric-value"><?php echo $avg_reports_per_rep; ?></div>
-                                    <div class="metric-label">Avg Reports/Rep</div>
-                                </div>
-                                <div class="metric-item">
-                                    <?php
-                                    $approval_rate = $overall_stats['total_reports'] > 0 ? 
-                                        round(($overall_stats['approved_reports'] / $overall_stats['total_reports']) * 100, 1) : 0;
-                                    ?>
-                                    <div class="metric-value"><?php echo $approval_rate; ?>%</div>
-                                    <div class="metric-label">Approval Rate</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-    </div>
-
+                    
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        const sidebar = document.getElementById('sidebar');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Submission Trend Chart

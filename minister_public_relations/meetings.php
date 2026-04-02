@@ -10,6 +10,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_public_relat
 
 $user_id = $_SESSION['user_id'];
 
+// Initialize variables to prevent undefined errors
+$unread_messages = 0;
+$pending_tickets = 0;
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -56,8 +60,8 @@ $params = [];
 $count_params = [];
 
 if ($search) {
-    $query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
-    $count_query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
+    $query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
+    $count_query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
     $search_term = "%$search%";
     $params = array_merge($params, [$search_term, $search_term, $search_term]);
     $count_params = array_merge($count_params, [$search_term, $search_term, $search_term]);
@@ -108,7 +112,7 @@ try {
     // Get user's attendance for each meeting
     if ($committee_member_id && !empty($meetings)) {
         $meeting_ids = array_column($meetings, 'id');
-        $placeholders = str_repeat('?,', count($meeting_ids) - 1) . '?';
+        $placeholders = implode(',', array_fill(0, count($meeting_ids), '?'));
         
         $attendance_stmt = $pdo->prepare("
             SELECT meeting_id, attendance_status, check_in_time, notes 
@@ -150,30 +154,33 @@ try {
 // Get statistics for dashboard cards
 try {
     // Total meetings
-    $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings");
+    $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Upcoming meetings
-    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+    $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Today's meetings
-    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURDATE() AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURRENT_DATE AND status IN ('scheduled', 'ongoing')");
+    $todays_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // User's attendance statistics
     if ($committee_member_id) {
         $attendance_stmt = $pdo->prepare("
             SELECT 
                 COUNT(ma.id) as total_invited,
-                SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) as attended,
-                SUM(CASE WHEN ma.attendance_status = 'absent' THEN 1 ELSE 0 END) as absent,
-                SUM(CASE WHEN ma.attendance_status = 'excused' THEN 1 ELSE 0 END) as excused
+                COUNT(CASE WHEN ma.attendance_status = 'present' THEN 1 END) as attended,
+                COUNT(CASE WHEN ma.attendance_status = 'absent' THEN 1 END) as absent,
+                COUNT(CASE WHEN ma.attendance_status = 'excused' THEN 1 END) as excused
             FROM meeting_attendance ma
             JOIN meetings m ON ma.meeting_id = m.id
-            WHERE ma.committee_member_id = ? AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            WHERE ma.committee_member_id = ? AND m.meeting_date >= (CURRENT_DATE - INTERVAL '3 months')
         ");
         $attendance_stmt->execute([$committee_member_id]);
         $attendance_stats = $attendance_stmt->fetch(PDO::FETCH_ASSOC);
         
-        $attendance_rate = $attendance_stats['total_invited'] > 0 
+        $attendance_rate = ($attendance_stats['total_invited'] > 0) 
             ? round(($attendance_stats['attended'] / $attendance_stats['total_invited']) * 100) 
             : 0;
     } else {
@@ -190,7 +197,7 @@ try {
         SELECT m.*, u.full_name as chairperson_name
         FROM meetings m
         LEFT JOIN users u ON m.chairperson_id = u.id
-        WHERE m.meeting_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.meeting_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '7 days')
         AND m.status = 'scheduled'
         ORDER BY m.meeting_date ASC, m.start_time ASC
         LIMIT 5
@@ -224,7 +231,7 @@ try {
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as chairperson_meetings 
         FROM meetings 
-        WHERE chairperson_id = ? AND meeting_date >= CURDATE()
+        WHERE chairperson_id = ? AND meeting_date >= CURRENT_DATE
     ");
     $stmt->execute([$user_id]);
     $chairperson_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['chairperson_meetings'] ?? 0;
@@ -251,17 +258,32 @@ try {
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
 } catch (PDOException $e) {
     $unread_messages = 0;
+    error_log("Unread messages query error: " . $e->getMessage());
+}
+
+// Get pending tickets count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    $pending_tickets = 0;
+    error_log("Pending tickets query error: " . $e->getMessage());
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Meetings - Minister of Public Relations - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-blue: #3B82F6;
@@ -276,6 +298,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -283,22 +306,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #60A5FA;
-            --secondary-blue: #93C5FD;
-            --accent-blue: #3B82F6;
-            --light-blue: #1E3A8A;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -314,21 +323,17 @@ try {
             background: var(--light-gray);
             min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -338,7 +343,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -347,10 +351,16 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -359,7 +369,7 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -367,18 +377,18 @@ try {
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -386,22 +396,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -410,41 +405,33 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -454,50 +441,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -527,9 +549,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -544,11 +564,18 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             margin-bottom: 1.5rem;
         }
@@ -578,7 +605,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -603,17 +630,18 @@ try {
         }
 
         .stat-card.info {
-            border-left-color: var(--primary-blue);
+            border-left-color: var(--info);
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -628,7 +656,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -638,7 +666,7 @@ try {
 
         .stat-card.info .stat-icon {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: var(--info);
         }
 
         .stat-content {
@@ -646,7 +674,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -654,7 +682,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -664,13 +692,16 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
         .alert-info {
             background: #cce7ff;
             color: var(--primary-blue);
-            border-left-color: var(--primary-blue);
+            border-left-color: var(--info);
         }
 
         /* Filters */
@@ -755,6 +786,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -763,6 +796,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -796,6 +832,10 @@ try {
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -815,12 +855,13 @@ try {
             font-size: 0.75rem;
         }
 
-        .table-responsive {
-            overflow-x: auto;
+        .table tbody tr:hover {
+            background: var(--light-blue);
         }
 
         /* Status Badges */
         .status-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -830,37 +871,37 @@ try {
 
         .status-scheduled {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .attendance-present {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .attendance-absent {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .attendance-excused {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         /* Pagination */
@@ -870,6 +911,7 @@ try {
             align-items: center;
             gap: 0.5rem;
             margin-top: 1.5rem;
+            flex-wrap: wrap;
         }
 
         .pagination-btn {
@@ -929,15 +971,15 @@ try {
             flex-shrink: 0;
         }
 
-        .activity-avatar.attendance-present {
+        .activity-avatar.present {
             background: var(--success);
         }
 
-        .activity-avatar.attendance-absent {
+        .activity-avatar.absent {
             background: var(--danger);
         }
 
-        .activity-avatar.attendance-excused {
+        .activity-avatar.excused {
             background: var(--warning);
         }
 
@@ -982,40 +1024,110 @@ try {
             justify-content: space-between;
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .content-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .filter-row {
                 grid-template-columns: 1fr;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1023,31 +1135,63 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .pagination {
+                gap: 0.25rem;
+            }
+
+            .pagination-btn {
+                padding: 0.4rem 0.6rem;
+                font-size: 0.7rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Public Relations & Media</h1>
+                    <h1>Isonga - Meetings & Public Relations</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1057,7 +1201,7 @@ try {
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
@@ -1077,7 +1221,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1089,6 +1236,9 @@ try {
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1109,7 +1259,6 @@ try {
                         <span>Events</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="gallery.php">
                         <i class="fas fa-images"></i>
@@ -1122,8 +1271,8 @@ try {
                         <span>Associations</span>
                     </a>
                 </li>
-                                <li class="menu-item">
-                    <a href="committee_budget_requests.php" >
+                <li class="menu-item">
+                    <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
@@ -1162,27 +1311,15 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <div class="page-header">
-                <h1 class="page-title">Meetings & Public Relations 📢</h1>
-                <p class="page-description">Manage meeting schedules and track your attendance for effective public relations coordination</p>
-            </div>
-
-            <!-- Info Alert -->
-            <div class="alert alert-info">
-                <i class="fas fa-info-circle"></i> 
-                <strong>Public Relations Focus:</strong> As Minister of Public Relations, your meeting attendance helps coordinate media coverage, 
-                announcements, and communication strategies for RPSU activities.
-            </div>
-
-            <!-- Statistics Grid -->
+        <main class="main-content" id="mainContent">
+                    <!-- Statistics Grid -->
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-calendar"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_meetings); ?></div>
                         <div class="stat-label">Total Meetings</div>
                     </div>
                 </div>
@@ -1191,7 +1328,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_meetings); ?></div>
                         <div class="stat-label">Upcoming Meetings</div>
                     </div>
                 </div>
@@ -1200,7 +1337,7 @@ try {
                         <i class="fas fa-calendar-day"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $todays_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($todays_meetings); ?></div>
                         <div class="stat-label">Today's Meetings</div>
                     </div>
                 </div>
@@ -1216,13 +1353,13 @@ try {
             </div>
 
             <!-- Additional Stats -->
-            <div class="stats-grid" style="margin-top: 1rem;">
+            <div class="stats-grid" style="margin-top: 0;">
                 <div class="stat-card info">
                     <div class="stat-icon">
                         <i class="fas fa-user-tie"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $chairperson_meetings; ?></div>
+                        <div class="stat-number"><?php echo number_format($chairperson_meetings); ?></div>
                         <div class="stat-label">Meetings You Chair</div>
                     </div>
                 </div>
@@ -1231,7 +1368,7 @@ try {
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $attendance_stats['attended']; ?></div>
+                        <div class="stat-number"><?php echo number_format($attendance_stats['attended']); ?></div>
                         <div class="stat-label">Meetings Attended</div>
                     </div>
                 </div>
@@ -1240,7 +1377,7 @@ try {
                         <i class="fas fa-user-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $attendance_stats['excused']; ?></div>
+                        <div class="stat-number"><?php echo number_format($attendance_stats['excused']); ?></div>
                         <div class="stat-label">Excused Absences</div>
                     </div>
                 </div>
@@ -1249,7 +1386,7 @@ try {
                         <i class="fas fa-user-times"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $attendance_stats['absent']; ?></div>
+                        <div class="stat-number"><?php echo number_format($attendance_stats['absent']); ?></div>
                         <div class="stat-label">Absences</div>
                     </div>
                 </div>
@@ -1309,7 +1446,7 @@ try {
                     <!-- Meetings Table -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>All RPSU Meetings</h3>
+                            <h3><i class="fas fa-calendar-alt"></i> All RPSU Meetings</h3>
                             <div class="card-header-actions">
                                 <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                                     <i class="fas fa-sync-alt"></i>
@@ -1318,8 +1455,8 @@ try {
                         </div>
                         <div class="card-body">
                             <?php if (empty($meetings)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-times"></i>
                                     <p>No meetings found matching your criteria</p>
                                 </div>
                             <?php else: ?>
@@ -1370,7 +1507,7 @@ try {
                                                                 <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
                                                             <?php endif; ?>
                                                         <?php else: ?>
-                                                            <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
+                                                            <span style="color: var(--dark-gray); font-size: 0.75rem;">Not recorded</span>
                                                         <?php endif; ?>
                                                     </td>
                                                 </tr>
@@ -1420,7 +1557,7 @@ try {
                     <!-- Your Attendance Statistics -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Your Attendance Statistics</h3>
+                            <h3><i class="fas fa-chart-line"></i> Your Attendance Statistics</h3>
                         </div>
                         <div class="card-body">
                             <div style="text-align: center; margin-bottom: 1.5rem;">
@@ -1433,19 +1570,19 @@ try {
                             <div style="display: grid; gap: 1rem;">
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Meetings Attended</span>
-                                    <strong style="color: var(--success);"><?php echo $attendance_stats['attended']; ?></strong>
+                                    <strong style="color: var(--success);"><?php echo number_format($attendance_stats['attended']); ?></strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Absent</span>
-                                    <strong style="color: var(--danger);"><?php echo $attendance_stats['absent']; ?></strong>
+                                    <strong style="color: var(--danger);"><?php echo number_format($attendance_stats['absent']); ?></strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Excused</span>
-                                    <strong style="color: var(--warning);"><?php echo $attendance_stats['excused']; ?></strong>
+                                    <strong style="color: var(--warning);"><?php echo number_format($attendance_stats['excused']); ?></strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Invited</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $attendance_stats['total_invited']; ?></strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($attendance_stats['total_invited']); ?></strong>
                                 </div>
                             </div>
 
@@ -1464,11 +1601,12 @@ try {
                     <!-- Upcoming Important Meetings -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Upcoming This Week</h3>
+                            <h3><i class="fas fa-calendar-week"></i> Upcoming This Week</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($upcoming_important)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state" style="padding: 1rem;">
+                                    <i class="fas fa-calendar-check"></i>
                                     <p>No upcoming meetings this week</p>
                                 </div>
                             <?php else: ?>
@@ -1498,20 +1636,19 @@ try {
                     <!-- Your Recent Attendance -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Your Recent Attendance</h3>
+                            <h3><i class="fas fa-history"></i> Your Recent Attendance</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($user_attendance_history)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                <div class="empty-state" style="padding: 1rem;">
+                                    <i class="fas fa-clipboard-list"></i>
                                     <p>No attendance records found</p>
                                 </div>
                             <?php else: ?>
                                 <ul class="activity-list">
                                     <?php foreach ($user_attendance_history as $attendance): ?>
                                         <li class="activity-item">
-                                            <div class="activity-avatar 
-                                                <?php echo $attendance['attendance_status'] === 'present' ? 'attendance-present' : 
-                                                      ($attendance['attendance_status'] === 'absent' ? 'attendance-absent' : 'attendance-excused'); ?>">
+                                            <div class="activity-avatar <?php echo $attendance['attendance_status']; ?>">
                                                 <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : 
                                                                    ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" 
                                                    style="font-size: 0.8rem;"></i>
@@ -1540,34 +1677,67 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
-
-        // Auto-refresh page every 5 minutes
-        setInterval(() => {
-            console.log('Meetings page auto-refresh triggered');
-        }, 300000);
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
             });
         });
 
@@ -1578,12 +1748,14 @@ try {
             
             meetingRows.forEach(row => {
                 const dateCell = row.cells[1];
-                const meetingDate = dateCell.textContent.trim();
-                
-                // Extract date from the cell content (assuming format like "Nov 16, 2025")
-                if (meetingDate.includes(today.split('-')[1]) && meetingDate.includes(today.split('-')[2])) {
-                    row.style.backgroundColor = 'var(--light-blue)';
-                    row.style.borderLeft = '3px solid var(--primary-blue)';
+                if (dateCell) {
+                    const meetingDateText = dateCell.textContent.trim();
+                    const meetingDate = new Date(meetingDateText);
+                    const todayDate = new Date();
+                    
+                    if (meetingDate.toDateString() === todayDate.toDateString()) {
+                        row.style.backgroundColor = 'var(--light-blue)';
+                    }
                 }
             });
         });

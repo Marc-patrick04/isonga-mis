@@ -10,6 +10,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_public_relat
 
 $user_id = $_SESSION['user_id'];
 
+// Initialize variables to prevent undefined errors
+$unread_messages = 0;
+$pending_tickets = 0;
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -24,8 +28,8 @@ try {
 try {
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'minister_public_relations' OR role_specific IS NULL
-        AND is_active = 1
+        WHERE (role_specific = 'minister_public_relations' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -38,7 +42,7 @@ try {
 // Get submitted reports
 try {
     $stmt = $pdo->prepare("
-        SELECT r.*, rt.name as template_name, rt.report_type,
+        SELECT r.*, rt.name as template_name, rt.report_type as template_report_type,
                u.full_name as reviewer_name
         FROM reports r 
         LEFT JOIN report_templates rt ON r.template_id = rt.id
@@ -57,7 +61,7 @@ try {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action']) && $_POST['action'] === 'create_report') {
         $template_id = $_POST['template_id'] ?? null;
-        $title = $_POST['title'] ?? '';
+        $title = trim($_POST['title'] ?? '');
         $report_type = $_POST['report_type'] ?? 'activity';
         $report_period = $_POST['report_period'] ?? null;
         $activity_date = $_POST['activity_date'] ?? null;
@@ -71,20 +75,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         
-        if ($selected_template) {
+        if ($selected_template && !empty($title)) {
             $content_data = [];
             $template_fields = json_decode($selected_template['fields'], true);
             
             // Collect form data based on template fields
-            foreach ($template_fields['sections'] as $section) {
-                $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                $content_data[$field_name] = $_POST[$field_name] ?? '';
+            if (isset($template_fields['sections']) && is_array($template_fields['sections'])) {
+                foreach ($template_fields['sections'] as $section) {
+                    $field_name = strtolower(str_replace(' ', '_', $section['title']));
+                    $content_data[$field_name] = $_POST[$field_name] ?? '';
+                }
             }
             
             try {
                 $stmt = $pdo->prepare("
-                    INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NOW())
+                    INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ");
                 
                 $stmt->execute([
@@ -116,8 +122,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             
                             if (move_uploaded_file($file_tmp, $file_path)) {
                                 $stmt = $pdo->prepare("
-                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by)
-                                    VALUES (?, ?, ?, ?, ?, ?)
+                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                                 ");
                                 $stmt->execute([
                                     $report_id,
@@ -140,6 +146,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['error_message'] = "Error creating report: " . $e->getMessage();
                 error_log("Report creation error: " . $e->getMessage());
             }
+        } else {
+            $_SESSION['error_message'] = "Please select a template and enter a title for your report.";
         }
     }
 }
@@ -173,19 +181,21 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
             
             // CSV header
             fputcsv($output, ['Public Relations Report Export - ' . $report['title']]);
-            fputcsv($output, []); // Empty row
+            fputcsv($output, []);
             fputcsv($output, ['Template:', $report['template_name']]);
             fputcsv($output, ['Author:', $report['author_name']]);
             fputcsv($output, ['Report Type:', $report['report_type']]);
             fputcsv($output, ['Status:', $report['status']]);
             fputcsv($output, ['Submitted:', $report['submitted_at']]);
-            fputcsv($output, []); // Empty row
+            fputcsv($output, []);
             
             // Report content
             $content = json_decode($report['content'], true);
-            foreach ($content as $key => $value) {
-                $label = ucwords(str_replace('_', ' ', $key));
-                fputcsv($output, [$label . ':', $value]);
+            if (is_array($content)) {
+                foreach ($content as $key => $value) {
+                    $label = ucwords(str_replace('_', ' ', $key));
+                    fputcsv($output, [$label . ':', strip_tags($value)]);
+                }
             }
             
             fclose($output);
@@ -203,15 +213,25 @@ try {
     $stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total_reports,
-            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted_reports,
-            SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_reports,
-            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
-            SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_reports
+            COUNT(CASE WHEN status = 'submitted' THEN 1 END) as submitted_reports,
+            COUNT(CASE WHEN status = 'reviewed' THEN 1 END) as reviewed_reports,
+            COUNT(CASE WHEN status = 'approved' THEN 1 END) as approved_reports,
+            COUNT(CASE WHEN status = 'draft' THEN 1 END) as draft_reports
         FROM reports 
         WHERE user_id = ?
     ");
     $stmt->execute([$user_id]);
     $report_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$report_stats) {
+        $report_stats = [
+            'total_reports' => 0,
+            'submitted_reports' => 0,
+            'reviewed_reports' => 0,
+            'approved_reports' => 0,
+            'draft_reports' => 0
+        ];
+    }
 } catch (PDOException $e) {
     $report_stats = [
         'total_reports' => 0,
@@ -220,6 +240,38 @@ try {
         'approved_reports' => 0,
         'draft_reports' => 0
     ];
+    error_log("Report stats query error: " . $e->getMessage());
+}
+
+// Get unread messages count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $unread_messages = $result['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+    error_log("Unread messages query error: " . $e->getMessage());
+}
+
+// Get pending tickets count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    $pending_tickets = $result['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    $pending_tickets = 0;
+    error_log("Pending tickets query error: " . $e->getMessage());
 }
 
 // Insert public relations-specific templates if they don't exist
@@ -232,72 +284,17 @@ try {
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Media Event Name',
-                        'required' => true,
-                        'description' => 'Name of the media event or press activity'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Event Date',
-                        'required' => true,
-                        'description' => 'Date when the media activity took place'
-                    ],
-                    [
-                        'type' => 'text',
-                        'title' => 'Media Outlets',
-                        'required' => true,
-                        'description' => 'List of media outlets involved'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Media Representatives',
-                        'required' => true,
-                        'description' => 'Number of media representatives present'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Key Messages',
-                        'required' => true,
-                        'description' => 'Key messages communicated to media'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Media Coverage',
-                        'required' => true,
-                        'description' => 'Summary of media coverage received'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Press Materials',
-                        'required' => true,
-                        'description' => 'Press releases and materials distributed'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Media Engagement',
-                        'required' => true,
-                        'description' => 'Level and quality of media engagement'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges Faced',
-                        'required' => false,
-                        'description' => 'Any challenges in media relations'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Media Feedback',
-                        'required' => false,
-                        'description' => 'Feedback received from media representatives'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Recommendations',
-                        'required' => true,
-                        'description' => 'Suggestions for future media relations'
-                    ]
+                    ['type' => 'text', 'title' => 'Media Event Name', 'required' => true, 'description' => 'Name of the media event or press activity'],
+                    ['type' => 'date', 'title' => 'Event Date', 'required' => true, 'description' => 'Date when the media activity took place'],
+                    ['type' => 'text', 'title' => 'Media Outlets', 'required' => true, 'description' => 'List of media outlets involved'],
+                    ['type' => 'number', 'title' => 'Media Representatives', 'required' => true, 'description' => 'Number of media representatives present'],
+                    ['type' => 'textarea', 'title' => 'Key Messages', 'required' => true, 'description' => 'Key messages communicated to media'],
+                    ['type' => 'textarea', 'title' => 'Media Coverage', 'required' => true, 'description' => 'Summary of media coverage received'],
+                    ['type' => 'textarea', 'title' => 'Press Materials', 'required' => true, 'description' => 'Press releases and materials distributed'],
+                    ['type' => 'textarea', 'title' => 'Media Engagement', 'required' => true, 'description' => 'Level and quality of media engagement'],
+                    ['type' => 'textarea', 'title' => 'Challenges Faced', 'required' => false, 'description' => 'Any challenges in media relations'],
+                    ['type' => 'textarea', 'title' => 'Media Feedback', 'required' => false, 'description' => 'Feedback received from media representatives'],
+                    ['type' => 'textarea', 'title' => 'Recommendations', 'required' => true, 'description' => 'Suggestions for future media relations']
                 ]
             ])
         ],
@@ -308,60 +305,15 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'PR Activities Completed',
-                        'required' => true,
-                        'description' => 'List all public relations activities completed during the month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Media Coverage Summary',
-                        'required' => true,
-                        'description' => 'Summary of media coverage and mentions'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Social Media Engagement',
-                        'required' => true,
-                        'description' => 'Social media activities and engagement metrics'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Announcements Published',
-                        'required' => true,
-                        'description' => 'Official announcements and communications'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Stakeholder Engagement',
-                        'required' => true,
-                        'description' => 'Engagement with external stakeholders and partners'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Association Activities',
-                        'required' => true,
-                        'description' => 'Activities with student associations and clubs'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges Faced',
-                        'required' => false,
-                        'description' => 'Public relations challenges and obstacles'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Next Month Plans',
-                        'required' => true,
-                        'description' => 'Planned PR activities for the coming month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Budget Utilization',
-                        'required' => false,
-                        'description' => 'How the PR budget was utilized'
-                    ]
+                    ['type' => 'textarea', 'title' => 'PR Activities Completed', 'required' => true, 'description' => 'List all public relations activities completed during the month'],
+                    ['type' => 'textarea', 'title' => 'Media Coverage Summary', 'required' => true, 'description' => 'Summary of media coverage and mentions'],
+                    ['type' => 'textarea', 'title' => 'Social Media Engagement', 'required' => true, 'description' => 'Social media activities and engagement metrics'],
+                    ['type' => 'textarea', 'title' => 'Announcements Published', 'required' => true, 'description' => 'Official announcements and communications'],
+                    ['type' => 'textarea', 'title' => 'Stakeholder Engagement', 'required' => true, 'description' => 'Engagement with external stakeholders and partners'],
+                    ['type' => 'textarea', 'title' => 'Association Activities', 'required' => true, 'description' => 'Activities with student associations and clubs'],
+                    ['type' => 'textarea', 'title' => 'Challenges Faced', 'required' => false, 'description' => 'Public relations challenges and obstacles'],
+                    ['type' => 'textarea', 'title' => 'Next Month Plans', 'required' => true, 'description' => 'Planned PR activities for the coming month'],
+                    ['type' => 'textarea', 'title' => 'Budget Utilization', 'required' => false, 'description' => 'How the PR budget was utilized']
                 ]
             ])
         ],
@@ -372,66 +324,16 @@ try {
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Campaign Name',
-                        'required' => true,
-                        'description' => 'Name of the social media campaign'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Campaign Period',
-                        'required' => true,
-                        'description' => 'Start and end dates of the campaign'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Platforms Used',
-                        'required' => true,
-                        'description' => 'Social media platforms utilized'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Reach',
-                        'required' => true,
-                        'description' => 'Total reach across all platforms'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Engagement',
-                        'required' => true,
-                        'description' => 'Total engagement (likes, shares, comments)'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Content Strategy',
-                        'required' => true,
-                        'description' => 'Content types and posting strategy'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Key Performance Indicators',
-                        'required' => true,
-                        'description' => 'KPIs and metrics tracked'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Audience Response',
-                        'required' => false,
-                        'description' => 'Audience feedback and response'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Success Stories',
-                        'required' => false,
-                        'description' => 'Notable successes and viral content'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Improvement Areas',
-                        'required' => true,
-                        'description' => 'Areas for improvement in future campaigns'
-                    ]
+                    ['type' => 'text', 'title' => 'Campaign Name', 'required' => true, 'description' => 'Name of the social media campaign'],
+                    ['type' => 'date', 'title' => 'Campaign Period', 'required' => true, 'description' => 'Start and end dates of the campaign'],
+                    ['type' => 'textarea', 'title' => 'Platforms Used', 'required' => true, 'description' => 'Social media platforms utilized'],
+                    ['type' => 'number', 'title' => 'Reach', 'required' => true, 'description' => 'Total reach across all platforms'],
+                    ['type' => 'number', 'title' => 'Engagement', 'required' => true, 'description' => 'Total engagement (likes, shares, comments)'],
+                    ['type' => 'textarea', 'title' => 'Content Strategy', 'required' => true, 'description' => 'Content types and posting strategy'],
+                    ['type' => 'textarea', 'title' => 'Key Performance Indicators', 'required' => true, 'description' => 'KPIs and metrics tracked'],
+                    ['type' => 'textarea', 'title' => 'Audience Response', 'required' => false, 'description' => 'Audience feedback and response'],
+                    ['type' => 'textarea', 'title' => 'Success Stories', 'required' => false, 'description' => 'Notable successes and viral content'],
+                    ['type' => 'textarea', 'title' => 'Improvement Areas', 'required' => true, 'description' => 'Areas for improvement in future campaigns']
                 ]
             ])
         ],
@@ -442,60 +344,15 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Association Overview',
-                        'required' => true,
-                        'description' => 'Summary of engagement with student associations'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Religious Groups Activities',
-                        'required' => true,
-                        'description' => 'Activities with religious associations (Catholic, Adventist, etc.)'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Cultural Associations',
-                        'required' => true,
-                        'description' => 'Engagement with cultural and special interest groups'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Collaboration Events',
-                        'required' => true,
-                        'description' => 'Joint events and collaborative activities'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Association Support',
-                        'required' => true,
-                        'description' => 'Support provided to associations'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Member Participation',
-                        'required' => true,
-                        'description' => 'Student participation in association activities'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Success Stories',
-                        'required' => false,
-                        'description' => 'Notable successes in association engagement'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges',
-                        'required' => false,
-                        'description' => 'Challenges in association coordination'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Future Collaboration Plans',
-                        'required' => true,
-                        'description' => 'Plans for future association engagement'
-                    ]
+                    ['type' => 'textarea', 'title' => 'Association Overview', 'required' => true, 'description' => 'Summary of engagement with student associations'],
+                    ['type' => 'textarea', 'title' => 'Religious Groups Activities', 'required' => true, 'description' => 'Activities with religious associations (Catholic, Adventist, etc.)'],
+                    ['type' => 'textarea', 'title' => 'Cultural Associations', 'required' => true, 'description' => 'Engagement with cultural and special interest groups'],
+                    ['type' => 'textarea', 'title' => 'Collaboration Events', 'required' => true, 'description' => 'Joint events and collaborative activities'],
+                    ['type' => 'textarea', 'title' => 'Association Support', 'required' => true, 'description' => 'Support provided to associations'],
+                    ['type' => 'textarea', 'title' => 'Member Participation', 'required' => true, 'description' => 'Student participation in association activities'],
+                    ['type' => 'textarea', 'title' => 'Success Stories', 'required' => false, 'description' => 'Notable successes in association engagement'],
+                    ['type' => 'textarea', 'title' => 'Challenges', 'required' => false, 'description' => 'Challenges in association coordination'],
+                    ['type' => 'textarea', 'title' => 'Future Collaboration Plans', 'required' => true, 'description' => 'Plans for future association engagement']
                 ]
             ])
         ],
@@ -506,60 +363,15 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Publications Overview',
-                        'required' => true,
-                        'description' => 'Overall summary of RPSU publications'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Announcements Published',
-                        'required' => true,
-                        'description' => 'List of official announcements made'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'News Articles',
-                        'required' => true,
-                        'description' => 'News articles published about RPSU activities'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Event Publicity',
-                        'required' => true,
-                        'description' => 'Publicity materials for RPSU events'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Distribution Channels',
-                        'required' => true,
-                        'description' => 'Channels used for publication distribution'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Audience Reach',
-                        'required' => true,
-                        'description' => 'Reach and impact of publications'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Feedback Received',
-                        'required' => false,
-                        'description' => 'Feedback on publications and announcements'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Publication Challenges',
-                        'required' => false,
-                        'description' => 'Challenges in publication and distribution'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Future Publication Plans',
-                        'required' => true,
-                        'description' => 'Plans for future publications'
-                    ]
+                    ['type' => 'textarea', 'title' => 'Publications Overview', 'required' => true, 'description' => 'Overall summary of RPSU publications'],
+                    ['type' => 'textarea', 'title' => 'Announcements Published', 'required' => true, 'description' => 'List of official announcements made'],
+                    ['type' => 'textarea', 'title' => 'News Articles', 'required' => true, 'description' => 'News articles published about RPSU activities'],
+                    ['type' => 'textarea', 'title' => 'Event Publicity', 'required' => true, 'description' => 'Publicity materials for RPSU events'],
+                    ['type' => 'textarea', 'title' => 'Distribution Channels', 'required' => true, 'description' => 'Channels used for publication distribution'],
+                    ['type' => 'textarea', 'title' => 'Audience Reach', 'required' => true, 'description' => 'Reach and impact of publications'],
+                    ['type' => 'textarea', 'title' => 'Feedback Received', 'required' => false, 'description' => 'Feedback on publications and announcements'],
+                    ['type' => 'textarea', 'title' => 'Publication Challenges', 'required' => false, 'description' => 'Challenges in publication and distribution'],
+                    ['type' => 'textarea', 'title' => 'Future Publication Plans', 'required' => true, 'description' => 'Plans for future publications']
                 ]
             ])
         ],
@@ -570,54 +382,14 @@ try {
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Partnership Overview',
-                        'required' => true,
-                        'description' => 'Summary of external partnerships and collaborations'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Stakeholder Meetings',
-                        'required' => true,
-                        'description' => 'Meetings with external stakeholders and partners'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Collaboration Activities',
-                        'required' => true,
-                        'description' => 'Joint activities with external organizations'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Partnership Benefits',
-                        'required' => true,
-                        'description' => 'Benefits gained from partnerships'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Stakeholder Feedback',
-                        'required' => false,
-                        'description' => 'Feedback from external stakeholders'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Relationship Building',
-                        'required' => true,
-                        'description' => 'Efforts in building and maintaining relationships'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges',
-                        'required' => false,
-                        'description' => 'Challenges in partnership management'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Future Partnership Opportunities',
-                        'required' => true,
-                        'description' => 'Identified opportunities for future partnerships'
-                    ]
+                    ['type' => 'textarea', 'title' => 'Partnership Overview', 'required' => true, 'description' => 'Summary of external partnerships and collaborations'],
+                    ['type' => 'textarea', 'title' => 'Stakeholder Meetings', 'required' => true, 'description' => 'Meetings with external stakeholders and partners'],
+                    ['type' => 'textarea', 'title' => 'Collaboration Activities', 'required' => true, 'description' => 'Joint activities with external organizations'],
+                    ['type' => 'textarea', 'title' => 'Partnership Benefits', 'required' => true, 'description' => 'Benefits gained from partnerships'],
+                    ['type' => 'textarea', 'title' => 'Stakeholder Feedback', 'required' => false, 'description' => 'Feedback from external stakeholders'],
+                    ['type' => 'textarea', 'title' => 'Relationship Building', 'required' => true, 'description' => 'Efforts in building and maintaining relationships'],
+                    ['type' => 'textarea', 'title' => 'Challenges', 'required' => false, 'description' => 'Challenges in partnership management'],
+                    ['type' => 'textarea', 'title' => 'Future Partnership Opportunities', 'required' => true, 'description' => 'Identified opportunities for future partnerships']
                 ]
             ])
         ]
@@ -629,8 +401,8 @@ try {
         
         if (!$check_stmt->fetch()) {
             $insert_stmt = $pdo->prepare("
-                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, NOW())
+                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?::jsonb, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $insert_stmt->execute([
                 $template_data['name'],
@@ -645,8 +417,8 @@ try {
     // Refresh templates list
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'minister_public_relations' OR role_specific IS NULL
-        AND is_active = 1
+        WHERE (role_specific = 'minister_public_relations' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -656,15 +428,16 @@ try {
     error_log("Public Relations templates setup error: " . $e->getMessage());
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Public Relations Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-blue: #3B82F6;
@@ -679,6 +452,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -686,22 +460,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #60A5FA;
-            --secondary-blue: #93C5FD;
-            --accent-blue: #3B82F6;
-            --light-blue: #1E3A8A;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -717,21 +477,17 @@ try {
             background: var(--light-gray);
             min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -741,7 +497,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -750,10 +505,16 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -762,7 +523,7 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -770,18 +531,18 @@ try {
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -789,22 +550,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -813,41 +559,33 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -857,50 +595,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -930,9 +703,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -947,11 +718,18 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Dashboard Header */
         .dashboard-header {
             margin-bottom: 1.5rem;
         }
@@ -981,7 +759,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -1006,13 +784,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -1027,7 +806,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -1040,7 +819,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -1048,7 +827,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -1059,6 +838,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -1067,6 +848,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -1102,11 +886,13 @@ try {
         /* Tabs */
         .tabs {
             display: flex;
+            flex-wrap: wrap;
             background: var(--white);
             border-radius: var(--border-radius);
             padding: 0.5rem;
             margin-bottom: 1.5rem;
             box-shadow: var(--shadow-sm);
+            gap: 0.5rem;
         }
 
         .tab {
@@ -1120,10 +906,11 @@ try {
             cursor: pointer;
             transition: var(--transition);
             text-align: center;
+            min-width: 120px;
         }
 
         .tab.active {
-            background: var(--primary-blue);
+            background: var(--gradient-primary);
             color: white;
         }
 
@@ -1133,6 +920,7 @@ try {
 
         .tab-content.active {
             display: block;
+            animation: fadeIn 0.3s ease-in-out;
         }
 
         /* Template Grid */
@@ -1229,7 +1017,7 @@ try {
         .form-label {
             display: block;
             margin-bottom: 0.5rem;
-            font-weight: 500;
+            font-weight: 600;
             color: var(--text-dark);
             font-size: 0.85rem;
         }
@@ -1251,6 +1039,10 @@ try {
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
+        textarea.form-control {
+            resize: vertical;
+        }
+
         .form-select {
             appearance: none;
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
@@ -1266,12 +1058,16 @@ try {
             margin-top: 0.25rem;
         }
 
+        .required {
+            color: var(--danger);
+        }
+
         /* Buttons */
         .btn {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.2rem;
             border: none;
             border-radius: var(--border-radius);
             font-weight: 500;
@@ -1302,7 +1098,7 @@ try {
         }
 
         .btn-sm {
-            padding: 0.5rem 1rem;
+            padding: 0.4rem 0.8rem;
             font-size: 0.75rem;
         }
 
@@ -1318,6 +1114,7 @@ try {
 
         .file-upload:hover {
             border-color: var(--primary-blue);
+            background: var(--light-blue);
         }
 
         .file-upload i {
@@ -1344,6 +1141,10 @@ try {
             margin-bottom: 0.5rem;
         }
 
+        .file-name {
+            font-size: 0.8rem;
+        }
+
         .file-remove {
             background: none;
             border: none;
@@ -1353,6 +1154,10 @@ try {
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -1372,12 +1177,13 @@ try {
             font-size: 0.75rem;
         }
 
-        .table-responsive {
-            overflow-x: auto;
+        .table tbody tr:hover {
+            background: var(--light-blue);
         }
 
         /* Status Badges */
         .status-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -1397,7 +1203,7 @@ try {
 
         .status-reviewed {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-approved {
@@ -1416,6 +1222,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1441,36 +1250,174 @@ try {
             color: var(--dark-gray);
         }
 
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: var(--white);
+        }
+
+        .modal-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            color: var(--dark-gray);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .template-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
+
+            .stat-number {
+                font-size: 1.1rem;
             }
-            
-            .user-details {
-                display: none;
+
+            .tabs {
+                flex-direction: column;
+            }
+
+            .tab {
+                width: 100%;
             }
         }
 
@@ -1478,42 +1425,68 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .tabs {
-                flex-direction: column;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                width: 95%;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Public Relations Reports</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
@@ -1524,7 +1497,7 @@ try {
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-                    <i class="fas fa-sign-out-alt"></i>
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1533,7 +1506,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1545,6 +1521,9 @@ try {
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1565,7 +1544,6 @@ try {
                         <span>Events</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="gallery.php">
                         <i class="fas fa-images"></i>
@@ -1578,7 +1556,12 @@ try {
                         <span>Associations</span>
                     </a>
                 </li>
-                
+                <li class="menu-item">
+                    <a href="committee_budget_requests.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="reports.php" class="active">
                         <i class="fas fa-file-alt"></i>
@@ -1598,6 +1581,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1610,25 +1596,20 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Public Relations Reports & Analytics</h1>
-                    <p>Create, manage, and export public relations reports using professional templates</p>
-                </div>
-            </div>
+        <main class="main-content" id="mainContent">
+            
 
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1640,7 +1621,7 @@ try {
                         <i class="fas fa-file-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['total_reports']; ?></div>
+                        <div class="stat-number"><?php echo number_format($report_stats['total_reports']); ?></div>
                         <div class="stat-label">Total Reports</div>
                     </div>
                 </div>
@@ -1649,7 +1630,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['submitted_reports']; ?></div>
+                        <div class="stat-number"><?php echo number_format($report_stats['submitted_reports']); ?></div>
                         <div class="stat-label">Submitted</div>
                     </div>
                 </div>
@@ -1658,7 +1639,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['approved_reports']; ?></div>
+                        <div class="stat-number"><?php echo number_format($report_stats['approved_reports']); ?></div>
                         <div class="stat-label">Approved</div>
                     </div>
                 </div>
@@ -1667,7 +1648,7 @@ try {
                         <i class="fas fa-clipboard-list"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo count($templates); ?></div>
+                        <div class="stat-number"><?php echo number_format(count($templates)); ?></div>
                         <div class="stat-label">Templates</div>
                     </div>
                 </div>
@@ -1683,7 +1664,12 @@ try {
             <div class="tab-content active" id="create-tab">
                 <div class="card">
                     <div class="card-header">
-                        <h3>Select Public Relations Report Template</h3>
+                        <h3><i class="fas fa-file-alt"></i> Select Public Relations Report Template</h3>
+                        <div class="card-header-actions">
+                            <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <?php if (empty($templates)): ?>
@@ -1716,8 +1702,9 @@ try {
                                 <input type="hidden" name="template_id" id="selectedTemplateId">
                                 
                                 <div class="form-group">
-                                    <label class="form-label" for="title">Report Title *</label>
+                                    <label class="form-label" for="title">Report Title <span class="required">*</span></label>
                                     <input type="text" class="form-control" id="title" name="title" required>
+                                    <div class="form-text">Give your report a descriptive title</div>
                                 </div>
 
                                 <div class="form-group">
@@ -1732,11 +1719,13 @@ try {
                                 <div class="form-group">
                                     <label class="form-label" for="report_period">Report Period</label>
                                     <input type="month" class="form-control" id="report_period" name="report_period">
+                                    <div class="form-text">For monthly reports, select the reporting period</div>
                                 </div>
 
                                 <div class="form-group">
                                     <label class="form-label" for="activity_date">Activity Date</label>
                                     <input type="date" class="form-control" id="activity_date" name="activity_date">
+                                    <div class="form-text">For activity reports, select the date of the activity</div>
                                 </div>
 
                                 <div id="templateFields">
@@ -1772,7 +1761,7 @@ try {
             <div class="tab-content" id="submitted-tab">
                 <div class="card">
                     <div class="card-header">
-                        <h3>Submitted Public Relations Reports</h3>
+                        <h3><i class="fas fa-list"></i> Submitted Public Relations Reports</h3>
                         <div class="card-header-actions">
                             <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                                 <i class="fas fa-sync-alt"></i>
@@ -1820,7 +1809,7 @@ try {
                                                 </td>
                                                 <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td>
                                                 <td>
-                                                    <div style="display: flex; gap: 0.25rem;">
+                                                    <div style="display: flex; gap: 0.5rem;">
                                                         <a href="reports.php?export=1&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Export">
                                                             <i class="fas fa-download"></i>
                                                         </a>
@@ -1842,34 +1831,72 @@ try {
     </div>
 
     <!-- Report View Modal -->
-    <div id="reportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-        <div style="background: var(--white); border-radius: var(--border-radius); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: between; align-items: center;">
-                <h3 id="modalTitle">Public Relations Report Details</h3>
-                <button onclick="closeModal()" style="background: none; border: none; font-size: 1.25rem; color: var(--dark-gray); cursor: pointer;">&times;</button>
+    <div class="modal" id="reportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modalTitle">Public Relations Report Details</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
             </div>
-            <div style="padding: 1.5rem;" id="modalContent">
+            <div class="modal-body" id="modalContent">
                 <!-- Content will be loaded here -->
             </div>
         </div>
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab functionality
@@ -1901,20 +1928,16 @@ try {
 
         // Template selection function
         function selectTemplate(templateId) {
-            // Update UI
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
             });
             document.querySelector(`[data-template-id="${templateId}"]`).classList.add('selected');
             
-            // Show form
             document.getElementById('reportForm').style.display = 'block';
             document.getElementById('selectedTemplateId').value = templateId;
             
-            // Scroll to form
             document.getElementById('reportForm').scrollIntoView({ behavior: 'smooth' });
             
-            // Load template fields
             loadTemplateFields(templateId);
         }
 
@@ -1936,10 +1959,10 @@ try {
                         fieldGroup.className = 'form-group';
                         
                         let fieldHtml = `
-                            <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '*' : ''}</label>
+                            <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '<span class="required">*</span>' : ''}</label>
                         `;
                         
-                        if (section.type === 'textarea' || section.type === 'richtext') {
+                        if (section.type === 'textarea') {
                             fieldHtml += `
                                 <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
                                           ${section.required ? 'required' : ''} 
@@ -1991,7 +2014,7 @@ try {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 fileItem.innerHTML = `
-                    <span class="file-name">${file.name}</span>
+                    <span class="file-name"><i class="fas fa-file"></i> ${escapeHtml(file.name)}</span>
                     <button type="button" class="file-remove" onclick="removeFile(this)">
                         <i class="fas fa-times"></i>
                     </button>
@@ -2013,28 +2036,34 @@ try {
             document.getElementById('reportForm').style.display = 'none';
             document.getElementById('reportForm').reset();
             document.getElementById('fileList').innerHTML = '';
+            document.getElementById('templateFields').innerHTML = '';
         }
 
         // View report in modal
         async function viewReport(reportId) {
+            const modal = document.getElementById('reportModal');
+            const content = document.getElementById('modalContent');
+            modal.classList.add('show');
+            content.innerHTML = '<p style="text-align: center;"><i class="fas fa-spinner fa-spin"></i> Loading report details...</p>';
+            
             try {
                 const response = await fetch(`../api/get_report.php?id=${reportId}`);
                 const report = await response.json();
                 
                 document.getElementById('modalTitle').textContent = report.title;
                 
-                let content = `
+                let contentHtml = `
                     <div class="form-group">
                         <label class="form-label">Template</label>
-                        <div>${report.template_name || 'Custom'}</div>
+                        <div>${escapeHtml(report.template_name || 'Custom')}</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Report Type</label>
-                        <div>${report.report_type}</div>
+                        <div>${escapeHtml(report.report_type)}</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Status</label>
-                        <span class="status-badge status-${report.status}">${report.status}</span>
+                        <span class="status-badge status-${report.status}">${escapeHtml(report.status)}</span>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Submitted</label>
@@ -2047,26 +2076,25 @@ try {
                     Object.keys(reportContent).forEach(key => {
                         if (reportContent[key]) {
                             const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            content += `
+                            contentHtml += `
                                 <div class="form-group">
-                                    <label class="form-label">${label}</label>
-                                    <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${reportContent[key]}</div>
+                                    <label class="form-label">${escapeHtml(label)}</label>
+                                    <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${escapeHtml(reportContent[key])}</div>
                                 </div>
                             `;
                         }
                     });
                 }
                 
-                document.getElementById('modalContent').innerHTML = content;
-                document.getElementById('reportModal').style.display = 'flex';
+                content.innerHTML = contentHtml;
             } catch (error) {
                 console.error('Error loading report:', error);
-                alert('Error loading report details');
+                content.innerHTML = '<div class="alert alert-danger">Error loading report details. Please try again.</div>';
             }
         }
 
         function closeModal() {
-            document.getElementById('reportModal').style.display = 'none';
+            document.getElementById('reportModal').classList.remove('show');
         }
 
         // Close modal when clicking outside
@@ -2074,6 +2102,31 @@ try {
             if (e.target === this) {
                 closeModal();
             }
+        });
+
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Auto-hide success messages after 5 seconds
+        setTimeout(() => {
+            const alerts = document.querySelectorAll('.alert-success');
+            alerts.forEach(alert => {
+                alert.style.display = 'none';
+            });
+        }, 5000);
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
         });
     </script>
 </body>

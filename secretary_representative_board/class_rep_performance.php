@@ -1231,9 +1231,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1242,13 +1240,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($secretary_name, 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($secretary_name); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1353,14 +1345,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Class Representative Performance Tracking</h1>
-                    <p>Monitor and analyze performance metrics of class representatives for <?php echo $period_label; ?></p>
-                </div>
-            </div>
-
-            <!-- Filters -->
+                        <!-- Filters -->
             <div class="filters-container">
                 <div class="filters-header">
                     <h3>Filter Performance Data</h3>
@@ -1452,18 +1437,7 @@ try {
                     </div>
                 </div>
                 
-                <div class="stat-card info">
-                    <div class="stat-content">
-                        <div class="stat-icon">
-                            <i class="fas fa-chart-line"></i>
-                        </div>
-                        <div class="stat-main">
-                            <div class="stat-number"><?php echo round($overall_stats['avg_reporting_rate'] ?? 0, 1); ?>%</div>
-                            <div class="stat-label">Average Reporting Rate</div>
-                            <div class="stat-sub">Active representatives</div>
-                        </div>
-                    </div>
-                </div>
+                
                 
                 <div class="stat-card warning">
                     <div class="stat-content">
@@ -1621,133 +1595,19 @@ try {
                         </div>
                     </div>
 
-                    <!-- Department Performance -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Department Performance</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($department_performance)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-building"></i>
-                                    <p>No department data</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($department_performance as $dept): 
-                                    $reporting_rate = $dept['reporting_rate'] ?? 0;
-                                    $total_reports = $dept['total_reports'] ?? 0;
-                                    $rep_count = $dept['rep_count'] ?? 0;
-                                    
-                                    // Calculate average reports per rep
-                                    $avg_reports = $rep_count > 0 ? round($total_reports / $rep_count, 1) : 0;
-                                ?>
-                                    <div class="member-info">
-                                        <div class="member-avatar" style="background: var(--info);">
-                                            <?php echo $rep_count; ?>
-                                        </div>
-                                        <div class="member-details">
-                                            <div class="member-name"><?php echo htmlspecialchars($dept['department_name']); ?></div>
-                                            <div class="member-role"><?php echo $rep_count; ?> representatives</div>
-                                            <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                <?php echo $total_reports; ?> reports • <?php echo round($reporting_rate, 1); ?>% active
-                                                <br>Avg: <?php echo $avg_reports; ?> reports/rep
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Recent Submissions -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Report Submissions</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_submissions)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-history"></i>
-                                    <p>No recent submissions</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($recent_submissions as $submission): ?>
-                                    <div class="member-info">
-                                        <div class="member-avatar">
-                                            <?php echo strtoupper(substr($submission['full_name'], 0, 1)); ?>
-                                        </div>
-                                        <div class="member-details">
-                                            <div class="member-name"><?php echo htmlspecialchars($submission['full_name']); ?></div>
-                                            <div class="member-role"><?php echo htmlspecialchars($submission['title']); ?></div>
-                                            <div style="font-size: 0.7rem; margin-top: 0.25rem;">
-                                                <span style="color: var(--dark-gray);"><?php echo date('M j, g:i A', strtotime($submission['created_at'])); ?></span>
-                                                <span class="performance-rating" style="background: var(--<?php echo $submission['status_class']; ?>); color: white; margin-left: 0.5rem; padding: 0.2rem 0.4rem;">
-                                                    <?php echo ucfirst($submission['status']); ?>
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
-                    <!-- Performance Metrics -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Performance Metrics</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="metrics-grid">
-                                <div class="metric-item">
-                                    <div class="metric-value"><?php echo number_format($overall_stats['approved_reports'] ?? 0); ?></div>
-                                    <div class="metric-label">Approved Reports</div>
-                                </div>
-                                <div class="metric-item">
-                                    <div class="metric-value"><?php echo number_format($overall_stats['rejected_reports'] ?? 0); ?></div>
-                                    <div class="metric-label">Rejected Reports</div>
-                                </div>
-                                <div class="metric-item">
-                                    <?php
-                                    $avg_reports_per_rep = $overall_stats['total_reps'] > 0 ? 
-                                        round($overall_stats['total_reports'] / $overall_stats['total_reps'], 1) : 0;
-                                    ?>
-                                    <div class="metric-value"><?php echo $avg_reports_per_rep; ?></div>
-                                    <div class="metric-label">Avg Reports/Rep</div>
-                                </div>
-                                <div class="metric-item">
-                                    <?php
-                                    $approval_rate = $overall_stats['total_reports'] > 0 ? 
-                                        round(($overall_stats['approved_reports'] / $overall_stats['total_reports']) * 100, 1) : 0;
-                                    ?>
-                                    <div class="metric-value"><?php echo $approval_rate; ?>%</div>
-                                    <div class="metric-label">Approval Rate</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    
                 </div>
             </div>
         </main>
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

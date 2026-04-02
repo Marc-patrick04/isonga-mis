@@ -20,6 +20,20 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get unread messages count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Get available templates for Arbitration Advisor
 try {
     $stmt = $pdo->prepare("
@@ -59,7 +73,7 @@ try {
     error_log("Team members query error: " . $e->getMessage());
 }
 
-// Get submitted reports (both individual and team reports)
+// Get submitted reports
 try {
     $stmt = $pdo->prepare("
         SELECT r.*, rt.name as template_name, rt.report_type,
@@ -133,7 +147,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $is_team_report = isset($_POST['is_team_report']) ? 1 : 0;
         $team_role = $_POST['team_role'] ?? 'combined';
         
-        // Get template to validate fields
         $selected_template = null;
         foreach ($templates as $template) {
             if ($template['id'] == $template_id) {
@@ -146,7 +159,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $content_data = [];
             $template_fields = json_decode($selected_template['fields'], true);
             
-            // Collect form data based on template fields
             foreach ($template_fields['sections'] as $section) {
                 $field_name = strtolower(str_replace(' ', '_', $section['title']));
                 $content_data[$field_name] = $_POST[$field_name] ?? '';
@@ -154,13 +166,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             try {
                 if ($is_team_report) {
-                    // Start transaction for team report
                     $pdo->beginTransaction();
                     
-                    // Create main team report
+                    // PostgreSQL uses CURRENT_TIMESTAMP instead of NOW()
                     $stmt = $pdo->prepare("
                         INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, is_team_report, team_role, submitted_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, NOW())
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, CURRENT_TIMESTAMP)
                     ");
                     
                     $stmt->execute([
@@ -176,7 +187,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     $report_id = $pdo->lastInsertId();
                     
-                    // Create report sections for team members if not combined report
                     if ($team_role !== 'combined') {
                         $sections = [];
                         foreach ($team_members as $member) {
@@ -192,7 +202,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                         }
                         
-                        // Update assigned sections
                         $stmt = $pdo->prepare("UPDATE reports SET assigned_sections = ? WHERE id = ?");
                         $stmt->execute([json_encode($sections), $report_id]);
                     }
@@ -201,10 +210,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Team report created successfully! Arbitration committee members can now collaborate.";
                     
                 } else {
-                    // Create individual report
                     $stmt = $pdo->prepare("
                         INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NOW())
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP)
                     ");
                     
                     $stmt->execute([
@@ -221,7 +229,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Individual report submitted successfully!";
                 }
                 
-                // Handle file uploads if any
+                // Handle file uploads
                 if (!empty($_FILES['report_files']['name'][0])) {
                     $upload_dir = "../assets/uploads/reports/";
                     if (!is_dir($upload_dir)) {
@@ -272,7 +280,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $report_id = $_POST['report_id'];
         
         try {
-            $stmt = $pdo->prepare("UPDATE reports SET status = 'submitted', submitted_at = NOW() WHERE id = ?");
+            // PostgreSQL uses CURRENT_TIMESTAMP instead of NOW()
+            $stmt = $pdo->prepare("UPDATE reports SET status = 'submitted', submitted_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$report_id]);
             $_SESSION['success_message'] = "Team report submitted successfully!";
             header("Location: reports.php");
@@ -288,7 +297,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $content = $_POST['content'] ?? '';
         
         try {
-            $stmt = $pdo->prepare("UPDATE report_sections SET content = ?, status = 'completed', updated_at = NOW() WHERE id = ?");
+            // PostgreSQL uses CURRENT_TIMESTAMP instead of NOW()
+            $stmt = $pdo->prepare("UPDATE report_sections SET content = ?, status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$content, $section_id]);
             $_SESSION['success_message'] = "Section saved successfully!";
             header("Location: reports.php?action=edit_section&id=" . $section_id);
@@ -305,9 +315,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $review_status = $_POST['review_status'] ?? 'reviewed';
         
         try {
+            // PostgreSQL uses CURRENT_TIMESTAMP instead of NOW()
             $stmt = $pdo->prepare("
                 UPDATE reports 
-                SET status = ?, review_comments = ?, reviewed_by = ?, reviewed_at = NOW(), advisor_reviewer = ?
+                SET status = ?, review_comments = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, advisor_reviewer = ?
                 WHERE id = ?
             ");
             $stmt->execute([
@@ -343,7 +354,6 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
         $report = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($report) {
-            // Get team sections if team report
             $team_sections = [];
             if ($report['is_team_report']) {
                 $stmt = $pdo->prepare("
@@ -357,36 +367,32 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
                 $team_sections = $stmt->fetchAll(PDO::FETCH_ASSOC);
             }
             
-            // Generate CSV export
             header('Content-Type: text/csv');
             header('Content-Disposition: attachment; filename="arbitration_report_' . $report_id . '_' . date('Y-m-d') . '.csv"');
             
             $output = fopen('php://output', 'w');
             
-            // CSV header
             fputcsv($output, ['Arbitration Committee Report - ' . $report['title']]);
-            fputcsv($output, []); // Empty row
+            fputcsv($output, []);
             fputcsv($output, ['Template:', $report['template_name']]);
             fputcsv($output, ['Author:', $report['author_name'] . ' (' . $report['author_role'] . ')']);
             fputcsv($output, ['Report Type:', $report['report_type']]);
             fputcsv($output, ['Team Report:', $report['is_team_report'] ? 'Yes' : 'No']);
             fputcsv($output, ['Status:', $report['status']]);
             fputcsv($output, ['Submitted:', $report['submitted_at']]);
-            fputcsv($output, []); // Empty row
+            fputcsv($output, []);
             
-            // Main report content
             $content = json_decode($report['content'], true);
             foreach ($content as $key => $value) {
                 $label = ucwords(str_replace('_', ' ', $key));
                 fputcsv($output, [$label . ':', $value]);
             }
             
-            // Team sections
             if (!empty($team_sections)) {
-                fputcsv($output, []); // Empty row
+                fputcsv($output, []);
                 fputcsv($output, ['ARBITRATION COMMITTEE SECTIONS']);
                 foreach ($team_sections as $section) {
-                    fputcsv($output, []); // Empty row
+                    fputcsv($output, []);
                     fputcsv($output, [$section['section_title'] . ' - ' . $section['assigned_name']]);
                     fputcsv($output, ['Content:', $section['content']]);
                     fputcsv($output, ['Status:', $section['status']]);
@@ -452,253 +458,7 @@ try {
     ];
 }
 
-// Insert advisor specific templates if they don't exist
-try {
-    $advisor_templates = [
-        [
-            'name' => 'Monthly Legal Advisory Report',
-            'description' => 'Monthly report on legal guidance, policy compliance, and complex case consultation',
-            'role_specific' => 'advisor_arbitration',
-            'report_type' => 'monthly',
-            'fields' => json_encode([
-                'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Legal Guidance Provided',
-                        'required' => true,
-                        'description' => 'Summary of legal guidance provided to arbitration committee'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Policy Compliance Review',
-                        'required' => true,
-                        'description' => 'Review of arbitration processes for policy compliance'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Complex Case Consultation',
-                        'required' => true,
-                        'description' => 'Consultation provided on complex arbitration cases'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Legal Research and Analysis',
-                        'required' => true,
-                        'description' => 'Legal research conducted and analysis provided'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Compliance Issues Identified',
-                        'required' => false,
-                        'description' => 'Any compliance issues identified and recommendations'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Training and Development',
-                        'required' => true,
-                        'description' => 'Training provided to committee members on legal aspects'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Next Month Focus Areas',
-                        'required' => true,
-                        'description' => 'Legal areas to focus on in the coming month'
-                    ]
-                ]
-            ])
-        ],
-        [
-            'name' => 'Case Legal Review Report',
-            'description' => 'Detailed legal review and analysis of specific arbitration cases',
-            'role_specific' => 'advisor_arbitration',
-            'report_type' => 'activity',
-            'fields' => json_encode([
-                'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Case Number',
-                        'required' => true,
-                        'description' => 'Official case reference number'
-                    ],
-                    [
-                        'type' => 'text',
-                        'title' => 'Case Title',
-                        'required' => true,
-                        'description' => 'Title of the arbitration case'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Consultation Date',
-                        'required' => true,
-                        'description' => 'Date when consultation was provided'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Case Legal Issues',
-                        'required' => true,
-                        'description' => 'Legal issues identified in the case'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Legal Analysis',
-                        'required' => true,
-                        'description' => 'Detailed legal analysis of the case'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Recommendations Provided',
-                        'required' => true,
-                        'description' => 'Legal recommendations provided to committee'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Potential Legal Risks',
-                        'required' => false,
-                        'description' => 'Potential legal risks identified'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Follow-up Actions',
-                        'required' => true,
-                        'description' => 'Recommended follow-up legal actions'
-                    ]
-                ]
-            ])
-        ],
-        [
-            'name' => 'Policy Compliance Report',
-            'description' => 'Report on RPSU arbitration policy compliance and recommendations',
-            'role_specific' => 'advisor_arbitration',
-            'report_type' => 'monthly',
-            'fields' => json_encode([
-                'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Policy Review Conducted',
-                        'required' => true,
-                        'description' => 'Policies reviewed during the period'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Compliance Assessment',
-                        'required' => true,
-                        'description' => 'Assessment of current compliance status'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Compliance Issues Found',
-                        'required' => false,
-                        'description' => 'Any compliance issues identified'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Corrective Actions Recommended',
-                        'required' => true,
-                        'description' => 'Recommended corrective actions'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Policy Updates Required',
-                        'required' => false,
-                        'description' => 'Policy updates or amendments recommended'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Training Needs Identified',
-                        'required' => true,
-                        'description' => 'Training needs identified for committee members'
-                    ]
-                ]
-            ])
-        ],
-        [
-            'name' => 'Committee Report Review',
-            'description' => 'Review and analysis of arbitration committee reports',
-            'role_specific' => 'advisor_arbitration',
-            'report_type' => 'activity',
-            'fields' => json_encode([
-                'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Report Being Reviewed',
-                        'required' => true,
-                        'description' => 'Title of report being reviewed'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Review Date',
-                        'required' => true,
-                        'description' => 'Date when review was conducted'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Review Summary',
-                        'required' => true,
-                        'description' => 'Summary of the review conducted'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Legal Accuracy Assessment',
-                        'required' => true,
-                        'description' => 'Assessment of legal accuracy in the report'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Compliance Check',
-                        'required' => true,
-                        'description' => 'Compliance with policies and procedures'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Recommendations for Improvement',
-                        'required' => true,
-                        'description' => 'Recommendations for report improvement'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Approval Status',
-                        'required' => true,
-                        'description' => 'Final approval status and comments'
-                    ]
-                ]
-            ])
-        ]
-    ];
-
-    foreach ($advisor_templates as $template_data) {
-        $check_stmt = $pdo->prepare("SELECT id FROM report_templates WHERE name = ? AND role_specific = 'advisor_arbitration'");
-        $check_stmt->execute([$template_data['name']]);
-        
-        if (!$check_stmt->fetch()) {
-            $insert_stmt = $pdo->prepare("
-                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, NOW())
-            ");
-            $insert_stmt->execute([
-                $template_data['name'],
-                $template_data['description'],
-                $template_data['role_specific'],
-                $template_data['report_type'],
-                $template_data['fields']
-            ]);
-        }
-    }
-    
-    // Refresh templates list
-    $stmt = $pdo->prepare("
-        SELECT * FROM report_templates 
-        WHERE role_specific = 'advisor_arbitration' OR role_specific IS NULL
-        AND is_active = 1
-        ORDER BY name
-    ");
-    $stmt->execute();
-    $templates = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-} catch (PDOException $e) {
-    error_log("Advisor templates setup error: " . $e->getMessage());
-}
-
-// Get specific report for editing if requested
+// Get specific report for editing
 $current_report = null;
 $report_sections = [];
 $current_section = null;
@@ -706,7 +466,6 @@ $current_review = null;
 
 if (isset($_GET['action']) && isset($_GET['id'])) {
     if ($_GET['action'] === 'edit' && isset($_GET['id'])) {
-        // Edit entire report
         try {
             $stmt = $pdo->prepare("
                 SELECT r.*, rt.name as template_name, rt.fields as template_fields
@@ -718,7 +477,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             $current_report = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if ($current_report && $current_report['is_team_report']) {
-                // Get report sections for team report
                 $stmt = $pdo->prepare("
                     SELECT rs.*, cm.name as assigned_name, cm.role as assigned_role
                     FROM report_sections rs
@@ -733,7 +491,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             error_log("Report editing error: " . $e->getMessage());
         }
     } elseif ($_GET['action'] === 'edit_section' && isset($_GET['id'])) {
-        // Edit specific section assigned to advisor
         try {
             $stmt = $pdo->prepare("
                 SELECT rs.*, r.title as report_title, r.status as report_status,
@@ -749,7 +506,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             error_log("Section editing error: " . $e->getMessage());
         }
     } elseif ($_GET['action'] === 'review' && isset($_GET['id'])) {
-        // Review a report
         try {
             $stmt = $pdo->prepare("
                 SELECT r.*, rt.name as template_name, cm.name as author_name, cm.role as author_role
@@ -772,13 +528,12 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Arbitration Advisor Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* Use the same CSS as the arbitration dashboard */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -801,6 +556,8 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -841,14 +598,11 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -858,7 +612,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -879,26 +632,38 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -906,7 +671,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
+            font-size: 1rem;
             border: 3px solid var(--medium-gray);
             overflow: hidden;
             position: relative;
@@ -930,12 +695,12 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
         .user-name {
             font-weight: 600;
+            font-size: 0.9rem;
             color: var(--text-dark);
-            font-size: 0.95rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -946,25 +711,25 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+            transform: translateY(-1px);
         }
 
         .notification-badge {
@@ -974,50 +739,85 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -1047,9 +847,8 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -1062,34 +861,37 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             margin-left: auto;
         }
 
-        .menu-section {
-            padding: 0.75rem 1.5rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--dark-gray);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        .dashboard-header {
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
-        .welcome-section h1 {
+        .page-title h1 {
             font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
         }
 
-        .welcome-section p {
+        .page-title p {
             color: var(--dark-gray);
             font-size: 0.9rem;
         }
@@ -1107,7 +909,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -1140,13 +942,14 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -1161,7 +964,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -1184,7 +987,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -1192,22 +995,17 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        /* Content Grid */
-        .content-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 1.5rem;
-        }
-
+        /* Card */
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
         .card-header {
@@ -1216,6 +1014,8 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .card-header h3 {
@@ -1224,150 +1024,27 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             color: var(--text-dark);
         }
 
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .card-header-btn:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
-        }
-
         .card-body {
             padding: 1.25rem;
         }
 
-        /* Form Elements */
-        .form-group {
-            margin-bottom: 1.5rem;
+        /* Table */
+        .table-wrapper {
+            overflow-x: auto;
         }
 
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.85rem;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.85rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
-        }
-
-        .form-select {
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
-            background-position: right 0.5rem center;
-            background-repeat: no-repeat;
-            background-size: 1.5em 1.5em;
-            padding-right: 2.5rem;
-        }
-
-        .form-text {
-            font-size: 0.75rem;
-            color: var(--dark-gray);
-            margin-top: 0.25rem;
-        }
-
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: var(--border-radius);
-            font-size: 0.85rem;
-            font-weight: 600;
-            text-decoration: none;
-            cursor: pointer;
-            transition: var(--transition);
-            line-height: 1;
-        }
-
-        .btn-primary {
-            background: var(--gradient-primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #218838;
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: white;
-        }
-
-        .btn-warning:hover {
-            background: #e0a800;
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-        }
-
-        .btn-outline {
-            background: transparent;
-            border: 1px solid var(--medium-gray);
-            color: var(--text-dark);
-        }
-
-        .btn-outline:hover {
-            background: var(--light-gray);
-            border-color: var(--dark-gray);
-        }
-
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.8rem;
-        }
-
-        /* Tables */
         .table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.8rem;
+            min-width: 900px;
         }
 
         .table th, .table td {
             padding: 0.75rem;
             text-align: left;
             border-bottom: 1px solid var(--medium-gray);
+            white-space: nowrap;
         }
 
         .table th {
@@ -1377,43 +1054,53 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             font-size: 0.75rem;
         }
 
+        .table tbody tr {
+            transition: var(--transition);
+        }
+
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
             text-transform: uppercase;
+            white-space: nowrap;
         }
 
         .status-draft {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-submitted {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-reviewed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-approved {
             background: #d1f2eb;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-returned {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         /* Template Grid */
         .template-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 1rem;
             margin-bottom: 2rem;
         }
@@ -1496,6 +1183,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             display: inline-block;
         }
 
+        /* Team Options */
         .team-options {
             background: var(--light-blue);
             padding: 1.5rem;
@@ -1506,7 +1194,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
         .team-member-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 1rem;
             margin: 1rem 0;
         }
@@ -1520,8 +1208,8 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         }
 
         .team-member-avatar {
-            width: 60px;
-            height: 60px;
+            width: 50px;
+            height: 50px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -1530,7 +1218,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             color: white;
             font-weight: 600;
             margin: 0 auto 0.5rem;
-            font-size: 1.25rem;
+            font-size: 1rem;
         }
 
         .team-member-avatar img {
@@ -1543,59 +1231,20 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         .team-member-name {
             font-weight: 600;
             margin-bottom: 0.25rem;
+            font-size: 0.85rem;
         }
 
         .team-member-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .file-upload {
-            border: 2px dashed var(--medium-gray);
-            border-radius: var(--border-radius);
-            padding: 2rem;
-            text-align: center;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .file-upload:hover {
-            border-color: var(--primary-blue);
-            background: var(--light-blue);
-        }
-
-        .file-upload i {
-            font-size: 2rem;
-            color: var(--dark-gray);
-            margin-bottom: 1rem;
-        }
-
-        .file-list {
-            margin-top: 1rem;
-        }
-
-        .file-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem;
-            background: var(--light-gray);
-            border-radius: var(--border-radius);
-            margin-bottom: 0.5rem;
-        }
-
-        .file-remove {
-            background: none;
-            border: none;
-            color: var(--danger);
-            cursor: pointer;
-            padding: 0.25rem;
-        }
-
+        /* Tabs */
         .tabs {
             display: flex;
             border-bottom: 1px solid var(--medium-gray);
             margin-bottom: 1.5rem;
+            overflow-x: auto;
         }
 
         .tab {
@@ -1607,6 +1256,12 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             font-weight: 500;
             color: var(--dark-gray);
             transition: var(--transition);
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        .tab:hover {
+            color: var(--primary-blue);
         }
 
         .tab.active {
@@ -1622,51 +1277,111 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             display: block;
         }
 
-        .team-section-editor {
-            background: var(--light-gray);
-            padding: 1.5rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border: 1px solid var(--medium-gray);
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 1.5rem;
         }
 
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .section-assignee {
-            font-size: 0.9rem;
-            color: var(--dark-gray);
-        }
-
-        .section-status {
-            font-size: 0.75rem;
-            padding: 0.25rem 0.75rem;
-            border-radius: 12px;
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
             font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.85rem;
         }
 
-        .section-status.draft {
-            background: #cce7ff;
-            color: var(--info);
+        .form-control {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
         }
 
-        .section-status.completed {
-            background: #d4edda;
-            color: var(--success);
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
         }
 
-        .table-responsive {
-            overflow-x: auto;
+        .form-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+            background-position: right 0.5rem center;
+            background-repeat: no-repeat;
+            background-size: 1.5em 1.5em;
+            padding-right: 2.5rem;
         }
 
-        .text-muted {
-            color: var(--dark-gray) !important;
+        .form-text {
+            font-size: 0.75rem;
+            color: var(--dark-gray);
+            margin-top: 0.25rem;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            transition: var(--transition);
+            line-height: 1;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-1px);
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            background: #e0a800;
+            transform: translateY(-1px);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--medium-gray);
+            color: var(--text-dark);
+        }
+
+        .btn-outline:hover {
+            background: var(--light-gray);
+            border-color: var(--dark-gray);
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
         }
 
         /* Alert */
@@ -1702,61 +1417,141 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             border-left-color: var(--info);
         }
 
-        /* Review Panel */
-        .review-panel {
-            background: #fff3cd;
-            padding: 1.5rem;
-            border-radius: var(--border-radius);
-            border: 2px solid var(--warning);
-            margin-bottom: 2rem;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: var(--dark-gray);
         }
 
-        .review-report-card {
-            background: var(--white);
-            border: 2px solid var(--info);
-            border-radius: var(--border-radius);
-            padding: 1.5rem;
+        .empty-state i {
+            font-size: 3rem;
             margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .template-grid {
+                grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
-            .template-grid {
-                grid-template-columns: 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .table {
+                display: none;
+            }
+
+            .tabs {
+                flex-direction: column;
+            }
+
+            .tab {
+                border-bottom: none;
+                border-left: 2px solid transparent;
+            }
+
+            .tab.active {
+                border-left-color: var(--primary-blue);
+                border-bottom-color: transparent;
+            }
+
             .team-member-grid {
-                grid-template-columns: 1fr;
+                grid-template-columns: repeat(2, 1fr);
             }
         }
 
@@ -1764,33 +1559,54 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .tabs {
-                flex-direction: column;
+
+            .logo {
+                height: 32px;
             }
-            
-            .tab {
-                text-align: left;
-                border-bottom: none;
-                border-left: 2px solid transparent;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
             }
-            
-            .tab.active {
-                border-left-color: var(--primary-blue);
-                border-bottom-color: transparent;
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .team-member-grid {
+                grid-template-columns: 1fr;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1800,11 +1616,14 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
@@ -1821,7 +1640,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
-                    <i class="fas fa-sign-out-alt"></i>
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1830,10 +1649,13 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-         <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1856,7 +1678,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         <span>Elections</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php" class="active">
                         <i class="fas fa-file-alt"></i>
@@ -1873,9 +1694,11 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1886,15 +1709,16 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
-            <div class="dashboard-header">
-                <div class="welcome-section">
+        <main class="main-content" id="mainContent">
+            <!-- Page Header -->
+            <div class="page-header">
+                <div class="page-title">
                     <h1>Arbitration Advisor Reports ⚖️</h1>
-                    <p>Create legal advisory reports and collaborate with the arbitration committee on comprehensive reporting</p>
+                    <p>Create legal advisory reports and collaborate with the arbitration committee</p>
                 </div>
             </div>
 
-            <!-- Display Messages -->
+            <!-- Alert Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
@@ -1983,10 +1807,9 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <div class="card-body">
                         <div class="alert alert-info">
                             <i class="fas fa-info-circle"></i>
-                            <strong>Advisor Review Required:</strong> Please review this report for legal accuracy and compliance with arbitration policies.
+                            <strong>Advisor Review Required:</strong> Please review this report for legal accuracy and compliance.
                         </div>
                         
-                        <!-- Report Details -->
                         <div class="form-group">
                             <label class="form-label">Report Author</label>
                             <div><?php echo htmlspecialchars($current_review['author_name']); ?> (<?php echo htmlspecialchars(str_replace('_', ' ', $current_review['author_role'])); ?>)</div>
@@ -1997,12 +1820,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                             <div><?php echo htmlspecialchars($current_review['template_name'] ?? 'Custom'); ?></div>
                         </div>
                         
-                        <div class="form-group">
-                            <label class="form-label">Report Type</label>
-                            <div><?php echo ucfirst($current_review['report_type']); ?></div>
-                        </div>
-                        
-                        <!-- Report Content -->
                         <h4 style="margin: 1.5rem 0 1rem 0;">Report Content</h4>
                         
                         <?php
@@ -2019,12 +1836,9 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                 </div>
                                 <?php
                             }
-                        } else {
-                            echo '<div class="alert alert-warning">No content available for this report.</div>';
                         }
                         ?>
                         
-                        <!-- Review Form -->
                         <hr style="margin: 2rem 0;">
                         <h4 style="margin-bottom: 1rem;">Advisor Review</h4>
                         
@@ -2034,10 +1848,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                             
                             <div class="form-group">
                                 <label class="form-label">Review Comments *</label>
-                                <textarea name="review_comments" class="form-control" rows="6" placeholder="Provide your review comments here..." required></textarea>
-                                <div class="form-text">
-                                    Provide detailed comments on legal accuracy, compliance issues, and recommendations for improvement.
-                                </div>
+                                <textarea name="review_comments" class="form-control" rows="6" required></textarea>
                             </div>
                             
                             <div class="form-group">
@@ -2047,9 +1858,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                     <option value="approved">Approve</option>
                                     <option value="returned">Return for Revision</option>
                                 </select>
-                                <div class="form-text">
-                                    Choose whether to approve the report or return it for revisions.
-                                </div>
                             </div>
                             
                             <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
@@ -2070,9 +1878,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <div class="card-header">
                         <h3>
                             <i class="fas fa-edit"></i> Complete Assigned Section
-                            <span style="color: var(--info); font-size: 0.9rem; margin-left: 1rem;">
-                                <i class="fas fa-users"></i> Team Report Section
-                            </span>
                         </h3>
                         <div>
                             <span class="status-badge status-<?php echo $current_section['status']; ?>">
@@ -2083,201 +1888,27 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <div class="card-body">
                         <div class="alert alert-info">
                             <i class="fas fa-info-circle"></i>
-                            <strong>Section Assignment:</strong> This section is part of the report "<?php echo htmlspecialchars($current_section['report_title']); ?>" assigned by <?php echo htmlspecialchars($current_section['assigner_name']); ?>.
+                            This section is part of "<?php echo htmlspecialchars($current_section['report_title']); ?>" assigned by <?php echo htmlspecialchars($current_section['assigner_name']); ?>.
                         </div>
                         
-                        <div class="team-section-editor">
-                            <div class="section-header">
-                                <div>
-                                    <h4><?php echo htmlspecialchars($current_section['section_title']); ?></h4>
-                                    <div class="section-assignee">
-                                        Report Status: <span class="status-badge status-<?php echo $current_section['report_status']; ?>">
-                                            <?php echo ucfirst($current_section['report_status']); ?>
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="section-status <?php echo $current_section['status']; ?>">
-                                    <?php echo ucfirst($current_section['status']); ?>
-                                </div>
+                        <form method="POST" action="reports.php">
+                            <input type="hidden" name="action" value="save_section">
+                            <input type="hidden" name="section_id" value="<?php echo $current_section['id']; ?>">
+                            
+                            <div class="form-group">
+                                <label class="form-label"><?php echo htmlspecialchars($current_section['section_title']); ?></label>
+                                <textarea name="content" class="form-control" rows="10" required><?php echo htmlspecialchars($current_section['content']); ?></textarea>
                             </div>
                             
-                            <form method="POST" action="reports.php">
-                                <input type="hidden" name="action" value="save_section">
-                                <input type="hidden" name="section_id" value="<?php echo $current_section['id']; ?>">
-                                <div class="form-group">
-                                    <label class="form-label">Section Content *</label>
-                                    <textarea name="content" class="form-control" rows="10" placeholder="Enter your section content here..." required><?php echo htmlspecialchars($current_section['content']); ?></textarea>
-                                    <div class="form-text">
-                                        Provide comprehensive legal guidance and analysis for this section.
-                                    </div>
-                                </div>
-                                <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-                                    <button type="submit" class="btn btn-success">
-                                        <i class="fas fa-save"></i> Save & Complete Section
-                                    </button>
-                                    <a href="reports.php" class="btn btn-outline">
-                                        <i class="fas fa-times"></i> Cancel
-                                    </a>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-
-            <?php elseif (isset($_GET['action']) && $_GET['action'] === 'edit' && $current_report): ?>
-                <!-- Edit Report View -->
-                <div class="card">
-                    <div class="card-header">
-                        <h3>
-                            Editing: <?php echo htmlspecialchars($current_report['title']); ?>
-                            <?php if ($current_report['is_team_report']): ?>
-                                <span style="color: var(--info); font-size: 0.9rem; margin-left: 1rem;">
-                                    <i class="fas fa-users"></i> Team Report
-                                </span>
-                            <?php endif; ?>
-                        </h3>
-                        <div>
-                            <span class="status-badge status-<?php echo $current_report['status']; ?>">
-                                <?php echo ucfirst($current_report['status']); ?>
-                            </span>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <?php if ($current_report['is_team_report'] && !empty($report_sections)): ?>
-                            <!-- Team Report Editor -->
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i>
-                                <strong>Team Collaboration:</strong> This is a collaborative report. Different sections are assigned to arbitration committee members.
+                            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-save"></i> Save & Complete Section
+                                </button>
+                                <a href="reports.php" class="btn btn-outline">
+                                    <i class="fas fa-times"></i> Cancel
+                                </a>
                             </div>
-                            
-                            <!-- Main Report Content -->
-                            <div class="team-section-editor">
-                                <div class="section-header">
-                                    <h4>Main Report Content</h4>
-                                    <div class="section-status <?php echo $current_report['status']; ?>">
-                                        <?php echo ucfirst($current_report['status']); ?>
-                                    </div>
-                                </div>
-                                
-                                <?php
-                                $content = json_decode($current_report['content'], true) ?: [];
-                                $template_fields = json_decode($current_report['template_fields'] ?? '{"sections": []}', true);
-                                
-                                if (!empty($template_fields['sections'])) {
-                                    foreach ($template_fields['sections'] as $section) {
-                                        $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                                        $section_value = $content[$field_name] ?? '';
-                                        ?>
-                                        <div class="form-group">
-                                            <label class="form-label"><?php echo htmlspecialchars($section['title']); ?> <?php echo $section['required'] ? '*' : ''; ?></label>
-                                            <?php if (!empty($section['description'])): ?>
-                                                <div class="form-text"><?php echo htmlspecialchars($section['description']); ?></div>
-                                            <?php endif; ?>
-                                            
-                                            <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">
-                                                <?php echo htmlspecialchars($section_value); ?>
-                                            </div>
-                                        </div>
-                                        <?php
-                                    }
-                                }
-                                ?>
-                            </div>
-                            
-                            <!-- Team Sections -->
-                            <h4 style="margin: 2rem 0 1rem 0;">Arbitration Committee Sections</h4>
-                            <?php foreach ($report_sections as $section): ?>
-                                <div class="team-section-editor">
-                                    <div class="section-header">
-                                        <div>
-                                            <h5><?php echo htmlspecialchars($section['section_title']); ?></h5>
-                                            <div class="section-assignee">
-                                                Assigned to: <?php echo htmlspecialchars($section['assigned_name']); ?> (<?php echo htmlspecialchars($section['assigned_role']); ?>)
-                                            </div>
-                                        </div>
-                                        <div class="section-status <?php echo $section['status']; ?>">
-                                            <?php echo ucfirst($section['status']); ?>
-                                        </div>
-                                    </div>
-                                    
-                                    <?php if ($section['assigned_to'] == $user_id): ?>
-                                        <form method="POST" action="reports.php">
-                                            <input type="hidden" name="action" value="save_section">
-                                            <input type="hidden" name="section_id" value="<?php echo $section['id']; ?>">
-                                            <input type="hidden" name="report_id" value="<?php echo $current_report['id']; ?>">
-                                            <div class="form-group">
-                                                <textarea name="content" class="form-control" rows="6" placeholder="Enter your section content here..."><?php echo htmlspecialchars($section['content']); ?></textarea>
-                                            </div>
-                                            <button type="submit" class="btn btn-primary btn-sm">
-                                                <i class="fas fa-save"></i> Save Section
-                                            </button>
-                                        </form>
-                                    <?php else: ?>
-                                        <div style="background: var(--white); padding: 1rem; border-radius: var(--border-radius); border: 1px solid var(--medium-gray); min-height: 100px;">
-                                            <?php if (!empty($section['content'])): ?>
-                                                <?php echo nl2br(htmlspecialchars($section['content'])); ?>
-                                            <?php else: ?>
-                                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                                    <i class="fas fa-clock"></i><br>
-                                                    Waiting for <?php echo htmlspecialchars($section['assigned_name']); ?> to add content
-                                                </div>
-                                            <?php endif; ?>
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                            <?php endforeach; ?>
-                            
-                        <?php else: ?>
-                            <!-- Individual Report Editor -->
-                            <form method="POST" action="reports.php">
-                                <input type="hidden" name="action" value="create_report">
-                                <input type="hidden" name="template_id" value="<?php echo $current_report['template_id']; ?>">
-                                
-                                <div class="form-group">
-                                    <label class="form-label">Report Title *</label>
-                                    <input type="text" class="form-control" name="title" value="<?php echo htmlspecialchars($current_report['title']); ?>" required>
-                                </div>
-
-                                <?php
-                                $content = json_decode($current_report['content'], true) ?: [];
-                                $template_fields = json_decode($current_report['template_fields'] ?? '{"sections": []}', true);
-                                
-                                if (!empty($template_fields['sections'])) {
-                                    foreach ($template_fields['sections'] as $section) {
-                                        $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                                        $section_value = $content[$field_name] ?? '';
-                                        ?>
-                                        <div class="form-group">
-                                            <label class="form-label"><?php echo htmlspecialchars($section['title']); ?> <?php echo $section['required'] ? '*' : ''; ?></label>
-                                            <?php if (!empty($section['description'])): ?>
-                                                <div class="form-text"><?php echo htmlspecialchars($section['description']); ?></div>
-                                            <?php endif; ?>
-                                            
-                                            <?php if ($section['type'] === 'textarea' || $section['type'] === 'richtext'): ?>
-                                                <textarea name="<?php echo $field_name; ?>" class="form-control" rows="6" <?php echo $section['required'] ? 'required' : ''; ?>><?php echo htmlspecialchars($section_value); ?></textarea>
-                                            <?php elseif ($section['type'] === 'text'): ?>
-                                                <input type="text" name="<?php echo $field_name; ?>" class="form-control" value="<?php echo htmlspecialchars($section_value); ?>" <?php echo $section['required'] ? 'required' : ''; ?>>
-                                            <?php elseif ($section['type'] === 'date'): ?>
-                                                <input type="date" name="<?php echo $field_name; ?>" class="form-control" value="<?php echo htmlspecialchars($section_value); ?>" <?php echo $section['required'] ? 'required' : ''; ?>>
-                                            <?php elseif ($section['type'] === 'number'): ?>
-                                                <input type="number" name="<?php echo $field_name; ?>" class="form-control" value="<?php echo htmlspecialchars($section_value); ?>" <?php echo $section['required'] ? 'required' : ''; ?>>
-                                            <?php endif; ?>
-                                        </div>
-                                        <?php
-                                    }
-                                }
-                                ?>
-                                
-                                <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-                                    <button type="submit" class="btn btn-primary">
-                                        <i class="fas fa-save"></i> Update Report
-                                    </button>
-                                    <a href="reports.php" class="btn btn-outline">
-                                        <i class="fas fa-times"></i> Cancel
-                                    </a>
-                                </div>
-                            </form>
-                        <?php endif; ?>
+                        </form>
                     </div>
                 </div>
 
@@ -2288,7 +1919,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <button class="tab" data-tab="submitted">Submitted Reports (<?php echo count($submitted_reports); ?>)</button>
                     <button class="tab" data-tab="reviews">Reviews (<?php echo count($reports_for_review); ?>)</button>
                     <button class="tab" data-tab="assignments">My Assignments (<?php echo count($assigned_sections); ?>)</button>
-                    <button class="tab" data-tab="team">Committee Collaboration</button>
                 </div>
 
                 <!-- Create Report Tab -->
@@ -2300,7 +1930,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         <div class="card-body">
                             <?php if (empty($templates)): ?>
                                 <div class="alert alert-warning">
-                                    <i class="fas fa-exclamation-triangle"></i> No report templates available at the moment.
+                                    <i class="fas fa-exclamation-triangle"></i> No report templates available.
                                 </div>
                             <?php else: ?>
                                 <div class="template-grid" id="templateGrid">
@@ -2310,32 +1940,25 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                 <i class="fas fa-check"></i>
                                             </div>
                                             <div class="template-icon">
-                                                <i class="fas fa-<?php 
-                                                    echo $template['report_type'] === 'activity' ? 'tasks' : 
-                                                         ($template['report_type'] === 'monthly' ? 'calendar-alt' : 'balance-scale'); 
-                                                ?>"></i>
+                                                <i class="fas fa-file-alt"></i>
                                             </div>
                                             <h4 class="template-title"><?php echo htmlspecialchars($template['name']); ?></h4>
-                                            <p class="template-description"><?php echo htmlspecialchars($template['description'] ?? 'No description available'); ?></p>
-                                            <div class="template-type"><?php echo ucfirst($template['report_type']); ?> Report</div>
+                                            <p class="template-description"><?php echo htmlspecialchars($template['description'] ?? ''); ?></p>
+                                            <div class="template-type"><?php echo ucfirst($template['report_type']); ?></div>
                                         </div>
                                     <?php endforeach; ?>
                                 </div>
 
-                                <!-- Arbitration Committee Members Overview -->
+                                <!-- Team Options -->
                                 <div class="team-options">
                                     <h4><i class="fas fa-users"></i> Arbitration Committee</h4>
-                                    <p>Your committee consists of <?php echo count($team_members); ?> members who can collaborate on reports:</p>
+                                    <p>Your committee consists of <?php echo count($team_members); ?> members:</p>
                                     
                                     <div class="team-member-grid">
                                         <?php foreach ($team_members as $member): ?>
                                             <div class="team-member-card">
                                                 <div class="team-member-avatar">
-                                                    <?php if (!empty($member['avatar_url'])): ?>
-                                                        <img src="../<?php echo htmlspecialchars($member['avatar_url']); ?>" alt="<?php echo htmlspecialchars($member['name']); ?>">
-                                                    <?php else: ?>
-                                                        <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
-                                                    <?php endif; ?>
+                                                    <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
                                                 </div>
                                                 <div class="team-member-name"><?php echo htmlspecialchars($member['name']); ?></div>
                                                 <div class="team-member-role"><?php echo htmlspecialchars(str_replace('_', ' ', $member['role'])); ?></div>
@@ -2344,43 +1967,29 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                     </div>
                                 </div>
 
-                                <!-- Report Form (Initially Hidden) -->
+                                <!-- Report Form -->
                                 <form id="reportForm" method="POST" enctype="multipart/form-data" style="display: none; margin-top: 2rem;">
                                     <input type="hidden" name="action" value="create_report">
                                     <input type="hidden" name="template_id" id="selectedTemplateId">
                                     
                                     <div class="form-group">
-                                        <label class="form-label" for="title">Report Title *</label>
-                                        <input type="text" class="form-control" id="title" name="title" required>
+                                        <label class="form-label">Report Title *</label>
+                                        <input type="text" class="form-control" name="title" required>
                                     </div>
 
                                     <div class="form-group">
-                                        <label class="form-label" for="report_type">Report Type</label>
-                                        <select class="form-control form-select" id="report_type" name="report_type">
+                                        <label class="form-label">Report Type</label>
+                                        <select class="form-control form-select" name="report_type">
                                             <option value="monthly">Monthly Report</option>
                                             <option value="activity">Activity Report</option>
-                                            <option value="team">Committee Report</option>
                                         </select>
                                     </div>
 
                                     <div class="form-group">
-                                        <label class="form-label" for="report_period">Report Period</label>
-                                        <input type="month" class="form-control" id="report_period" name="report_period">
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label" for="activity_date">Activity Date</label>
-                                        <input type="date" class="form-control" id="activity_date" name="activity_date">
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label" style="display: flex; align-items: center; gap: 0.5rem;">
-                                            <input type="checkbox" name="is_team_report" id="is_team_report" value="1" onchange="toggleTeamOptions()">
+                                        <label class="form-label">
+                                            <input type="checkbox" name="is_team_report" value="1" onchange="toggleTeamOptions()">
                                             Create as Committee Report (Collaborative)
                                         </label>
-                                        <small style="color: var(--dark-gray); font-size: 0.75rem;">
-                                            Committee reports allow collaborative work with other Arbitration Committee members
-                                        </small>
                                     </div>
 
                                     <div id="team_options" style="display: none;">
@@ -2389,37 +1998,13 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                             <select name="team_role" class="form-control form-select">
                                                 <option value="combined">Combined Report (All members work together)</option>
                                                 <option value="advisor">Advisor Section</option>
-                                                <option value="president">President Section</option>
-                                                <option value="vice_president">Vice President Section</option>
-                                                <option value="secretary">Secretary Section</option>
                                             </select>
-                                            <small style="color: var(--dark-gray); font-size: 0.75rem;">
-                                                Choose how to divide the report among committee members
-                                            </small>
-                                        </div>
-
-                                        <div class="alert alert-info">
-                                            <i class="fas fa-info-circle"></i>
-                                            <strong>Committee Report Information:</strong> This will create a collaborative report where different sections can be assigned to different Arbitration Committee members. Committee members will be able to contribute to their assigned sections.
                                         </div>
                                     </div>
 
-                                    <div id="templateFields">
-                                        <!-- Dynamic fields will be inserted here based on template -->
-                                    </div>
+                                    <div id="templateFields"></div>
 
-                                    <div class="form-group">
-                                        <label class="form-label">Attachments</label>
-                                        <div class="file-upload" onclick="document.getElementById('report_files').click()">
-                                            <i class="fas fa-cloud-upload-alt"></i>
-                                            <p>Click to upload files or drag and drop</p>
-                                            <small class="form-text">Maximum file size: 10MB. Supported formats: PDF, DOC, DOCX, JPG, PNG</small>
-                                            <input type="file" class="file-input" id="report_files" name="report_files[]" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onchange="handleFileSelect(this)" style="display: none;">
-                                        </div>
-                                        <div class="file-list" id="fileList"></div>
-                                    </div>
-
-                                    <div class="form-group" style="margin-top: 2rem;">
+                                    <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
                                         <button type="submit" class="btn btn-primary">
                                             <i class="fas fa-paper-plane"></i> Create Report
                                         </button>
@@ -2438,19 +2023,15 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <div class="card">
                         <div class="card-header">
                             <h3>Submitted Reports</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                            </div>
                         </div>
                         <div class="card-body">
                             <?php if (empty($submitted_reports)): ?>
-                                <div class="alert alert-info">
-                                    <i class="fas fa-info-circle"></i> No reports submitted yet.
+                                <div class="empty-state">
+                                    <i class="fas fa-file-alt"></i>
+                                    <h3>No reports submitted yet</h3>
                                 </div>
                             <?php else: ?>
-                                <div class="table-responsive">
+                                <div class="table-wrapper">
                                     <table class="table">
                                         <thead>
                                             <tr>
@@ -2468,9 +2049,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                 <tr>
                                                     <td>
                                                         <strong><?php echo htmlspecialchars($report['title']); ?></strong>
-                                                        <?php if ($report['report_period']): ?>
-                                                            <br><small class="text-muted"><?php echo date('F Y', strtotime($report['report_period'])); ?></small>
-                                                        <?php endif; ?>
                                                     </td>
                                                     <td><?php echo htmlspecialchars($report['template_name'] ?? 'Custom'); ?></td>
                                                     <td>
@@ -2487,9 +2065,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                         <span class="status-badge status-<?php echo $report['status']; ?>">
                                                             <?php echo ucfirst($report['status']); ?>
                                                         </span>
-                                                        <?php if ($report['reviewer_name']): ?>
-                                                            <br><small>by <?php echo htmlspecialchars($report['reviewer_name']); ?></small>
-                                                        <?php endif; ?>
                                                     </td>
                                                     <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td>
                                                     <td>
@@ -2497,14 +2072,11 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                             <a href="reports.php?export=1&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Export">
                                                                 <i class="fas fa-download"></i>
                                                             </a>
-                                                            <?php if ($report['status'] === 'draft' || $report['is_team_report']): ?>
+                                                            <?php if ($report['status'] === 'draft'): ?>
                                                                 <a href="reports.php?action=edit&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Edit">
                                                                     <i class="fas fa-edit"></i>
                                                                 </a>
                                                             <?php endif; ?>
-                                                            <button class="btn btn-outline btn-sm" onclick="viewReport(<?php echo $report['id']; ?>)" title="View">
-                                                                <i class="fas fa-eye"></i>
-                                                            </button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -2526,15 +2098,10 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         <div class="card-body">
                             <?php if (empty($reports_for_review)): ?>
                                 <div class="alert alert-success">
-                                    <i class="fas fa-check-circle"></i> No reports pending review at the moment.
+                                    <i class="fas fa-check-circle"></i> No reports pending review.
                                 </div>
                             <?php else: ?>
-                                <div class="review-panel">
-                                    <h4><i class="fas fa-exclamation-circle"></i> Advisor Review Required</h4>
-                                    <p>The following reports require your legal review and compliance assessment. Please review them for legal accuracy and policy compliance.</p>
-                                </div>
-                                
-                                <div class="table-responsive">
+                                <div class="table-wrapper">
                                     <table class="table">
                                         <thead>
                                             <tr>
@@ -2542,7 +2109,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                 <th>Author</th>
                                                 <th>Type</th>
                                                 <th>Submitted</th>
-                                                <th>Priority</th>
                                                 <th>Actions</th>
                                             </tr>
                                         </thead>
@@ -2552,45 +2118,20 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                     <td>
                                                         <strong><?php echo htmlspecialchars($report['title']); ?></strong>
                                                     </td>
-                                                    <td><?php echo htmlspecialchars($report['author_name']); ?> (<?php echo htmlspecialchars(str_replace('_', ' ', $report['author_role'])); ?>)</td>
+                                                    <td><?php echo htmlspecialchars($report['author_name']); ?></td>
                                                     <td>
                                                         <span class="template-type"><?php echo ucfirst($report['report_type']); ?></span>
                                                     </td>
                                                     <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td>
                                                     <td>
-                                                        <?php 
-                                                        $days_since = floor((time() - strtotime($report['submitted_at'])) / (60 * 60 * 24));
-                                                        if ($days_since > 7): ?>
-                                                            <span class="status-badge status-returned">High Priority</span>
-                                                        <?php else: ?>
-                                                            <span class="status-badge status-submitted">Normal</span>
-                                                        <?php endif; ?>
-                                                    </td>
-                                                    <td>
-                                                        <div style="display: flex; gap: 0.25rem;">
-                                                            <a href="reports.php?action=review&id=<?php echo $report['id']; ?>" class="btn btn-warning btn-sm">
-                                                                <i class="fas fa-search"></i> Review
-                                                            </a>
-                                                            <button class="btn btn-outline btn-sm" onclick="viewReport(<?php echo $report['id']; ?>)" title="View">
-                                                                <i class="fas fa-eye"></i>
-                                                            </button>
-                                                        </div>
+                                                        <a href="reports.php?action=review&id=<?php echo $report['id']; ?>" class="btn btn-warning btn-sm">
+                                                            <i class="fas fa-search"></i> Review
+                                                        </a>
                                                     </td>
                                                 </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
-                                </div>
-                                
-                                <div class="alert alert-info" style="margin-top: 1.5rem;">
-                                    <h5><i class="fas fa-info-circle"></i> Advisor Review Guidelines</h5>
-                                    <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
-                                        <li>Check for legal accuracy and compliance with RPSU policies</li>
-                                        <li>Ensure proper documentation and evidence</li>
-                                        <li>Verify that proper procedures were followed</li>
-                                        <li>Provide constructive feedback for improvement</li>
-                                        <li>Mark as "Approve" if compliant, "Return for Revision" if issues found</li>
-                                    </ul>
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -2606,19 +2147,18 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         <div class="card-body">
                             <?php if (empty($assigned_sections)): ?>
                                 <div class="alert alert-info">
-                                    <i class="fas fa-info-circle"></i> You don't have any pending report assignments at the moment.
+                                    <i class="fas fa-info-circle"></i> No pending report assignments.
                                 </div>
                             <?php else: ?>
-                                <div class="table-responsive">
+                                <div class="table-wrapper">
                                     <table class="table">
                                         <thead>
                                             <tr>
                                                 <th>Report Title</th>
                                                 <th>Section Title</th>
                                                 <th>Assigned By</th>
-                                                <th>Report Status</th>
-                                                <th>Section Status</th>
-                                        <th>Actions</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -2628,23 +2168,16 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                         <strong><?php echo htmlspecialchars($section['report_title']); ?></strong>
                                                     </td>
                                                     <td><?php echo htmlspecialchars($section['section_title']); ?></td>
-                                                    <td><?php echo htmlspecialchars($section['assigner_name']); ?> (<?php echo htmlspecialchars(str_replace('_', ' ', $section['assigner_role'])); ?>)</td>
-                                                    <td>
-                                                        <span class="status-badge status-<?php echo $section['report_status']; ?>">
-                                                            <?php echo ucfirst($section['report_status']); ?>
-                                                        </span>
-                                                    </td>
+                                                    <td><?php echo htmlspecialchars($section['assigner_name']); ?></td>
                                                     <td>
                                                         <span class="status-badge status-<?php echo $section['status']; ?>">
                                                             <?php echo ucfirst($section['status']); ?>
                                                         </span>
                                                     </td>
                                                     <td>
-                                                        <div style="display: flex; gap: 0.25rem;">
-                                                            <a href="reports.php?action=edit_section&id=<?php echo $section['id']; ?>" class="btn btn-primary btn-sm">
-                                                                <i class="fas fa-edit"></i> Complete Section
-                                                            </a>
-                                                        </div>
+                                                        <a href="reports.php?action=edit_section&id=<?php echo $section['id']; ?>" class="btn btn-primary btn-sm">
+                                                            <i class="fas fa-edit"></i> Complete
+                                                        </a>
                                                     </td>
                                                 </tr>
                                             <?php endforeach; ?>
@@ -2655,114 +2188,70 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         </div>
                     </div>
                 </div>
-
-                <!-- Committee Collaboration Tab -->
-                <div class="tab-content" id="team-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Committee Collaboration</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i>
-                                <strong>Legal Advisor Role:</strong> As the Arbitration Advisor, you provide crucial legal guidance and ensure compliance with RPSU policies and regulations.
-                            </div>
-                            
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1.5rem;">
-                                <div style="background: var(--light-blue); padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--primary-blue);">
-                                    <h4><i class="fas fa-user-tie"></i> President Role</h4>
-                                    <p>Overall coordination, case oversight, and final report compilation.</p>
-                                </div>
-                                
-                                <div style="background: #e8f5e8; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--success);">
-                                    <h4><i class="fas fa-user-check"></i> Vice President Role</h4>
-                                    <p>Case management, hearing coordination, and dispute resolution support.</p>
-                                </div>
-                                
-                                <div style="background: #fff3cd; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--warning);">
-                                    <h4><i class="fas fa-user-graduate"></i> Your Role (Advisor)</h4>
-                                    <p>Legal guidance, policy compliance, and complex case consultation.</p>
-                                </div>
-
-                                <div style="background: #f0e6ff; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--purple);">
-                                    <h4><i class="fas fa-clipboard-list"></i> Secretary Role</h4>
-                                    <p>Documentation, record keeping, and hearing minutes.</p>
-                                </div>
-                            </div>
-                            
-                            <div style="margin-top: 2rem;">
-                                <h4>Collaborative Reporting Workflow</h4>
-                                <ol style="margin-left: 1.5rem; color: var(--text-dark);">
-                                    <li><strong>Committee Lead</strong> creates team report and assigns sections</li>
-                                    <li><strong>Committee Members</strong> contribute to their assigned sections</li>
-                                    <li><strong>Committee Lead</strong> compiles all sections and submits report</li>
-                                    <li><strong>Advisor</strong> reviews the complete report for legal compliance</li>
-                                    <li><strong>Committee</strong> receives feedback and makes necessary revisions</li>
-                                    <li><strong>Final Report</strong> is approved and submitted to relevant authorities</li>
-                                </ol>
-                            </div>
-                            
-                            <div style="margin-top: 2rem;">
-                                <h4>Your Key Responsibilities in Committee Reporting</h4>
-                                <ul style="margin-left: 1.5rem; color: var(--text-dark);">
-                                    <li><strong>Legal Review:</strong> Review committee reports for legal accuracy and compliance</li>
-                                    <li><strong>Compliance Assessment:</strong> Ensure adherence to RPSU policies and regulations</li>
-                                    <li><strong>Complex Case Analysis:</strong> Provide legal analysis for complex arbitration cases</li>
-                                    <li><strong>Policy Guidance:</strong> Guide the committee on legal and policy matters</li>
-                                    <li><strong>Collaborative Input:</strong> Contribute to team reports with legal expertise</li>
-                                    <li><strong>Documentation:</strong> Maintain proper legal documentation for cases</li>
-                                    <li><strong>Training:</strong> Provide legal training to committee members</li>
-                                </ul>
-                            </div>
-                            
-                            <div style="margin-top: 2rem; padding: 1.5rem; background: #fff3cd; border-radius: var(--border-radius); border-left: 4px solid var(--warning);">
-                                <h5><i class="fas fa-exclamation-triangle"></i> Legal Compliance Checklist</h5>
-                                <p>When reviewing reports, ensure they address:</p>
-                                <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
-                                    <li>Proper adherence to RPSU constitution and bylaws</li>
-                                    <li>Compliance with arbitration procedures and timelines</li>
-                                    <li>Fair hearing principles and due process</li>
-                                    <li>Confidentiality and data protection requirements</li>
-                                    <li>Proper documentation and evidence handling</li>
-                                    <li>Clear justification for decisions and recommendations</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             <?php endif; ?>
         </main>
     </div>
 
-    <!-- Report View Modal -->
-    <div id="reportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
-        <div style="background: var(--white); border-radius: var(--border-radius); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: between; align-items: center;">
-                <h3 id="modalTitle">Report Details</h3>
-                <button onclick="closeModal()" style="background: none; border: none; font-size: 1.25rem; color: var(--dark-gray); cursor: pointer;">&times;</button>
-            </div>
-            <div style="padding: 1.5rem;" id="modalContent">
-                <!-- Content will be loaded here -->
-            </div>
-        </div>
-    </div>
-
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Tab functionality
@@ -2792,33 +2281,25 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             });
         });
 
-        // Template selection function
         function selectTemplate(templateId) {
-            // Update UI
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
             });
             document.querySelector(`[data-template-id="${templateId}"]`).classList.add('selected');
             
-            // Show form
             document.getElementById('reportForm').style.display = 'block';
             document.getElementById('selectedTemplateId').value = templateId;
             
-            // Scroll to form
             document.getElementById('reportForm').scrollIntoView({ behavior: 'smooth' });
-            
-            // Load template fields
             loadTemplateFields(templateId);
         }
 
-        // Toggle team options
         function toggleTeamOptions() {
             const teamOptions = document.getElementById('team_options');
             const isTeamReport = document.getElementById('is_team_report').checked;
             teamOptions.style.display = isTeamReport ? 'block' : 'none';
         }
 
-        // Load template fields via AJAX
         async function loadTemplateFields(templateId) {
             try {
                 const response = await fetch(`../api/get_template_fields.php?template_id=${templateId}`);
@@ -2836,36 +2317,24 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         fieldGroup.className = 'form-group';
                         
                         let fieldHtml = `
-                            <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '*' : ''}</label>
+                            <label class="form-label">${section.title} ${section.required ? '*' : ''}</label>
                         `;
                         
                         if (section.type === 'textarea' || section.type === 'richtext') {
                             fieldHtml += `
                                 <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
-                                          ${section.required ? 'required' : ''} 
-                                          placeholder="${section.description || ''}"
-                                          rows="6"></textarea>
+                                          ${section.required ? 'required' : ''} rows="6"></textarea>
                             `;
                         } else if (section.type === 'date') {
                             fieldHtml += `
                                 <input type="date" class="form-control" id="${fieldId}" name="${fieldName}" 
                                        ${section.required ? 'required' : ''}>
                             `;
-                        } else if (section.type === 'number') {
-                            fieldHtml += `
-                                <input type="number" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}>
-                            `;
                         } else {
                             fieldHtml += `
                                 <input type="text" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}
-                                       placeholder="${section.description || ''}">
+                                       ${section.required ? 'required' : ''}>
                             `;
-                        }
-                        
-                        if (section.description) {
-                            fieldHtml += `<div class="form-text">${section.description}</div>`;
                         }
                         
                         fieldGroup.innerHTML = fieldHtml;
@@ -2874,113 +2343,17 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                 }
             } catch (error) {
                 console.error('Error loading template fields:', error);
-                document.getElementById('templateFields').innerHTML = `
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-circle"></i> Error loading template fields.
-                    </div>
-                `;
             }
         }
 
-        // File handling
-        function handleFileSelect(input) {
-            const fileList = document.getElementById('fileList');
-            fileList.innerHTML = '';
-            
-            Array.from(input.files).forEach(file => {
-                const fileItem = document.createElement('div');
-                fileItem.className = 'file-item';
-                fileItem.innerHTML = `
-                    <span class="file-name">${file.name}</span>
-                    <button type="button" class="file-remove" onclick="removeFile(this)">
-                        <i class="fas fa-times"></i>
-                    </button>
-                `;
-                fileList.appendChild(fileItem);
-            });
-        }
-
-        function removeFile(button) {
-            const fileItem = button.closest('.file-item');
-            fileItem.remove();
-        }
-
-        // Form reset
         function resetForm() {
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
             });
             document.getElementById('reportForm').style.display = 'none';
             document.getElementById('reportForm').reset();
-            document.getElementById('fileList').innerHTML = '';
             document.getElementById('team_options').style.display = 'none';
-            document.getElementById('is_team_report').checked = false;
         }
-
-        // View report in modal
-        async function viewReport(reportId) {
-            try {
-                const response = await fetch(`../api/get_report.php?id=${reportId}`);
-                const report = await response.json();
-                
-                document.getElementById('modalTitle').textContent = report.title;
-                
-                let content = `
-                    <div class="form-group">
-                        <label class="form-label">Template</label>
-                        <div>${report.template_name || 'Custom'}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Report Type</label>
-                        <div>${report.report_type}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Committee Report</label>
-                        <div>${report.is_team_report ? 'Yes' : 'No'}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <span class="status-badge status-${report.status}">${report.status}</span>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Submitted</label>
-                        <div>${new Date(report.submitted_at).toLocaleDateString()}</div>
-                    </div>
-                `;
-                
-                if (report.content) {
-                    const reportContent = JSON.parse(report.content);
-                    Object.keys(reportContent).forEach(key => {
-                        if (reportContent[key]) {
-                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            content += `
-                                <div class="form-group">
-                                    <label class="form-label">${label}</label>
-                                    <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${reportContent[key]}</div>
-                                </div>
-                            `;
-                        }
-                    });
-                }
-                
-                document.getElementById('modalContent').innerHTML = content;
-                document.getElementById('reportModal').style.display = 'flex';
-            } catch (error) {
-                console.error('Error loading report:', error);
-                alert('Error loading report details');
-            }
-        }
-
-        function closeModal() {
-            document.getElementById('reportModal').style.display = 'none';
-        }
-
-        // Close modal when clicking outside
-        document.getElementById('reportModal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeModal();
-            }
-        });
     </script>
 </body>
 </html>

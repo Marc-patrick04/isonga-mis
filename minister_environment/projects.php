@@ -20,7 +20,7 @@ try {
     $user = [];
 }
 
-// Handle form submissions
+// Handle form submissions (PostgreSQL uses CURRENT_TIMESTAMP)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['add_project'])) {
         // Add new project
@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("
                 INSERT INTO innovation_projects 
                 (title, description, student_id, category_id, department_id, priority, status, submitted_at) 
-                VALUES (?, ?, ?, ?, ?, ?, 'pending_review', NOW())
+                VALUES (?, ?, ?, ?, ?, ?, 'pending_review', CURRENT_TIMESTAMP)
             ");
             $stmt->execute([$title, $description, $user_id, $category_id, $department_id, $priority]);
             $success_message = "Project submitted successfully!";
@@ -50,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $stmt = $pdo->prepare("
                 UPDATE innovation_projects 
-                SET status = ?, feedback = ?, reviewed_by = ?, reviewed_at = NOW() 
+                SET status = ?, feedback = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP 
                 WHERE id = ?
             ");
             $stmt->execute([$status, $feedback, $user_id, $project_id]);
@@ -78,7 +78,7 @@ $status_filter = $_GET['status'] ?? 'all';
 $priority_filter = $_GET['priority'] ?? 'all';
 $search_term = $_GET['search'] ?? '';
 
-// Build query for projects
+// Build query for projects (PostgreSQL uses ILIKE for case-insensitive search)
 $query = "
     SELECT ip.*, u.full_name as student_name, u.reg_number, d.name as department_name 
     FROM innovation_projects ip 
@@ -101,7 +101,7 @@ if ($priority_filter !== 'all') {
 }
 
 if (!empty($search_term)) {
-    $query .= " AND (ip.title LIKE ? OR ip.description LIKE ? OR u.full_name LIKE ?)";
+    $query .= " AND (ip.title ILIKE ? OR ip.description ILIKE ? OR u.full_name ILIKE ?)";
     $search_param = "%$search_term%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -119,9 +119,9 @@ try {
     $projects = [];
 }
 
-// Get departments for dropdown
+// Get departments for dropdown (PostgreSQL uses true for boolean)
 try {
-    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = 1 ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
     $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $departments = [];
@@ -151,31 +151,70 @@ try {
     ");
     $priority_counts = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
+    // Get sidebar statistics
+    $stmt = $pdo->query("SELECT COUNT(*) as pending_maintenance FROM facility_bookings WHERE status = 'pending' AND purpose ILIKE '%maintenance%'");
+    $pending_maintenance = $stmt->fetch(PDO::FETCH_ASSOC)['pending_maintenance'] ?? 0;
+    
+    $stmt = $pdo->query("
+        SELECT COUNT(*) as security_incidents 
+        FROM tickets 
+        WHERE category_id = 5 
+        AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+    ");
+    $security_incidents = $stmt->fetch(PDO::FETCH_ASSOC)['security_incidents'] ?? 0;
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as active_clubs FROM clubs WHERE category = 'environment' AND status = 'active'");
+    $active_clubs = $stmt->fetch(PDO::FETCH_ASSOC)['active_clubs'] ?? 0;
+    
+    $stmt = $pdo->query("
+        SELECT COUNT(*) as upcoming_events 
+        FROM events 
+        WHERE category_id = 5 
+        AND event_date >= CURRENT_DATE
+        AND status = 'published'
+    ");
+    $upcoming_events = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_events'] ?? 0;
+    
+    // Get pending tickets count for sidebar badge
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$user_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    
 } catch (PDOException $e) {
     $total_projects = 0;
     $status_counts = [];
     $priority_counts = [];
+    $pending_maintenance = 0;
+    $security_incidents = 0;
+    $active_clubs = 0;
+    $upcoming_events = 0;
+    $pending_tickets = 0;
 }
 
-// Get unread messages count
+// Get unread messages count (PostgreSQL compatible)
 try {
     $stmt = $pdo->prepare("
-        SELECT COUNT(*) as unread_messages 
+        SELECT COUNT(*) as unread_count 
         FROM conversation_messages cm
         JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
         WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
     ");
     $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
 } catch (PDOException $e) {
     $unread_messages = 0;
+    error_log("Unread messages error: " . $e->getMessage());
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Environmental Projects - Minister of Environment & Security</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -194,6 +233,11 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
+            --purple: #6f42c1;
+            --teal: #20c997;
+            --indigo: #6610f2;
+            --orange: #fd7e14;
             --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -201,22 +245,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-green: #4caf50;
-            --secondary-green: #66bb6a;
-            --accent-green: #388e3c;
-            --light-green: #1b5e20;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-green) 0%, var(--accent-green) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -239,14 +269,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -256,7 +283,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -277,26 +303,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-green);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -304,22 +342,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-green);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -328,12 +351,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -344,25 +366,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-green);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-green);
         }
 
         .notification-badge {
@@ -372,50 +393,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-green);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -445,9 +501,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -462,16 +516,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -489,10 +552,11 @@ try {
         .page-actions {
             display: flex;
             gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
         .btn {
-            padding: 0.6rem 1.2rem;
+            padding: 0.75rem 1.5rem;
             border-radius: var(--border-radius);
             text-decoration: none;
             font-weight: 600;
@@ -538,7 +602,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-green);
+            border-left: 4px solid var(--primary-green);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -562,14 +626,19 @@ try {
             border-left-color: var(--danger);
         }
 
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -584,7 +653,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -592,12 +661,17 @@ try {
             color: var(--danger);
         }
 
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -605,7 +679,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -622,7 +696,7 @@ try {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
-            align-items: end;
+            align-items: flex-end;
         }
 
         .form-group {
@@ -638,7 +712,7 @@ try {
         }
 
         .form-control {
-            padding: 0.6rem 0.75rem;
+            padding: 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
             background: var(--white);
@@ -650,7 +724,7 @@ try {
         .form-control:focus {
             outline: none;
             border-color: var(--primary-green);
-            box-shadow: 0 0 0 2px rgba(40, 167, 69, 0.1);
+            box-shadow: 0 0 0 3px rgba(40, 167, 69, 0.1);
         }
 
         /* Table */
@@ -667,12 +741,17 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-green);
         }
 
         .table-header h3 {
             font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
         }
 
         .table {
@@ -694,6 +773,10 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-green);
+        }
+
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -704,22 +787,22 @@ try {
 
         .status-pending_review {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-approved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-rejected {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .status-in_progress {
             background: #cce7ff;
-            color: var(--primary-green);
+            color: #004085;
         }
 
         .status-completed {
@@ -736,26 +819,27 @@ try {
 
         .priority-high {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .action-buttons {
             display: flex;
             gap: 0.25rem;
+            flex-wrap: wrap;
         }
 
         .btn-sm {
-            padding: 0.25rem 0.5rem;
+            padding: 0.5rem 0.75rem;
             font-size: 0.7rem;
             border-radius: 4px;
         }
@@ -767,7 +851,7 @@ try {
 
         .btn-warning {
             background: var(--warning);
-            color: black;
+            color: var(--text-dark);
         }
 
         .btn-danger {
@@ -776,7 +860,7 @@ try {
         }
 
         .btn-info {
-            background: #17a2b8;
+            background: var(--info);
             color: white;
         }
 
@@ -813,7 +897,7 @@ try {
         }
 
         .modal-header h3 {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
         }
@@ -859,6 +943,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -882,39 +969,104 @@ try {
         }
 
         .empty-state i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
             opacity: 0.5;
         }
 
+        .empty-state h3 {
+            margin-bottom: 0.5rem;
+            font-size: 1rem;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-green);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .filters-form {
+                grid-template-columns: 1fr;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
             .form-row {
                 grid-template-columns: 1fr;
             }
@@ -924,28 +1076,50 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
+
+            .logo {
+                height: 32px;
             }
-            
-            .filters-form {
-                grid-template-columns: 1fr;
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -955,10 +1129,10 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -988,42 +1162,33 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="tickets.php">
-        <i class="fas fa-ticket-alt"></i>
-        <span>Student Tickets</span>
-        <?php 
-        // Get pending tickets count for this minister
-        try {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as pending_tickets 
-                FROM tickets 
-                WHERE assigned_to = ? AND status IN ('open', 'in_progress')
-            ");
-            $stmt->execute([$user_id]);
-            $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
-            
-            if ($pending_tickets > 0): ?>
-                <span class="menu-badge"><?php echo $pending_tickets; ?></span>
-            <?php endif;
-        } catch (PDOException $e) {
-            // Skip badge if error
-        }
-        ?>
-    </a>
-</li>
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="projects.php" class="active">
                         <i class="fas fa-leaf"></i>
                         <span>Environmental Projects</span>
+                        <?php if ($total_projects > 0): ?>
+                            <span class="menu-badge"><?php echo $total_projects; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1036,21 +1201,29 @@ try {
                     <a href="security.php">
                         <i class="fas fa-shield-alt"></i>
                         <span>Security</span>
+                        <?php if ($security_incidents > 0): ?>
+                            <span class="menu-badge"><?php echo $security_incidents; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="maintenance.php">
                         <i class="fas fa-tools"></i>
                         <span>Maintenance</span>
+                        <?php if ($pending_maintenance > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_maintenance; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="clubs.php">
                         <i class="fas fa-users"></i>
                         <span>Environmental Clubs</span>
+                        <?php if ($active_clubs > 0): ?>
+                            <span class="menu-badge"><?php echo $active_clubs; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1081,9 +1254,8 @@ try {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
@@ -1120,7 +1292,7 @@ try {
                         <i class="fas fa-leaf"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_projects; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_projects); ?></div>
                         <div class="stat-label">Total Projects</div>
                     </div>
                 </div>
@@ -1147,7 +1319,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $pending_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($pending_count); ?></div>
                         <div class="stat-label">Pending Review</div>
                     </div>
                 </div>
@@ -1156,7 +1328,7 @@ try {
                         <i class="fas fa-check"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $approved_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($approved_count); ?></div>
                         <div class="stat-label">Approved</div>
                     </div>
                 </div>
@@ -1165,7 +1337,7 @@ try {
                         <i class="fas fa-spinner"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $in_progress_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($in_progress_count); ?></div>
                         <div class="stat-label">In Progress</div>
                     </div>
                 </div>
@@ -1209,7 +1381,7 @@ try {
             <!-- Projects Table -->
             <div class="table-container">
                 <div class="table-header">
-                    <h3>Environmental Projects (<?php echo count($projects); ?>)</h3>
+                    <h3>Environmental Projects (<?php echo number_format(count($projects)); ?>)</h3>
                 </div>
                 <?php if (empty($projects)): ?>
                     <div class="empty-state">
@@ -1221,63 +1393,65 @@ try {
                         </button>
                     </div>
                 <?php else: ?>
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Project Title</th>
-                                <th>Student</th>
-                                <th>Department</th>
-                                <th>Status</th>
-                                <th>Priority</th>
-                                <th>Submitted</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($projects as $project): ?>
+                    <div class="table-wrapper">
+                        <table class="table">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        <strong><?php echo htmlspecialchars($project['title']); ?></strong>
-                                        <?php if (strlen($project['description']) > 100): ?>
-                                            <br><small><?php echo htmlspecialchars(substr($project['description'], 0, 100)) . '...'; ?></small>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php echo htmlspecialchars($project['student_name']); ?>
-                                        <br><small><?php echo htmlspecialchars($project['reg_number']); ?></small>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($project['department_name'] ?? 'N/A'); ?></td>
-                                    <td>
-                                        <span class="status-badge status-<?php echo $project['status']; ?>">
-                                            <?php echo str_replace('_', ' ', ucfirst($project['status'])); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="priority-badge priority-<?php echo $project['priority']; ?>">
-                                            <?php echo ucfirst($project['priority']); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <?php echo date('M j, Y', strtotime($project['submitted_at'])); ?>
-                                        <br><small><?php echo date('g:i A', strtotime($project['submitted_at'])); ?></small>
-                                    </td>
-                                    <td>
-                                        <div class="action-buttons">
-                                            <button class="btn btn-sm btn-info" onclick="viewProject(<?php echo $project['id']; ?>)">
-                                                <i class="fas fa-eye"></i>
-                                            </button>
-                                            <button class="btn btn-sm btn-warning" onclick="editProject(<?php echo $project['id']; ?>)">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                            <button class="btn btn-sm btn-danger" onclick="deleteProject(<?php echo $project['id']; ?>)">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        </div>
-                                    </td>
+                                    <th>Project Title</th>
+                                    <th>Student</th>
+                                    <th>Department</th>
+                                    <th>Status</th>
+                                    <th>Priority</th>
+                                    <th>Submitted</th>
+                                    <th>Actions</th>
                                 </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($projects as $project): ?>
+                                    <tr>
+                                        <td>
+                                            <strong><?php echo htmlspecialchars($project['title']); ?></strong>
+                                            <?php if (strlen($project['description']) > 100): ?>
+                                                <br><small><?php echo htmlspecialchars(substr($project['description'], 0, 100)) . '...'; ?></small>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php echo htmlspecialchars($project['student_name']); ?>
+                                            <br><small><?php echo htmlspecialchars($project['reg_number']); ?></small>
+                                        </td>
+                                        <td><?php echo htmlspecialchars($project['department_name'] ?? 'N/A'); ?></td>
+                                        <td>
+                                            <span class="status-badge status-<?php echo $project['status']; ?>">
+                                                <?php echo str_replace('_', ' ', ucfirst($project['status'])); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="priority-badge priority-<?php echo $project['priority']; ?>">
+                                                <?php echo ucfirst($project['priority']); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <?php echo date('M j, Y', strtotime($project['submitted_at'])); ?>
+                                            <br><small><?php echo date('g:i A', strtotime($project['submitted_at'])); ?></small>
+                                        </td>
+                                        <td>
+                                            <div class="action-buttons">
+                                                <button class="btn btn-sm btn-info" onclick="viewProject(<?php echo $project['id']; ?>)">
+                                                    <i class="fas fa-eye"></i> View
+                                                </button>
+                                                <button class="btn btn-sm btn-warning" onclick="editProject(<?php echo $project['id']; ?>)">
+                                                    <i class="fas fa-edit"></i> Edit
+                                                </button>
+                                                <button class="btn btn-sm btn-danger" onclick="deleteProject(<?php echo $project['id']; ?>)">
+                                                    <i class="fas fa-trash"></i> Delete
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 <?php endif; ?>
             </div>
         </main>
@@ -1333,30 +1507,76 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Modal Functions
         function openAddProjectModal() {
             document.getElementById('addProjectModal').style.display = 'flex';
+            document.body.style.overflow = 'hidden';
         }
 
         function closeAddProjectModal() {
             document.getElementById('addProjectModal').style.display = 'none';
+            document.body.style.overflow = '';
         }
 
         function viewProject(projectId) {
@@ -1382,6 +1602,37 @@ try {
                 closeAddProjectModal();
             }
         }
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.stat-card, .table-container, .filters-card');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
+        });
     </script>
 </body>
 </html>

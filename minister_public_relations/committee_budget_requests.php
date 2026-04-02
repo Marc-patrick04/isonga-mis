@@ -10,6 +10,12 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_public_relat
 
 $user_id = $_SESSION['user_id'];
 
+// Initialize variables to prevent undefined errors
+$unread_messages = 0;
+$pending_tickets = 0;
+$success = '';
+$error = '';
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -21,41 +27,41 @@ try {
 }
 
 // Handle form submissions
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['submit_request'])) {
-        // Handle new budget request submission
-        $request_title = $_POST['request_title'] ?? '';
-        $requested_amount = $_POST['requested_amount'] ?? '';
-        $purpose = $_POST['purpose'] ?? '';
-        $error = '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_request'])) {
+    // Handle new budget request submission
+    $request_title = trim($_POST['request_title'] ?? '');
+    $requested_amount = $_POST['requested_amount'] ?? '';
+    $purpose = trim($_POST['purpose'] ?? '');
+    
+    // Get the committee ID for Minister of Public Relations
+    try {
+        $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'minister_public_relations'");
+        $stmt->execute([$user_id]);
+        $committee_member = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Get the committee ID for Minister of Public Relations
-        try {
-            $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'minister_public_relations'");
-            $stmt->execute([$user_id]);
-            $committee_member = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$committee_member) {
-                $error = "You are not assigned as Minister of Public Relations in any committee.";
-            } else {
-                // For Minister of Public Relations, we use their committee_member_id as committee_id
-                $committee_id = $committee_member['id'];
-            }
-        } catch (PDOException $e) {
-            $error = "Error fetching committee information: " . $e->getMessage();
+        if (!$committee_member) {
+            $error = "You are not assigned as Minister of Public Relations in any committee.";
+        } else {
+            $committee_id = $committee_member['id'];
         }
-        
-        // SIMPLE FILE UPLOAD - FIXED VERSION
-        $action_plan_file_path = '';
-        
-        if (isset($_FILES['action_plan_file']) && $_FILES['action_plan_file']['error'] !== UPLOAD_ERR_NO_FILE) {
-            if ($_FILES['action_plan_file']['error'] === UPLOAD_ERR_OK) {
-                $upload_dir = '../assets/uploads/action_plans/';
-                if (!is_dir($upload_dir)) {
-                    mkdir($upload_dir, 0755, true);
-                }
-                
-                $file_extension = pathinfo($_FILES['action_plan_file']['name'], PATHINFO_EXTENSION);
+    } catch (PDOException $e) {
+        $error = "Error fetching committee information: " . $e->getMessage();
+    }
+    
+    // File upload handling
+    $action_plan_file_path = '';
+    
+    if (empty($error) && isset($_FILES['action_plan_file']) && $_FILES['action_plan_file']['error'] !== UPLOAD_ERR_NO_FILE) {
+        if ($_FILES['action_plan_file']['error'] === UPLOAD_ERR_OK) {
+            $upload_dir = '../assets/uploads/action_plans/';
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0755, true);
+            }
+            
+            $file_extension = strtolower(pathinfo($_FILES['action_plan_file']['name'], PATHINFO_EXTENSION));
+            $allowed_extensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+            
+            if (in_array($file_extension, $allowed_extensions)) {
                 $filename = 'action_plan_' . time() . '_' . $user_id . '.' . $file_extension;
                 $destination = $upload_dir . $filename;
                 
@@ -65,44 +71,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $error = "Failed to save uploaded file. Please try again.";
                 }
             } else {
-                $error = "File upload error. Please try again.";
+                $error = "Invalid file type. Allowed: PDF, DOC, DOCX, JPG, JPEG, PNG";
             }
         } else {
-            $error = "Please select an action plan file to upload.";
+            $error = "File upload error. Please try again.";
         }
-        
-        if (empty($error)) {
-            try {
-                $stmt = $pdo->prepare("
-                    INSERT INTO committee_budget_requests 
-                    (committee_id, request_title, action_plan_file_path, requested_amount, purpose, requested_by, request_date, status, created_at, updated_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, CURDATE(), 'submitted', NOW(), NOW())
-                ");
-                
-                $result = $stmt->execute([
-                    $committee_id, 
-                    $request_title, 
-                    $action_plan_file_path, 
-                    $requested_amount, 
-                    $purpose, 
-                    $user_id
-                ]);
-                
-                if ($result) {
-                    $success = "Budget request submitted successfully!";
-                    // Refresh the page to show the new request
-                    header("Location: committee_budget_requests.php");
-                    exit();
-                } else {
-                    $error = "Failed to submit budget request.";
-                }
-                
-            } catch (PDOException $e) {
-                $error = "Failed to submit budget request: " . $e->getMessage();
-                error_log("Budget request submission error: " . $e->getMessage());
-            }
-        }
+    } elseif (empty($error)) {
+        $error = "Please select an action plan file to upload.";
     }
+    
+    if (empty($error) && !empty($request_title) && !empty($requested_amount) && !empty($purpose)) {
+        try {
+            $stmt = $pdo->prepare("
+                INSERT INTO committee_budget_requests 
+                (committee_id, request_title, action_plan_file_path, requested_amount, purpose, requested_by, request_date, status, created_at, updated_at) 
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_DATE, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ");
+            
+            $result = $stmt->execute([
+                $committee_id, 
+                $request_title, 
+                $action_plan_file_path, 
+                $requested_amount, 
+                $purpose, 
+                $user_id
+            ]);
+            
+            if ($result) {
+                $success = "Budget request submitted successfully!";
+                // Refresh to show the new request
+                header("Location: committee_budget_requests.php?success=1");
+                exit();
+            } else {
+                $error = "Failed to submit budget request.";
+            }
+            
+        } catch (PDOException $e) {
+            $error = "Failed to submit budget request: " . $e->getMessage();
+            error_log("Budget request submission error: " . $e->getMessage());
+        }
+    } elseif (empty($error)) {
+        $error = "Please fill in all required fields.";
+    }
+}
+
+// Check for success parameter in URL
+if (isset($_GET['success'])) {
+    $success = "Budget request submitted successfully!";
 }
 
 // Get budget requests data for the Minister of Public Relations
@@ -132,8 +147,8 @@ try {
         $stmt = $pdo->prepare("
             SELECT 
                 COUNT(*) as total_requests,
-                SUM(CASE WHEN status IN ('approved_by_finance', 'approved_by_president', 'funded') THEN requested_amount ELSE 0 END) as total_approved_amount,
-                SUM(CASE WHEN status = 'funded' THEN requested_amount ELSE 0 END) as total_funded_amount,
+                COALESCE(SUM(CASE WHEN status IN ('approved_by_finance', 'approved_by_president', 'funded') THEN requested_amount ELSE 0 END), 0) as total_approved_amount,
+                COALESCE(SUM(CASE WHEN status = 'funded' THEN requested_amount ELSE 0 END), 0) as total_funded_amount,
                 COUNT(CASE WHEN status = 'submitted' THEN 1 END) as pending_review,
                 COUNT(CASE WHEN status IN ('approved_by_finance', 'approved_by_president', 'funded') THEN 1 END) as approved_requests
             FROM committee_budget_requests 
@@ -142,14 +157,43 @@ try {
         $stmt->execute([$user_id]);
         $stats = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        // Ensure stats are not null
         if (!$stats) {
             $stats = ['total_requests' => 0, 'total_approved_amount' => 0, 'total_funded_amount' => 0, 'pending_review' => 0, 'approved_requests' => 0];
         }
     } else {
         $budget_requests = [];
         $stats = ['total_requests' => 0, 'total_approved_amount' => 0, 'total_funded_amount' => 0, 'pending_review' => 0, 'approved_requests' => 0];
-        $error = "You are not assigned as Minister of Public Relations in any committee.";
+    }
+    
+    // Get unread messages count
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_messages 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $unread_messages = $result['unread_messages'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+        error_log("Unread messages query error: " . $e->getMessage());
+    }
+    
+    // Get pending tickets count
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as pending_tickets 
+            FROM tickets 
+            WHERE assigned_to = ? AND status IN ('open', 'in_progress')
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $pending_tickets = $result['pending_tickets'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_tickets = 0;
+        error_log("Pending tickets query error: " . $e->getMessage());
     }
     
 } catch (PDOException $e) {
@@ -163,13 +207,12 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Committee Action Funding - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png"> 
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* ALL YOUR EXISTING CSS STYLES REMAIN EXACTLY THE SAME */
         :root {
             --primary-blue: #3B82F6;
             --secondary-blue: #60A5FA;
@@ -183,6 +226,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -190,22 +234,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #60A5FA;
-            --secondary-blue: #93C5FD;
-            --accent-blue: #3B82F6;
-            --light-blue: #1E3A8A;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -221,21 +251,17 @@ try {
             background: var(--light-gray);
             min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -245,7 +271,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -254,10 +279,16 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -266,7 +297,7 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -274,18 +305,18 @@ try {
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -293,22 +324,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -317,41 +333,33 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -361,50 +369,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -434,9 +477,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -451,9 +492,15 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         /* Page Header */
@@ -462,6 +509,8 @@ try {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -478,18 +527,19 @@ try {
 
         .page-actions {
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
+        /* Buttons */
         .btn {
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
             text-decoration: none;
             font-weight: 600;
+            transition: var(--transition);
             font-size: 0.85rem;
             border: none;
             cursor: pointer;
-            transition: var(--transition);
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -515,6 +565,31 @@ try {
             background: var(--light-blue);
         }
 
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.75rem;
+        }
+
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -528,7 +603,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -553,13 +628,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -574,7 +650,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -587,7 +663,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -595,7 +671,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -606,6 +682,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -614,6 +692,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -647,6 +728,10 @@ try {
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -666,7 +751,13 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
         .status-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -675,11 +766,11 @@ try {
         }
 
         .status-draft { background: #e9ecef; color: #6c757d; }
-        .status-submitted { background: #fff3cd; color: var(--warning); }
-        .status-under_review { background: #cce7ff; color: var(--primary-blue); }
-        .status-approved_by_finance { background: #d4edda; color: var(--success); }
-        .status-approved_by_president { background: #d4edda; color: var(--success); }
-        .status-rejected { background: #f8d7da; color: var(--danger); }
+        .status-submitted { background: #fff3cd; color: #856404; }
+        .status-under_review { background: #cce7ff; color: #004085; }
+        .status-approved_by_finance { background: #d4edda; color: #155724; }
+        .status-approved_by_president { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
         .status-funded { background: #d1ecf1; color: #0c5460; }
 
         /* Form Styles */
@@ -712,10 +803,18 @@ try {
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
+        textarea.form-control {
+            resize: vertical;
+        }
+
         .form-text {
             font-size: 0.75rem;
             color: var(--dark-gray);
             margin-top: 0.25rem;
+        }
+
+        .required {
+            color: var(--danger);
         }
 
         /* Alert */
@@ -724,6 +823,9 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -743,21 +845,7 @@ try {
         .action-buttons {
             display: flex;
             gap: 0.5rem;
-        }
-
-        .btn-sm {
-            padding: 0.4rem 0.8rem;
-            font-size: 0.75rem;
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
+            flex-wrap: wrap;
         }
 
         /* Modal */
@@ -808,6 +896,11 @@ try {
             font-size: 1.2rem;
             color: var(--dark-gray);
             cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
         }
 
         .modal-body {
@@ -822,6 +915,34 @@ try {
             gap: 0.75rem;
         }
 
+        /* File Upload Area */
+        .file-upload-area {
+            border: 2px dashed var(--medium-gray);
+            padding: 1.5rem;
+            text-align: center;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+            cursor: pointer;
+        }
+
+        .file-upload-area:hover {
+            border-color: var(--primary-blue);
+            background: var(--light-blue);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
         /* File Preview Modal */
         .file-preview-modal .modal-content {
             max-width: 90%;
@@ -830,7 +951,7 @@ try {
 
         .file-preview-container {
             width: 100%;
-            height: 600px;
+            height: 500px;
             border: none;
             background: var(--white);
         }
@@ -842,29 +963,103 @@ try {
             justify-content: center;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
             }
-            
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
             .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                margin-left: 0 !important;
             }
-            
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .page-actions {
                 width: 100%;
                 justify-content: space-between;
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .action-buttons {
+                flex-direction: column;
             }
         }
 
@@ -872,35 +1067,77 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                width: 95%;
+            }
+
+            .modal-footer {
+                flex-direction: column;
+            }
+
+            .modal-footer .btn {
+                width: 100%;
+                justify-content: center;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Public Relations & Associations</h1>
+                    <h1>Isonga - Committee Action Funding</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
+                        <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
                 </div>
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
@@ -910,8 +1147,8 @@ try {
                         <div class="user-role">Minister of Public Relations</div>
                     </div>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -920,7 +1157,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -932,6 +1172,9 @@ try {
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Student Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -989,6 +1232,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1001,13 +1247,10 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
-                <div class="page-title">
-                    <h1>Committee Action Funding 💰</h1>
-                    <p>Request budget for your committee action plans and track funding status</p>
-                </div>
+               
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="window.location.reload()">
                         <i class="fas fa-sync-alt"></i> Refresh
@@ -1019,27 +1262,26 @@ try {
             </div>
 
             <!-- Alerts -->
-            <?php if (isset($success)): ?>
+            <?php if (!empty($success)): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $success; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($success); ?>
                 </div>
             <?php endif; ?>
 
-            <?php if (isset($error)): ?>
+            <?php if (!empty($error)): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $error; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($error); ?>
                 </div>
             <?php endif; ?>
 
             <!-- Statistics -->
-            <?php if (isset($stats)): ?>
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-file-invoice-dollar"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo isset($stats['total_requests']) ? $stats['total_requests'] : 0; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['total_requests']); ?></div>
                         <div class="stat-label">Total Requests</div>
                     </div>
                 </div>
@@ -1048,7 +1290,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo isset($stats['pending_review']) ? $stats['pending_review'] : 0; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['pending_review']); ?></div>
                         <div class="stat-label">Pending Review</div>
                     </div>
                 </div>
@@ -1057,7 +1299,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo isset($stats['approved_requests']) ? $stats['approved_requests'] : 0; ?></div>
+                        <div class="stat-number"><?php echo number_format($stats['approved_requests']); ?></div>
                         <div class="stat-label">Approved</div>
                     </div>
                 </div>
@@ -1066,17 +1308,16 @@ try {
                         <i class="fas fa-money-bill-wave"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format(isset($stats['total_approved_amount']) ? $stats['total_approved_amount'] : 0); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($stats['total_approved_amount']); ?></div>
                         <div class="stat-label">Total Approved</div>
                     </div>
                 </div>
             </div>
-            <?php endif; ?>
 
             <!-- Budget Requests Table -->
             <div class="card">
                 <div class="card-header">
-                    <h3>My Funding Requests</h3>
+                    <h3><i class="fas fa-list"></i> My Funding Requests</h3>
                     <div class="card-header-actions">
                         <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                             <i class="fas fa-sync-alt"></i>
@@ -1085,8 +1326,8 @@ try {
                 </div>
                 <div class="card-body">
                     <?php if (empty($budget_requests)): ?>
-                        <div style="text-align: center; color: var(--dark-gray); padding: 3rem;">
-                            <i class="fas fa-money-bill-wave" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state">
+                            <i class="fas fa-money-bill-wave"></i>
                             <h3>No Funding Requests Yet</h3>
                             <p>Submit your first funding request to get started with your committee action plans.</p>
                             <button class="btn btn-primary" onclick="openNewRequestModal()" style="margin-top: 1rem;">
@@ -1098,7 +1339,7 @@ try {
                             <table class="table">
                                 <thead>
                                     <tr>
-                                        <th>Request ID</th>
+                                        <th>ID</th>
                                         <th>Title</th>
                                         <th>Amount</th>
                                         <th>Status</th>
@@ -1110,7 +1351,12 @@ try {
                                     <?php foreach ($budget_requests as $request): ?>
                                         <tr>
                                             <td>#<?php echo $request['id']; ?></td>
-                                            <td><?php echo htmlspecialchars($request['request_title']); ?></td>
+                                            <td>
+                                                <strong><?php echo htmlspecialchars($request['request_title']); ?></strong>
+                                                <?php if (!empty($request['purpose'])): ?>
+                                                    <br><small class="form-text"><?php echo htmlspecialchars(substr($request['purpose'], 0, 50)); ?>...</small>
+                                                <?php endif; ?>
+                                            </td>
                                             <td>RWF <?php echo number_format($request['requested_amount']); ?></td>
                                             <td>
                                                 <span class="status-badge status-<?php echo $request['status']; ?>">
@@ -1120,26 +1366,21 @@ try {
                                             <td><?php echo date('M j, Y', strtotime($request['request_date'])); ?></td>
                                             <td>
                                                 <div class="action-buttons">
-                                                    <button class="btn btn-sm btn-outline" onclick="viewRequest(<?php echo $request['id']; ?>)">
+                                                    <button class="btn btn-sm btn-outline" onclick="viewRequest(<?php echo $request['id']; ?>)" title="View Details">
                                                         <i class="fas fa-eye"></i>
                                                     </button>
                                                     <?php if (!empty($request['action_plan_file_path'])): ?>
-                                                        <button class="btn btn-sm btn-primary" onclick="previewFile('<?php echo $request['action_plan_file_path']; ?>')" title="Preview File">
+                                                        <button class="btn btn-sm btn-primary" onclick="previewFile('<?php echo htmlspecialchars($request['action_plan_file_path']); ?>')" title="Preview File">
                                                             <i class="fas fa-file"></i>
                                                         </button>
-                                                        <a href="../<?php echo $request['action_plan_file_path']; ?>" class="btn btn-sm btn-success" title="Download File" download>
+                                                        <a href="../<?php echo htmlspecialchars($request['action_plan_file_path']); ?>" class="btn btn-sm btn-success" title="Download File" download>
                                                             <i class="fas fa-download"></i>
                                                         </a>
                                                     <?php endif; ?>
                                                     <?php if ($request['status'] === 'approved_by_president' && !empty($request['generated_letter_path'])): ?>
-                                                        <a href="../<?php echo $request['generated_letter_path']; ?>" class="btn btn-sm btn-success" title="Download Approval Letter" download>
+                                                        <a href="../<?php echo htmlspecialchars($request['generated_letter_path']); ?>" class="btn btn-sm btn-success" title="Download Approval Letter" download>
                                                             <i class="fas fa-file-pdf"></i>
                                                         </a>
-                                                    <?php endif; ?>
-                                                    <?php if ($request['status'] === 'draft'): ?>
-                                                        <button class="btn btn-sm btn-primary" onclick="editRequest(<?php echo $request['id']; ?>)">
-                                                            <i class="fas fa-edit"></i>
-                                                        </button>
                                                     <?php endif; ?>
                                                 </div>
                                             </td>
@@ -1158,33 +1399,39 @@ try {
     <div class="modal" id="newRequestModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 class="modal-title">New Funding Request</h3>
+                <h3 class="modal-title"><i class="fas fa-plus-circle"></i> New Funding Request</h3>
                 <button class="modal-close" onclick="closeNewRequestModal()">&times;</button>
             </div>
             <form method="POST" enctype="multipart/form-data" id="budgetRequestForm">
                 <div class="modal-body">
                     <div class="form-group">
-                        <label class="form-label">Request Title *</label>
+                        <label class="form-label">Request Title <span class="required">*</span></label>
                         <input type="text" class="form-control" name="request_title" placeholder="e.g., Media Campaign Budget" required>
+                        <div class="form-text">A clear, descriptive title for your funding request</div>
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Requested Amount (RWF) *</label>
-                        <input type="number" class="form-control" name="requested_amount" placeholder="Enter amount in RWF" min="0" step="0.01" required>
+                        <label class="form-label">Requested Amount (RWF) <span class="required">*</span></label>
+                        <input type="number" class="form-control" name="requested_amount" placeholder="Enter amount in RWF" min="0" step="100" required>
+                        <div class="form-text">Enter the total amount you are requesting</div>
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Purpose *</label>
+                        <label class="form-label">Purpose <span class="required">*</span></label>
                         <textarea class="form-control" name="purpose" rows="4" placeholder="Describe the purpose of this funding and how it will be used..." required></textarea>
+                        <div class="form-text">Explain why you need this funding and how it will benefit the committee's activities</div>
                     </div>
 
-                    <!-- SIMPLE FILE UPLOAD - EXACTLY LIKE VICE GUILD ACADEMIC VERSION -->
                     <div class="form-group">
-                        <label class="form-label">Action Plan Document *</label>
-                        <div style="border: 2px dashed #ccc; padding: 20px; text-align: center; border-radius: 8px;">
-                            <input type="file" name="action_plan_file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" required 
-                                   style="display: block; margin: 0 auto;">
-                            <div class="form-text" style="margin-top: 10px;">Click choose file to upload your action plan</div>
+                        <label class="form-label">Action Plan Document <span class="required">*</span></label>
+                        <div class="file-upload-area" onclick="document.getElementById('action_plan_file').click()">
+                            <i class="fas fa-cloud-upload-alt" style="font-size: 2rem; color: var(--primary-blue);"></i>
+                            <p style="margin-top: 0.5rem;">Click to upload or drag and drop</p>
+                            <input type="file" id="action_plan_file" name="action_plan_file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" required style="display: none;">
+                            <div class="form-text" style="margin-top: 0.5rem;">Supported: PDF, DOC, DOCX, JPG, JPEG, PNG (Max 5MB)</div>
+                        </div>
+                        <div id="file_name_display" style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--success); display: none;">
+                            <i class="fas fa-check-circle"></i> Selected: <span id="selected_file_name"></span>
                         </div>
                     </div>
                 </div>
@@ -1196,11 +1443,27 @@ try {
         </div>
     </div>
 
+    <!-- View Request Modal -->
+    <div class="modal" id="viewRequestModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title"><i class="fas fa-file-invoice"></i> Request Details</h3>
+                <button class="modal-close" onclick="closeViewModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="viewRequestContent">
+                <p>Loading...</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeViewModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- File Preview Modal -->
     <div class="modal file-preview-modal" id="filePreviewModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 class="modal-title">File Preview</h3>
+                <h3 class="modal-title"><i class="fas fa-file"></i> File Preview</h3>
                 <button class="modal-close" onclick="closeFilePreview()">&times;</button>
             </div>
             <div class="modal-body">
@@ -1218,21 +1481,59 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Modal Functions
@@ -1242,14 +1543,63 @@ try {
 
         function closeNewRequestModal() {
             document.getElementById('newRequestModal').classList.remove('show');
+            document.getElementById('budgetRequestForm').reset();
+            document.getElementById('file_name_display').style.display = 'none';
         }
 
         function viewRequest(requestId) {
-            window.location.href = 'view_budget_request.php?id=' + requestId;
+            const modal = document.getElementById('viewRequestModal');
+            const content = document.getElementById('viewRequestContent');
+            modal.classList.add('show');
+            content.innerHTML = '<p style="text-align: center;"><i class="fas fa-spinner fa-spin"></i> Loading request details...</p>';
+            
+            // Fetch request details via AJAX
+            fetch(`get_budget_request.php?id=${requestId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        content.innerHTML = `
+                            <div class="detail-section">
+                                <h4>Request Information</h4>
+                                <div class="detail-item"><strong>Title:</strong> ${escapeHtml(data.request.request_title)}</div>
+                                <div class="detail-item"><strong>Amount:</strong> RWF ${Number(data.request.requested_amount).toLocaleString()}</div>
+                                <div class="detail-item"><strong>Status:</strong> <span class="status-badge status-${data.request.status}">${data.request.status.replace(/_/g, ' ')}</span></div>
+                                <div class="detail-item"><strong>Request Date:</strong> ${new Date(data.request.request_date).toLocaleDateString()}</div>
+                            </div>
+                            <div class="detail-section">
+                                <h4>Purpose</h4>
+                                <p>${escapeHtml(data.request.purpose)}</p>
+                            </div>
+                            ${data.request.finance_approval_notes ? `
+                            <div class="detail-section">
+                                <h4>Finance Review Notes</h4>
+                                <p>${escapeHtml(data.request.finance_approval_notes)}</p>
+                            </div>
+                            ` : ''}
+                            ${data.request.president_approval_notes ? `
+                            <div class="detail-section">
+                                <h4>President Review Notes</h4>
+                                <p>${escapeHtml(data.request.president_approval_notes)}</p>
+                            </div>
+                            ` : ''}
+                            ${data.request.rejection_reason ? `
+                            <div class="detail-section">
+                                <h4>Rejection Reason</h4>
+                                <p style="color: var(--danger);">${escapeHtml(data.request.rejection_reason)}</p>
+                            </div>
+                            ` : ''}
+                        `;
+                    } else {
+                        content.innerHTML = `<p class="alert alert-danger">${escapeHtml(data.message)}</p>`;
+                    }
+                })
+                .catch(error => {
+                    content.innerHTML = `<p class="alert alert-danger">Error loading request details. Please try again.</p>`;
+                });
         }
 
-        function editRequest(requestId) {
-            window.location.href = 'edit_budget_request.php?id=' + requestId;
+        function closeViewModal() {
+            document.getElementById('viewRequestModal').classList.remove('show');
         }
 
         // File preview function
@@ -1258,22 +1608,19 @@ try {
             const previewFrame = document.getElementById('filePreviewFrame');
             const downloadLink = document.getElementById('downloadFileLink');
             
-            // Set download link
             downloadLink.href = '../' + filePath;
             downloadLink.download = filePath.split('/').pop();
             
-            // Handle different file types
             if (fileExtension === 'pdf') {
                 previewFrame.src = '../' + filePath;
-            } else if (['jpg', 'jpeg', 'png'].includes(fileExtension)) {
+            } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension)) {
                 previewFrame.src = '../' + filePath;
             } else if (['doc', 'docx'].includes(fileExtension)) {
                 previewFrame.src = 'https://docs.google.com/gview?url=' + encodeURIComponent(window.location.origin + '/isonga-mis/' + filePath) + '&embedded=true';
             } else {
-                previewFrame.src = 'about:blank';
-                previewFrame.innerHTML = `
-                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column; gap: 1rem;">
-                        <i class="fas fa-file" style="font-size: 4rem; color: var(--dark-gray);"></i>
+                previewFrame.srcdoc = `
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; flex-direction: column; gap: 1rem; font-family: Arial, sans-serif;">
+                        <i class="fas fa-file" style="font-size: 4rem; color: #6c757d;"></i>
                         <h3>File Preview Not Available</h3>
                         <p>Please download the file to view it.</p>
                     </div>
@@ -1288,11 +1635,30 @@ try {
             document.getElementById('filePreviewFrame').src = 'about:blank';
         }
 
-        // Close modal when clicking outside
+        // File input display
+        const fileInput = document.getElementById('action_plan_file');
+        if (fileInput) {
+            fileInput.addEventListener('change', function(e) {
+                const fileName = e.target.files[0]?.name;
+                if (fileName) {
+                    document.getElementById('selected_file_name').textContent = fileName;
+                    document.getElementById('file_name_display').style.display = 'block';
+                } else {
+                    document.getElementById('file_name_display').style.display = 'none';
+                }
+            });
+        }
+
+        // Close modals when clicking outside
         window.addEventListener('click', function(e) {
-            const modal = document.getElementById('newRequestModal');
-            if (e.target === modal) {
+            const newModal = document.getElementById('newRequestModal');
+            if (e.target === newModal) {
                 closeNewRequestModal();
+            }
+            
+            const viewModal = document.getElementById('viewRequestModal');
+            if (e.target === viewModal) {
+                closeViewModal();
             }
             
             const previewModal = document.getElementById('filePreviewModal');
@@ -1301,7 +1667,30 @@ try {
             }
         });
 
-        // NO COMPLEX FILE UPLOAD LOGIC - Simple file input works fine
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Auto-hide success messages after 5 seconds
+        setTimeout(() => {
+            const alerts = document.querySelectorAll('.alert-success');
+            alerts.forEach(alert => {
+                alert.style.display = 'none';
+            });
+        }, 5000);
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
+        });
     </script>
 </body>
 </html>

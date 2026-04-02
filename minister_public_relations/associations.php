@@ -968,7 +968,7 @@ try {
             font-size: 0.8rem;
             margin-bottom: 1rem;
             display: -webkit-box;
-            -webkit-line-clamp: 2;
+            /* -webkit-line-clamp: 2; */
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -1566,14 +1566,14 @@ try {
                 </button>
                 <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Associations Control Room</h1>
+                    <h1>Isonga - Associations</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
+                    <!-- <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
-                    </button>
+                    </button> -->
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1694,12 +1694,7 @@ try {
         <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
-                <div>
-                    <h1 class="page-title">Associations Control Room</h1>
-                    <p class="page-description">
-                        Manage all student associations, members, and activities
-                    </p>
-                </div>
+                
                 <div class="page-actions">
                     <?php if ($action === 'dashboard' || $action === 'view'): ?>
                         <a href="?action=add_association" class="btn btn-primary">
@@ -2488,21 +2483,21 @@ try {
 
     <script>
         // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
+        // const themeToggle = document.getElementById('themeToggle');
+        // const body = document.body;
 
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
+        // const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        // if (savedTheme === 'dark') {
+        //     body.classList.add('dark-mode');
+        //     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+        // themeToggle.addEventListener('click', () => {
+        //     body.classList.toggle('dark-mode');
+        //     const isDark = body.classList.contains('dark-mode');
+        //     localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        //     themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // });
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

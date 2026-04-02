@@ -10,6 +10,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_sports') {
 
 $user_id = $_SESSION['user_id'];
 
+// Initialize variables to prevent undefined errors
+$unread_messages = 0;
+$pending_tickets = 0;
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -38,7 +42,7 @@ function getAllClubs($pdo) {
             LEFT JOIN club_members cm ON c.id = cm.club_id AND cm.status = 'active'
             LEFT JOIN users u ON c.faculty_advisor = u.id
             WHERE c.category = 'entertainment'
-            GROUP BY c.id
+            GROUP BY c.id, u.full_name
             ORDER BY c.name ASC
         ");
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -143,14 +147,14 @@ function getAvailableStudents($pdo) {
 
 // Function to handle club form submission
 function handleClubForm($pdo, $user_id, $action, $club_id) {
-    $name = $_POST['name'] ?? '';
-    $description = $_POST['description'] ?? '';
-    $department = $_POST['department'] ?? '';
-    $established_date = $_POST['established_date'] ?? '';
-    $meeting_schedule = $_POST['meeting_schedule'] ?? '';
-    $meeting_location = $_POST['meeting_location'] ?? '';
+    $name = trim($_POST['name'] ?? '');
+    $description = trim($_POST['description'] ?? '');
+    $department = trim($_POST['department'] ?? '');
+    $established_date = $_POST['established_date'] ?? null;
+    $meeting_schedule = trim($_POST['meeting_schedule'] ?? '');
+    $meeting_location = trim($_POST['meeting_location'] ?? '');
     $faculty_advisor = $_POST['faculty_advisor'] ?? null;
-    $advisor_contact = $_POST['advisor_contact'] ?? '';
+    $advisor_contact = trim($_POST['advisor_contact'] ?? '');
     $status = $_POST['status'] ?? 'active';
     
     if (empty($name) || empty($description)) {
@@ -163,8 +167,8 @@ function handleClubForm($pdo, $user_id, $action, $club_id) {
             $stmt = $pdo->prepare("
                 INSERT INTO clubs (name, description, category, department, established_date, 
                                    meeting_schedule, meeting_location, faculty_advisor, 
-                                   advisor_contact, status, created_by, created_at)
-                VALUES (?, ?, 'entertainment', ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                                   advisor_contact, status, created_by, created_at, updated_at)
+                VALUES (?, ?, 'entertainment', ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $stmt->execute([
                 $name, $description, $department, $established_date, $meeting_schedule,
@@ -183,7 +187,7 @@ function handleClubForm($pdo, $user_id, $action, $club_id) {
                     faculty_advisor = ?,
                     advisor_contact = ?,
                     status = ?,
-                    updated_at = NOW()
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND category = 'entertainment'
             ");
             $stmt->execute([
@@ -202,7 +206,7 @@ function handleClubForm($pdo, $user_id, $action, $club_id) {
 }
 
 // Function to handle delete club
-function handleDeleteClub($pdo, $club_id, $user_id) {
+function handleDeleteClub($pdo, $club_id) {
     try {
         // Check if club has members
         $stmt = $pdo->prepare("SELECT COUNT(*) as member_count FROM club_members WHERE club_id = ? AND status = 'active'");
@@ -224,7 +228,7 @@ function handleDeleteClub($pdo, $club_id, $user_id) {
 }
 
 // Function to handle add member
-function handleAddMember($pdo, $club_id, $user_id) {
+function handleAddMember($pdo, $club_id) {
     $user_id_member = $_POST['user_id'] ?? 0;
     $role = $_POST['role'] ?? 'member';
     
@@ -259,8 +263,8 @@ function handleAddMember($pdo, $club_id, $user_id) {
         // Add member
         $stmt = $pdo->prepare("
             INSERT INTO club_members (club_id, user_id, reg_number, name, email, phone, 
-                                      department_id, program_id, academic_year, role, join_date, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', NOW())
+                                      department_id, program_id, academic_year, role, join_date, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ");
         $stmt->execute([
             $club_id, $user_id_member, $student['reg_number'], $student['full_name'], 
@@ -270,7 +274,7 @@ function handleAddMember($pdo, $club_id, $user_id) {
         
         // Update members count
         $stmt = $pdo->prepare("
-            UPDATE clubs SET members_count = members_count + 1, updated_at = NOW()
+            UPDATE clubs SET members_count = members_count + 1, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ");
         $stmt->execute([$club_id]);
@@ -285,17 +289,17 @@ function handleAddMember($pdo, $club_id, $user_id) {
 }
 
 // Function to handle remove member
-function handleRemoveMember($pdo, $club_id, $member_id, $user_id) {
+function handleRemoveMember($pdo, $club_id, $member_id) {
     try {
         $stmt = $pdo->prepare("
-            UPDATE club_members SET status = 'inactive', updated_at = NOW()
+            UPDATE club_members SET status = 'inactive', updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND club_id = ?
         ");
         $stmt->execute([$member_id, $club_id]);
         
         // Update members count
         $stmt = $pdo->prepare("
-            UPDATE clubs SET members_count = GREATEST(0, members_count - 1), updated_at = NOW()
+            UPDATE clubs SET members_count = GREATEST(0, members_count - 1), updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ");
         $stmt->execute([$club_id]);
@@ -309,13 +313,13 @@ function handleRemoveMember($pdo, $club_id, $member_id, $user_id) {
 
 // Function to handle add activity
 function handleAddActivity($pdo, $club_id, $user_id) {
-    $title = $_POST['title'] ?? '';
-    $description = $_POST['description'] ?? '';
+    $title = trim($_POST['title'] ?? '');
+    $description = trim($_POST['description'] ?? '');
     $activity_type = $_POST['activity_type'] ?? 'meeting';
     $activity_date = $_POST['activity_date'] ?? '';
-    $start_time = $_POST['start_time'] ?? '';
-    $end_time = $_POST['end_time'] ?? '';
-    $location = $_POST['location'] ?? '';
+    $start_time = $_POST['start_time'] ?? null;
+    $end_time = $_POST['end_time'] ?? null;
+    $location = trim($_POST['location'] ?? '');
     $budget = $_POST['budget'] ?? 0;
     $organizer_id = $_POST['organizer_id'] ?? $user_id;
     
@@ -328,8 +332,8 @@ function handleAddActivity($pdo, $club_id, $user_id) {
         $stmt = $pdo->prepare("
             INSERT INTO club_activities (club_id, title, description, activity_type, 
                                          activity_date, start_time, end_time, location, 
-                                         budget, organizer_id, status, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, NOW())
+                                         budget, organizer_id, status, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ");
         $stmt->execute([
             $club_id, $title, $description, $activity_type, $activity_date,
@@ -346,7 +350,7 @@ function handleAddActivity($pdo, $club_id, $user_id) {
 }
 
 // Function to handle delete activity
-function handleDeleteActivity($pdo, $activity_id, $user_id) {
+function handleDeleteActivity($pdo, $activity_id) {
     try {
         $stmt = $pdo->prepare("DELETE FROM club_activities WHERE id = ?");
         $stmt->execute([$activity_id]);
@@ -360,8 +364,8 @@ function handleDeleteActivity($pdo, $activity_id, $user_id) {
 // Function to handle add resource
 function handleAddResource($pdo, $club_id, $user_id) {
     $resource_type = $_POST['resource_type'] ?? 'document';
-    $title = $_POST['title'] ?? '';
-    $description = $_POST['description'] ?? '';
+    $title = trim($_POST['title'] ?? '');
+    $description = trim($_POST['description'] ?? '');
     $quantity = $_POST['quantity'] ?? 1;
     $value = $_POST['value'] ?? 0;
     
@@ -382,13 +386,13 @@ function handleAddResource($pdo, $club_id, $user_id) {
             mkdir($upload_dir, 0755, true);
         }
         
-        $file_name = basename($_FILES['resource_file']['name']);
+        $original_name = basename($_FILES['resource_file']['name']);
         $file_tmp = $_FILES['resource_file']['tmp_name'];
         $file_type = $_FILES['resource_file']['type'];
         $file_size = $_FILES['resource_file']['size'];
         
         // Generate unique filename
-        $file_ext = strtolower(pathinfo($file_name, PATHINFO_EXTENSION));
+        $file_ext = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
         $new_filename = uniqid('resource_', true) . '.' . $file_ext;
         $file_path = $upload_dir . $new_filename;
         
@@ -398,15 +402,15 @@ function handleAddResource($pdo, $club_id, $user_id) {
             return;
         }
         
-        $file_name = $new_filename; // Use the new filename
+        $file_name = $new_filename;
     }
     
     try {
         $stmt = $pdo->prepare("
             INSERT INTO club_resources (club_id, resource_type, title, description, 
                                         file_name, file_path, file_type, file_size,
-                                        quantity, value, status, uploaded_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, NOW())
+                                        quantity, value, status, uploaded_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'available', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ");
         $stmt->execute([
             $club_id, $resource_type, $title, $description, $file_name, $file_path,
@@ -423,7 +427,7 @@ function handleAddResource($pdo, $club_id, $user_id) {
 }
 
 // Function to handle delete resource
-function handleDeleteResource($pdo, $resource_id, $user_id) {
+function handleDeleteResource($pdo, $resource_id) {
     try {
         // Get file path before deletion
         $stmt = $pdo->prepare("SELECT file_path FROM club_resources WHERE id = ?");
@@ -457,7 +461,6 @@ $members = [];
 $activities = [];
 $resources = [];
 $students = [];
-$unread_messages = 0; // Initialize unread messages variable
 
 // Handle different actions
 switch ($action) {
@@ -479,21 +482,21 @@ switch ($action) {
         
     case 'delete':
         if ($club_id) {
-            handleDeleteClub($pdo, $club_id, $user_id);
+            handleDeleteClub($pdo, $club_id);
         }
         header('Location: clubs.php');
         exit();
         
     case 'add_member':
         if ($club_id && $_SERVER['REQUEST_METHOD'] === 'POST') {
-            handleAddMember($pdo, $club_id, $user_id);
+            handleAddMember($pdo, $club_id);
         }
         break;
         
     case 'remove_member':
         $member_id = $_GET['member_id'] ?? 0;
         if ($club_id && $member_id) {
-            handleRemoveMember($pdo, $club_id, $member_id, $user_id);
+            handleRemoveMember($pdo, $club_id, $member_id);
         }
         header("Location: clubs.php?action=view&id=$club_id");
         exit();
@@ -507,7 +510,7 @@ switch ($action) {
     case 'delete_activity':
         $activity_id = $_GET['activity_id'] ?? 0;
         if ($activity_id) {
-            handleDeleteActivity($pdo, $activity_id, $user_id);
+            handleDeleteActivity($pdo, $activity_id);
         }
         header("Location: clubs.php?action=view&id=$club_id");
         exit();
@@ -521,7 +524,7 @@ switch ($action) {
     case 'delete_resource':
         $resource_id = $_GET['resource_id'] ?? 0;
         if ($resource_id) {
-            handleDeleteResource($pdo, $resource_id, $user_id);
+            handleDeleteResource($pdo, $resource_id);
         }
         header("Location: clubs.php?action=view&id=$club_id");
         exit();
@@ -543,42 +546,51 @@ switch ($action) {
         break;
 }
 
-// Get unread messages count (do this AFTER all other initialization)
+// Get unread messages count
 try {
-    // Unread messages - Check if tables exist first
-    $stmt = $pdo->query("SHOW TABLES LIKE 'conversation_messages'");
-    $stmt2 = $pdo->query("SHOW TABLES LIKE 'conversation_participants'");
-    if ($stmt->rowCount() > 0 && $stmt2->rowCount() > 0) {
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*) as unread_messages 
-            FROM conversation_messages cm
-            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
-            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
-        ");
-        $stmt->execute([$user_id]);
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        $unread_messages = $result['unread_messages'] ?? 0;
-    }
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
 } catch (PDOException $e) {
-    error_log("Error getting unread messages: " . $e->getMessage());
     $unread_messages = 0;
+    error_log("Unread messages error: " . $e->getMessage());
+}
+
+// Get pending tickets count
+try {
+    $category_id = 6; // Sports category
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as pending_tickets 
+        FROM tickets 
+        WHERE category_id = ? 
+        AND status IN ('open', 'in_progress')
+    ");
+    $stmt->execute([$category_id]);
+    $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+} catch (PDOException $e) {
+    $pending_tickets = 0;
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Entertainment Clubs - Minister of Sports & Entertainment</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
-            --primary-blue: #0056b3;
-            --secondary-blue: #1e88e5;
-            --accent-blue: #0d47a1;
-            --light-blue: #e3f2fd;
+            --primary-blue: #3B82F6;
+            --secondary-blue: #60A5FA;
+            --accent-blue: #1D4ED8;
+            --light-blue: #EFF6FF;
             --white: #ffffff;
             --light-gray: #f8f9fa;
             --medium-gray: #e9ecef;
@@ -587,6 +599,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -594,22 +607,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -625,21 +624,17 @@ try {
             background: var(--light-gray);
             min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -649,7 +644,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -658,10 +652,16 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -670,7 +670,7 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -678,18 +678,18 @@ try {
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -697,22 +697,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -721,44 +706,35 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
-        /* ADD THIS - Notification Badge CSS */
         .notification-badge {
             position: absolute;
             top: -2px;
@@ -766,50 +742,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -839,16 +850,30 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
+        }
+
+        .menu-badge {
+            background: var(--danger);
+            color: white;
+            border-radius: 10px;
+            padding: 0.1rem 0.4rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: auto;
         }
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         /* Page Header */
@@ -857,6 +882,8 @@ try {
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-header h1 {
@@ -867,18 +894,20 @@ try {
 
         .page-actions {
             display: flex;
-            gap: 0.5rem;
+            gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
+        /* Buttons */
         .btn {
-            padding: 0.5rem 1rem;
+            padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
             text-decoration: none;
             font-weight: 600;
+            transition: var(--transition);
             font-size: 0.85rem;
             border: none;
             cursor: pointer;
-            transition: var(--transition);
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -904,13 +933,42 @@ try {
             background: var(--medium-gray);
         }
 
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            transform: translateY(-1px);
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.75rem;
+        }
+
         /* Alert Messages */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
+            animation: fadeInUp 0.3s ease;
         }
 
         .alert-success {
@@ -932,6 +990,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -940,6 +1000,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -953,6 +1016,10 @@ try {
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -972,12 +1039,13 @@ try {
             font-size: 0.75rem;
         }
 
-        .table tr:hover {
+        .table tbody tr:hover {
             background: var(--light-blue);
         }
 
         /* Status Badges */
         .status-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -987,31 +1055,32 @@ try {
 
         .status-active {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-inactive {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .status-scheduled {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         /* Role Badges */
         .role-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -1030,12 +1099,18 @@ try {
 
         .role-member {
             background: #f8f9fa;
-            color: var(--dark-gray);
+            color: #6c757d;
         }
 
         /* Forms */
         .form-group {
             margin-bottom: 1rem;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
         }
 
         .form-label {
@@ -1046,44 +1121,47 @@ try {
             font-size: 0.8rem;
         }
 
-        .form-control {
+        .form-control, .form-select {
             width: 100%;
-            padding: 0.5rem;
+            padding: 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
             font-size: 0.85rem;
             transition: var(--transition);
         }
 
-        .form-control:focus {
+        .form-control:focus, .form-select:focus {
             outline: none;
             border-color: var(--primary-blue);
-            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
+        textarea.form-control {
+            resize: vertical;
+            min-height: 100px;
         }
 
         /* Club View Layout */
         .club-header {
             background: var(--gradient-primary);
             color: white;
-            padding: 2rem;
+            padding: 1.5rem;
             border-radius: var(--border-radius);
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .club-info h2 {
-            font-size: 1.8rem;
+            font-size: 1.5rem;
             margin-bottom: 0.5rem;
         }
 
         .club-meta {
             display: flex;
-            gap: 2rem;
+            gap: 1.5rem;
             margin-top: 1rem;
             flex-wrap: wrap;
         }
@@ -1092,6 +1170,7 @@ try {
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            font-size: 0.8rem;
         }
 
         .club-sections {
@@ -1104,29 +1183,7 @@ try {
         .action-buttons {
             display: flex;
             gap: 0.5rem;
-        }
-
-        .btn-sm {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.75rem;
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-success:hover {
-            background: #218838;
+            flex-wrap: wrap;
         }
 
         /* Modal */
@@ -1143,84 +1200,255 @@ try {
             justify-content: center;
         }
 
+        .modal.show {
+            display: flex;
+        }
+
         .modal-content {
             background: var(--white);
             border-radius: var(--border-radius);
-            max-width: 600px;
+            box-shadow: var(--shadow-lg);
             width: 90%;
+            max-width: 600px;
             max-height: 90vh;
             overflow-y: auto;
+            animation: slideIn 0.3s ease;
         }
 
         .modal-header {
-            padding: 1rem;
+            padding: 1rem 1.5rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
+            position: sticky;
+            top: 0;
+        }
+
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            color: var(--dark-gray);
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
         }
 
         .modal-body {
-            padding: 1rem;
+            padding: 1.5rem;
         }
 
         .modal-footer {
-            padding: 1rem;
+            padding: 1rem 1.5rem;
             border-top: 1px solid var(--medium-gray);
-            text-align: right;
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .club-sections {
                 grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
-            .form-row {
-                grid-template-columns: 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
             .page-header {
                 flex-direction: column;
                 align-items: flex-start;
-                gap: 1rem;
             }
-            
+
             .page-actions {
                 width: 100%;
-                justify-content: flex-start;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .club-meta {
+                gap: 0.75rem;
+            }
+
+            .meta-item {
+                font-size: 0.7rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.8rem;
+            }
+
+            .club-header {
+                padding: 1rem;
+            }
+
+            .club-info h2 {
+                font-size: 1.2rem;
+            }
+
+            .modal-content {
+                width: 95%;
+            }
+
+            .modal-footer {
+                flex-direction: column;
+            }
+
+            .modal-footer .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .action-buttons {
+                flex-direction: column;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Minister of Sports & Entertainment</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1230,7 +1458,7 @@ try {
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
@@ -1249,10 +1477,13 @@ try {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-               <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1273,13 +1504,15 @@ try {
                     <a href="clubs.php" class="active">
                         <i class="fas fa-music"></i>
                         <span>Entertainment Clubs</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Support Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1295,7 +1528,7 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="action-funding.php" >
+                    <a href="action-funding.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Funding & Budget</span>
                     </a>
@@ -1322,6 +1555,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1334,17 +1570,17 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <?php if (isset($_SESSION['success'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success']); ?>
                     <?php unset($_SESSION['success']); ?>
                 </div>
             <?php endif; ?>
             
             <?php if (isset($_SESSION['error'])): ?>
                 <div class="alert alert-error">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error']); ?>
                     <?php unset($_SESSION['error']); ?>
                 </div>
             <?php endif; ?>
@@ -1352,7 +1588,7 @@ try {
             <?php if ($action === 'list'): ?>
                 <!-- Clubs List -->
                 <div class="page-header">
-                    <h1>Entertainment Clubs</h1>
+                    <h1><i class="fas fa-music"></i> Entertainment Clubs</h1>
                     <div class="page-actions">
                         <a href="clubs.php?action=add" class="btn btn-primary">
                             <i class="fas fa-plus"></i> Add New Club
@@ -1363,8 +1599,8 @@ try {
                 <div class="card">
                     <div class="card-body">
                         <?php if (empty($clubs)): ?>
-                            <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                <i class="fas fa-music" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-music"></i>
                                 <h3>No Entertainment Clubs Found</h3>
                                 <p>Get started by creating your first entertainment club</p>
                                 <a href="clubs.php?action=add" class="btn btn-primary" style="margin-top: 1rem;">
@@ -1372,55 +1608,60 @@ try {
                                 </a>
                             </div>
                         <?php else: ?>
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Club Name</th>
-                                        <th>Department</th>
-                                        <th>Members</th>
-                                        <th>Faculty Advisor</th>
-                                        <th>Status</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($clubs as $club_item): ?>
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($club_item['name']); ?></strong>
-                                                <div style="font-size: 0.75rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                    <?php echo htmlspecialchars(substr($club_item['description'], 0, 100)); ?>...
-                                                </div>
-                                            </td>
-                                            <td><?php echo htmlspecialchars($club_item['department']); ?></td>
-                                            <td>
-                                                <strong><?php echo $club_item['total_members']; ?></strong> members
-                                            </td>
-                                            <td><?php echo htmlspecialchars($club_item['advisor_name'] ?? 'Not assigned'); ?></td>
-                                            <td>
-                                                <span class="status-badge status-<?php echo $club_item['status']; ?>">
-                                                    <?php echo ucfirst($club_item['status']); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <div class="action-buttons">
-                                                    <a href="clubs.php?action=view&id=<?php echo $club_item['id']; ?>" class="btn btn-secondary btn-sm">
-                                                        <i class="fas fa-eye"></i>
-                                                    </a>
-                                                    <a href="clubs.php?action=edit&id=<?php echo $club_item['id']; ?>" class="btn btn-secondary btn-sm">
-                                                        <i class="fas fa-edit"></i>
-                                                    </a>
-                                                    <a href="clubs.php?action=delete&id=<?php echo $club_item['id']; ?>" 
-                                                       class="btn btn-danger btn-sm"
-                                                       onclick="return confirm('Are you sure you want to delete this club?')">
-                                                        <i class="fas fa-trash"></i>
-                                                    </a>
-                                                </div>
-                                            </td>
+                                            <th>Club Name</th>
+                                            <th>Department</th>
+                                            <th>Members</th>
+                                            <th>Faculty Advisor</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($clubs as $club_item): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($club_item['name']); ?></strong>
+                                                    <div class="form-text" style="margin-top: 0.25rem;">
+                                                        <?php echo htmlspecialchars(substr($club_item['description'], 0, 100)); ?>...
+                                                    </div>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($club_item['department']); ?></td>
+                                                <td>
+                                                    <span class="status-badge" style="background: var(--primary-blue); color: white;">
+                                                        <?php echo $club_item['total_members']; ?> members
+                                                    </span>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($club_item['advisor_name'] ?? 'Not assigned'); ?></td>
+                                                <td>
+                                                    <span class="status-badge status-<?php echo $club_item['status']; ?>">
+                                                        <?php echo ucfirst($club_item['status']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <div class="action-buttons">
+                                                        <a href="clubs.php?action=view&id=<?php echo $club_item['id']; ?>" class="btn btn-secondary btn-sm" title="View Details">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                        <a href="clubs.php?action=edit&id=<?php echo $club_item['id']; ?>" class="btn btn-secondary btn-sm" title="Edit Club">
+                                                            <i class="fas fa-edit"></i>
+                                                        </a>
+                                                        <a href="clubs.php?action=delete&id=<?php echo $club_item['id']; ?>" 
+                                                           class="btn btn-danger btn-sm"
+                                                           onclick="return confirm('Are you sure you want to delete this club?')"
+                                                           title="Delete Club">
+                                                            <i class="fas fa-trash"></i>
+                                                        </a>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -1428,7 +1669,7 @@ try {
             <?php elseif ($action === 'add' || $action === 'edit'): ?>
                 <!-- Add/Edit Club Form -->
                 <div class="page-header">
-                    <h1><?php echo $action === 'add' ? 'Add New Club' : 'Edit Club'; ?></h1>
+                    <h1><i class="fas <?php echo $action === 'add' ? 'fa-plus-circle' : 'fa-edit'; ?>"></i> <?php echo $action === 'add' ? 'Add New Club' : 'Edit Club'; ?></h1>
                     <div class="page-actions">
                         <a href="clubs.php" class="btn btn-secondary">
                             <i class="fas fa-arrow-left"></i> Back to List
@@ -1441,7 +1682,7 @@ try {
                         <form method="POST" action="">
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label class="form-label">Club Name *</label>
+                                    <label class="form-label">Club Name <span style="color: var(--danger);">*</span></label>
                                     <input type="text" name="name" class="form-control" 
                                            value="<?php echo htmlspecialchars($club['name'] ?? ''); ?>" required>
                                 </div>
@@ -1453,7 +1694,7 @@ try {
                             </div>
                             
                             <div class="form-group">
-                                <label class="form-label">Description *</label>
+                                <label class="form-label">Description <span style="color: var(--danger);">*</span></label>
                                 <textarea name="description" class="form-control" rows="4" required><?php echo htmlspecialchars($club['description'] ?? ''); ?></textarea>
                             </div>
                             
@@ -1465,7 +1706,7 @@ try {
                                 </div>
                                 <div class="form-group">
                                     <label class="form-label">Status</label>
-                                    <select name="status" class="form-control">
+                                    <select name="status" class="form-select">
                                         <option value="active" <?php echo ($club['status'] ?? '') === 'active' ? 'selected' : ''; ?>>Active</option>
                                         <option value="inactive" <?php echo ($club['status'] ?? '') === 'inactive' ? 'selected' : ''; ?>>Inactive</option>
                                     </select>
@@ -1490,15 +1731,15 @@ try {
                             <div class="form-row">
                                 <div class="form-group">
                                     <label class="form-label">Faculty Advisor</label>
-                                    <select name="faculty_advisor" class="form-control">
+                                    <select name="faculty_advisor" class="form-select">
                                         <option value="">Select Faculty Advisor</option>
                                         <?php
                                         try {
-                                            $stmt = $pdo->query("SELECT id, full_name FROM users WHERE role LIKE '%faculty%' OR role LIKE '%staff%' ORDER BY full_name");
+                                            $stmt = $pdo->query("SELECT id, full_name FROM users WHERE role ILIKE '%faculty%' OR role ILIKE '%staff%' ORDER BY full_name");
                                             $faculty = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                             foreach ($faculty as $f) {
                                                 $selected = ($club['faculty_advisor'] ?? '') == $f['id'] ? 'selected' : '';
-                                                echo "<option value=\"{$f['id']}\" $selected>{$f['full_name']}</option>";
+                                                echo "<option value=\"{$f['id']}\" $selected>" . htmlspecialchars($f['full_name']) . "</option>";
                                             }
                                         } catch (PDOException $e) {
                                             // Silently handle error
@@ -1551,10 +1792,10 @@ try {
                     </div>
                 </div>
                 
-                <div class="page-header" style="margin-top: 1.5rem;">
+                <div class="page-header" style="margin-top: 0;">
                     <div>
                         <h1 style="font-size: 1.2rem; margin-bottom: 0.5rem;">Club Management</h1>
-                        <p style="color: var(--dark-gray); font-size: 0.9rem;">
+                        <p class="form-text">
                             <?php echo htmlspecialchars($club['meeting_schedule']); ?> at <?php echo htmlspecialchars($club['meeting_location']); ?>
                         </p>
                     </div>
@@ -1580,55 +1821,58 @@ try {
                         <!-- Members Section -->
                         <div class="card">
                             <div class="card-header">
-                                <h3>Club Members (<?php echo count($members); ?>)</h3>
+                                <h3><i class="fas fa-users"></i> Club Members (<?php echo count($members); ?>)</h3>
                             </div>
                             <div class="card-body">
                                 <?php if (empty($members)): ?>
-                                    <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
-                                        <i class="fas fa-users" style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5;"></i>
+                                    <div class="empty-state">
+                                        <i class="fas fa-users"></i>
                                         <p>No members yet</p>
                                         <button onclick="showModal('addMemberModal')" class="btn btn-primary btn-sm">
                                             <i class="fas fa-user-plus"></i> Add Members
                                         </button>
                                     </div>
                                 <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Registration No.</th>
-                                                <th>Role</th>
-                                                <th>Join Date</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($members as $member): ?>
+                                    <div class="table-responsive">
+                                        <table class="table">
+                                            <thead>
                                                 <tr>
-                                                    <td>
-                                                        <strong><?php echo htmlspecialchars($member['name']); ?></strong>
-                                                        <div style="font-size: 0.75rem; color: var(--dark-gray);">
-                                                            <?php echo htmlspecialchars($member['program_name'] ?? ''); ?>
-                                                        </div>
-                                                    </td>
-                                                    <td><?php echo htmlspecialchars($member['reg_number']); ?></td>
-                                                    <td>
-                                                        <span class="role-badge role-<?php echo $member['role']; ?>">
-                                                            <?php echo ucfirst($member['role']); ?>
-                                                        </span>
-                                                    </td>
-                                                    <td><?php echo date('M j, Y', strtotime($member['join_date'])); ?></td>
-                                                    <td>
-                                                        <a href="clubs.php?action=remove_member&id=<?php echo $club_id; ?>&member_id=<?php echo $member['id']; ?>" 
-                                                           class="btn btn-danger btn-sm"
-                                                           onclick="return confirm('Remove <?php echo htmlspecialchars($member['name']); ?> from the club?')">
-                                                            <i class="fas fa-user-minus"></i>
-                                                        </a>
-                                                    </td>
+                                                    <th>Name</th>
+                                                    <th>Registration No.</th>
+                                                    <th>Role</th>
+                                                    <th>Join Date</th>
+                                                    <th>Actions</th>
                                                 </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($members as $member): ?>
+                                                    <tr>
+                                                        <td>
+                                                            <strong><?php echo htmlspecialchars($member['name']); ?></strong>
+                                                            <div class="form-text">
+                                                                <?php echo htmlspecialchars($member['program_name'] ?? ''); ?>
+                                                            </div>
+                                                        </td>
+                                                        <td><?php echo htmlspecialchars($member['reg_number']); ?></td>
+                                                        <td>
+                                                            <span class="role-badge role-<?php echo $member['role']; ?>">
+                                                                <?php echo ucfirst($member['role']); ?>
+                                                            </span>
+                                                        </td>
+                                                        <td><?php echo date('M j, Y', strtotime($member['join_date'])); ?></td>
+                                                        <td>
+                                                            <a href="clubs.php?action=remove_member&id=<?php echo $club_id; ?>&member_id=<?php echo $member['id']; ?>" 
+                                                               class="btn btn-danger btn-sm"
+                                                               onclick="return confirm('Remove <?php echo htmlspecialchars($member['name']); ?> from the club?')"
+                                                               title="Remove Member">
+                                                                <i class="fas fa-user-minus"></i>
+                                                            </a>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -1636,57 +1880,61 @@ try {
                         <!-- Activities Section -->
                         <div class="card">
                             <div class="card-header">
-                                <h3>Club Activities</h3>
+                                <h3><i class="fas fa-calendar-alt"></i> Club Activities</h3>
                             </div>
                             <div class="card-body">
                                 <?php if (empty($activities)): ?>
-                                    <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
+                                    <div class="empty-state">
+                                        <i class="fas fa-calendar-alt"></i>
                                         <p>No activities scheduled</p>
                                         <button onclick="showModal('addActivityModal')" class="btn btn-primary btn-sm">
                                             <i class="fas fa-calendar-plus"></i> Schedule Activity
                                         </button>
                                     </div>
                                 <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Activity</th>
-                                                <th>Date & Time</th>
-                                                <th>Location</th>
-                                                <th>Type</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($activities as $activity): ?>
+                                    <div class="table-responsive">
+                                        <table class="table">
+                                            <thead>
                                                 <tr>
-                                                    <td>
-                                                        <strong><?php echo htmlspecialchars($activity['title']); ?></strong>
-                                                        <div style="font-size: 0.75rem; color: var(--dark-gray);">
-                                                            <?php echo htmlspecialchars(substr($activity['description'], 0, 50)); ?>...
-                                                        </div>
-                                                    </td>
-                                                    <td>
-                                                        <?php echo date('M j, Y', strtotime($activity['activity_date'])); ?><br>
-                                                        <small><?php echo date('g:i A', strtotime($activity['start_time'])); ?></small>
-                                                    </td>
-                                                    <td><?php echo htmlspecialchars($activity['location']); ?></td>
-                                                    <td>
-                                                        <span class="status-badge status-<?php echo $activity['status']; ?>">
-                                                            <?php echo ucfirst($activity['activity_type']); ?>
-                                                        </span>
-                                                    </td>
-                                                    <td>
-                                                        <a href="clubs.php?action=delete_activity&id=<?php echo $club_id; ?>&activity_id=<?php echo $activity['id']; ?>" 
-                                                           class="btn btn-danger btn-sm"
-                                                           onclick="return confirm('Delete this activity?')">
-                                                            <i class="fas fa-trash"></i>
-                                                        </a>
-                                                    </td>
+                                                    <th>Activity</th>
+                                                    <th>Date & Time</th>
+                                                    <th>Location</th>
+                                                    <th>Type</th>
+                                                    <th>Actions</th>
                                                 </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($activities as $activity): ?>
+                                                    <tr>
+                                                        <td>
+                                                            <strong><?php echo htmlspecialchars($activity['title']); ?></strong>
+                                                            <div class="form-text">
+                                                                <?php echo htmlspecialchars(substr($activity['description'], 0, 50)); ?>...
+                                                            </div>
+                                                        </td>
+                                                        <td>
+                                                            <?php echo date('M j, Y', strtotime($activity['activity_date'])); ?><br>
+                                                            <small><?php echo date('g:i A', strtotime($activity['start_time'])); ?></small>
+                                                        </td>
+                                                        <td><?php echo htmlspecialchars($activity['location']); ?></td>
+                                                        <td>
+                                                            <span class="status-badge status-<?php echo $activity['status']; ?>">
+                                                                <?php echo ucfirst($activity['activity_type']); ?>
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <a href="clubs.php?action=delete_activity&id=<?php echo $club_id; ?>&activity_id=<?php echo $activity['id']; ?>" 
+                                                               class="btn btn-danger btn-sm"
+                                                               onclick="return confirm('Delete this activity?')"
+                                                               title="Delete Activity">
+                                                                <i class="fas fa-trash"></i>
+                                                            </a>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -1697,11 +1945,12 @@ try {
                         <!-- Resources Section -->
                         <div class="card">
                             <div class="card-header">
-                                <h3>Club Resources</h3>
+                                <h3><i class="fas fa-folder-open"></i> Club Resources</h3>
                             </div>
                             <div class="card-body">
                                 <?php if (empty($resources)): ?>
-                                    <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
+                                    <div class="empty-state">
+                                        <i class="fas fa-folder-open"></i>
                                         <p>No resources available</p>
                                         <button onclick="showModal('addResourceModal')" class="btn btn-primary btn-sm">
                                             <i class="fas fa-file-upload"></i> Upload Resource
@@ -1711,27 +1960,33 @@ try {
                                     <div style="display: grid; gap: 0.75rem;">
                                         <?php foreach ($resources as $resource): ?>
                                             <div style="padding: 0.75rem; background: var(--light-gray); border-radius: var(--border-radius);">
-                                                <div style="display: flex; justify-content: space-between; align-items: start;">
-                                                    <div>
+                                                <div style="display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 0.5rem;">
+                                                    <div style="flex: 1;">
                                                         <strong style="font-size: 0.85rem;"><?php echo htmlspecialchars($resource['title']); ?></strong>
-                                                        <div style="font-size: 0.75rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                            <?php echo htmlspecialchars($resource['description']); ?>
-                                                        </div>
-                                                        <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                            <i class="fas fa-file"></i> <?php echo strtoupper(pathinfo($resource['file_name'], PATHINFO_EXTENSION)); ?> • 
-                                                            <?php echo round($resource['file_size'] / 1024, 1); ?> KB
-                                                        </div>
+                                                        <?php if ($resource['description']): ?>
+                                                            <div class="form-text" style="margin-top: 0.25rem;">
+                                                                <?php echo htmlspecialchars($resource['description']); ?>
+                                                            </div>
+                                                        <?php endif; ?>
+                                                        <?php if ($resource['file_name']): ?>
+                                                            <div class="form-text" style="margin-top: 0.25rem;">
+                                                                <i class="fas fa-file"></i> <?php echo strtoupper(pathinfo($resource['file_name'], PATHINFO_EXTENSION)); ?> • 
+                                                                <?php echo round($resource['file_size'] / 1024, 1); ?> KB
+                                                            </div>
+                                                        <?php endif; ?>
                                                     </div>
                                                     <div class="action-buttons">
                                                         <?php if (!empty($resource['file_path'])): ?>
                                                             <a href="../<?php echo htmlspecialchars($resource['file_path']); ?>" 
-                                                               class="btn btn-secondary btn-sm" target="_blank" download>
+                                                               class="btn btn-secondary btn-sm" target="_blank" download
+                                                               title="Download">
                                                                 <i class="fas fa-download"></i>
                                                             </a>
                                                         <?php endif; ?>
                                                         <a href="clubs.php?action=delete_resource&id=<?php echo $club_id; ?>&resource_id=<?php echo $resource['id']; ?>" 
                                                            class="btn btn-danger btn-sm"
-                                                           onclick="return confirm('Delete this resource?')">
+                                                           onclick="return confirm('Delete this resource?')"
+                                                           title="Delete Resource">
                                                             <i class="fas fa-trash"></i>
                                                         </a>
                                                     </div>
@@ -1746,28 +2001,28 @@ try {
                         <!-- Quick Stats -->
                         <div class="card">
                             <div class="card-header">
-                                <h3>Club Information</h3>
+                                <h3><i class="fas fa-info-circle"></i> Club Information</h3>
                             </div>
                             <div class="card-body">
                                 <div style="display: grid; gap: 0.75rem;">
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Members</span>
-                                        <strong style="color: var(--text-dark);"><?php echo $club['members_count']; ?></strong>
+                                        <span class="form-text">Total Members</span>
+                                        <strong><?php echo $club['members_count']; ?></strong>
                                     </div>
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Department</span>
-                                        <strong style="color: var(--text-dark);"><?php echo htmlspecialchars($club['department']); ?></strong>
+                                        <span class="form-text">Department</span>
+                                        <strong><?php echo htmlspecialchars($club['department']); ?></strong>
                                     </div>
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Meeting Schedule</span>
-                                        <strong style="color: var(--text-dark); font-size: 0.8rem;"><?php echo htmlspecialchars($club['meeting_schedule']); ?></strong>
+                                        <span class="form-text">Meeting Schedule</span>
+                                        <strong class="form-text"><?php echo htmlspecialchars($club['meeting_schedule']); ?></strong>
                                     </div>
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Meeting Location</span>
-                                        <strong style="color: var(--text-dark); font-size: 0.8rem;"><?php echo htmlspecialchars($club['meeting_location']); ?></strong>
+                                        <span class="form-text">Meeting Location</span>
+                                        <strong class="form-text"><?php echo htmlspecialchars($club['meeting_location']); ?></strong>
                                     </div>
                                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Status</span>
+                                        <span class="form-text">Status</span>
                                         <span class="status-badge status-<?php echo $club['status']; ?>">
                                             <?php echo ucfirst($club['status']); ?>
                                         </span>
@@ -1783,14 +2038,14 @@ try {
                 <div id="addMemberModal" class="modal">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h3>Add Member to Club</h3>
-                            <button onclick="hideModal('addMemberModal')" style="background: none; border: none; font-size: 1.25rem; cursor: pointer;">×</button>
+                            <h3><i class="fas fa-user-plus"></i> Add Member to Club</h3>
+                            <button class="modal-close" onclick="hideModal('addMemberModal')">&times;</button>
                         </div>
                         <div class="modal-body">
                             <form method="POST" action="clubs.php?action=add_member&id=<?php echo $club_id; ?>">
                                 <div class="form-group">
-                                    <label class="form-label">Select Student *</label>
-                                    <select name="user_id" class="form-control" required>
+                                    <label class="form-label">Select Student <span style="color: var(--danger);">*</span></label>
+                                    <select name="user_id" class="form-select" required>
                                         <option value="">Choose a student...</option>
                                         <?php foreach ($students as $student): ?>
                                             <option value="<?php echo $student['id']; ?>">
@@ -1802,7 +2057,7 @@ try {
                                 </div>
                                 <div class="form-group">
                                     <label class="form-label">Role</label>
-                                    <select name="role" class="form-control">
+                                    <select name="role" class="form-select">
                                         <option value="member">Member</option>
                                         <option value="leader">Leader</option>
                                         <option value="deputy">Deputy Leader</option>
@@ -1823,13 +2078,13 @@ try {
                 <div id="addActivityModal" class="modal">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h3>Add Club Activity</h3>
-                            <button onclick="hideModal('addActivityModal')" style="background: none; border: none; font-size: 1.25rem; cursor: pointer;">×</button>
+                            <h3><i class="fas fa-calendar-plus"></i> Add Club Activity</h3>
+                            <button class="modal-close" onclick="hideModal('addActivityModal')">&times;</button>
                         </div>
                         <div class="modal-body">
                             <form method="POST" action="clubs.php?action=add_activity&id=<?php echo $club_id; ?>">
                                 <div class="form-group">
-                                    <label class="form-label">Activity Title *</label>
+                                    <label class="form-label">Activity Title <span style="color: var(--danger);">*</span></label>
                                     <input type="text" name="title" class="form-control" required>
                                 </div>
                                 <div class="form-group">
@@ -1839,7 +2094,7 @@ try {
                                 <div class="form-row">
                                     <div class="form-group">
                                         <label class="form-label">Activity Type</label>
-                                        <select name="activity_type" class="form-control">
+                                        <select name="activity_type" class="form-select">
                                             <option value="meeting">Regular Meeting</option>
                                             <option value="rehearsal">Rehearsal</option>
                                             <option value="performance">Performance</option>
@@ -1855,7 +2110,7 @@ try {
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label class="form-label">Date *</label>
+                                        <label class="form-label">Date <span style="color: var(--danger);">*</span></label>
                                         <input type="date" name="activity_date" class="form-control" required>
                                     </div>
                                     <div class="form-group">
@@ -1886,14 +2141,14 @@ try {
                 <div id="addResourceModal" class="modal">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h3>Add Club Resource</h3>
-                            <button onclick="hideModal('addResourceModal')" style="background: none; border: none; font-size: 1.25rem; cursor: pointer;">×</button>
+                            <h3><i class="fas fa-file-upload"></i> Add Club Resource</h3>
+                            <button class="modal-close" onclick="hideModal('addResourceModal')">&times;</button>
                         </div>
                         <div class="modal-body">
                             <form method="POST" action="clubs.php?action=add_resource&id=<?php echo $club_id; ?>" enctype="multipart/form-data">
                                 <div class="form-group">
                                     <label class="form-label">Resource Type</label>
-                                    <select name="resource_type" class="form-control">
+                                    <select name="resource_type" class="form-select">
                                         <option value="document">Document</option>
                                         <option value="music">Music File</option>
                                         <option value="video">Video</option>
@@ -1902,7 +2157,7 @@ try {
                                     </select>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label">Title *</label>
+                                    <label class="form-label">Title <span style="color: var(--danger);">*</span></label>
                                     <input type="text" name="title" class="form-control" required>
                                 </div>
                                 <div class="form-group">
@@ -1922,9 +2177,9 @@ try {
                                 <div class="form-group">
                                     <label class="form-label">Upload File</label>
                                     <input type="file" name="resource_file" class="form-control">
-                                    <small style="color: var(--dark-gray); font-size: 0.75rem;">
+                                    <div class="form-text">
                                         Max file size: 10MB. Supported formats: PDF, DOC, MP3, MP4, JPG, PNG
-                                    </small>
+                                    </div>
                                 </div>
                                 <div class="modal-footer">
                                     <button type="button" onclick="hideModal('addResourceModal')" class="btn btn-secondary">Cancel</button>
@@ -1940,39 +2195,99 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Modal Functions
         function showModal(modalId) {
-            document.getElementById(modalId).style.display = 'flex';
+            document.getElementById(modalId).classList.add('show');
+            document.body.style.overflow = 'hidden';
         }
 
         function hideModal(modalId) {
-            document.getElementById(modalId).style.display = 'none';
+            document.getElementById(modalId).classList.remove('show');
+            document.body.style.overflow = '';
         }
 
         // Close modal when clicking outside
-        window.onclick = function(event) {
+        window.addEventListener('click', function(event) {
             if (event.target.classList.contains('modal')) {
-                event.target.style.display = 'none';
+                event.target.classList.remove('show');
+                document.body.style.overflow = '';
             }
-        }
+        });
+
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            const alerts = document.querySelectorAll('.alert');
+            alerts.forEach(alert => {
+                alert.style.opacity = '0';
+                setTimeout(() => {
+                    alert.style.display = 'none';
+                }, 300);
+            });
+        }, 5000);
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card, .club-header');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
+            });
+        });
     </script>
 </body>
 </html>

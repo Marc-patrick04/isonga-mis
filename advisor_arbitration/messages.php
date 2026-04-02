@@ -36,7 +36,7 @@ try {
         SELECT COUNT(*) as upcoming_hearings 
         FROM arbitration_hearings ah 
         JOIN arbitration_cases ac ON ah.case_id = ac.id 
-        WHERE ah.hearing_date >= CURDATE() 
+        WHERE ah.hearing_date >= CURRENT_DATE 
         AND ah.status = 'scheduled'
         AND ac.assigned_to = ?
     ");
@@ -132,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$conversation_id, $user_id, $message_content]);
                     
                     // Update conversation updated_at
-                    $update_stmt = $pdo->prepare("UPDATE conversations SET updated_at = NOW() WHERE id = ?");
+                    $update_stmt = $pdo->prepare("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                     $update_stmt->execute([$conversation_id]);
                     
                     $_SESSION['success'] = "Message sent successfully!";
@@ -258,9 +258,9 @@ if (isset($_SESSION['error'])) {
     <style>
         /* All CSS styles remain exactly the same as in your code */
         :root {
-            --primary-blue: #007bff;
-            --secondary-blue: #0056b3;
-            --accent-blue: #0069d9;
+            --primary-blue: #0056b3;
+            --secondary-blue: #1e88e5;
+            --accent-blue: #0d47a1;
             --light-blue: #e3f2fd;
             --white: #ffffff;
             --light-gray: #f8f9fa;
@@ -278,13 +278,15 @@ if (isset($_SESSION['error'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
+            --primary-blue: #1e88e5;
+            --secondary-blue: #64b5f6;
+            --accent-blue: #1565c0;
+            --light-blue: #0d1b2a;
             --white: #1a1a1a;
             --light-gray: #2d2d2d;
             --medium-gray: #3d3d3d;
@@ -317,14 +319,11 @@ if (isset($_SESSION['error'])) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -335,12 +334,26 @@ if (isset($_SESSION['error'])) {
             align-items: center;
             padding: 0 1.5rem;
             width: 100%;
+            gap: 0.5rem;
         }
 
         .logo-section {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logos {
@@ -373,8 +386,8 @@ if (isset($_SESSION['error'])) {
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -382,7 +395,7 @@ if (isset($_SESSION['error'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
+            font-size: 1rem;
             border: 3px solid var(--medium-gray);
             overflow: hidden;
             position: relative;
@@ -407,11 +420,11 @@ if (isset($_SESSION['error'])) {
         .user-name {
             font-weight: 600;
             color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -422,26 +435,33 @@ if (isset($_SESSION['error'])) {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+            transform: translateY(-1px);
         }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
 
         .notification-badge {
             position: absolute;
@@ -450,27 +470,24 @@ if (isset($_SESSION['error'])) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
+            font-weight: 500;
             transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
         }
 
         .logout-btn:hover {
@@ -480,20 +497,58 @@ if (isset($_SESSION['error'])) {
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -523,9 +578,8 @@ if (isset($_SESSION['error'])) {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -540,19 +594,27 @@ if (isset($_SESSION['error'])) {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         /* Messages Container */
         .messages-container {
             display: grid;
-            grid-template-columns: 350px 1fr;
+            grid-template-columns: 320px 1fr;
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            height: calc(100vh - 180px);
+            min-height: 500px;
         }
 
         /* Conversations Sidebar */
@@ -563,12 +625,12 @@ if (isset($_SESSION['error'])) {
         }
 
         .sidebar-header {
-            padding: 1.25rem;
+            padding: 1rem;
             border-bottom: 1px solid var(--medium-gray);
         }
 
         .sidebar-header h2 {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             margin-bottom: 0.75rem;
             color: var(--text-dark);
@@ -620,7 +682,7 @@ if (isset($_SESSION['error'])) {
         .conversation-item {
             display: flex;
             align-items: center;
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             border-bottom: 1px solid var(--medium-gray);
             cursor: pointer;
             transition: var(--transition);
@@ -637,8 +699,8 @@ if (isset($_SESSION['error'])) {
         }
 
         .conversation-avatar {
-            width: 40px;
-            height: 40px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -646,6 +708,7 @@ if (isset($_SESSION['error'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
+            font-size: 0.8rem;
             flex-shrink: 0;
         }
 
@@ -657,6 +720,7 @@ if (isset($_SESSION['error'])) {
         .conversation-title {
             font-weight: 600;
             color: var(--text-dark);
+            font-size: 0.85rem;
             margin-bottom: 0.25rem;
             white-space: nowrap;
             overflow: hidden;
@@ -664,7 +728,7 @@ if (isset($_SESSION['error'])) {
         }
 
         .conversation-preview {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
             white-space: nowrap;
             overflow: hidden;
@@ -673,24 +737,25 @@ if (isset($_SESSION['error'])) {
 
         .conversation-meta {
             text-align: right;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
             display: flex;
             flex-direction: column;
             align-items: flex-end;
             gap: 0.25rem;
+            flex-shrink: 0;
         }
 
         .unread-badge {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
+            width: 18px;
+            height: 18px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.7rem;
+            font-size: 0.6rem;
             font-weight: 600;
         }
 
@@ -701,35 +766,35 @@ if (isset($_SESSION['error'])) {
         }
 
         .chat-header {
-            padding: 1.25rem;
+            padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
             background: var(--white);
         }
 
         .chat-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
             margin-bottom: 0.25rem;
         }
 
         .chat-participants {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
         .messages-area {
             flex: 1;
-            padding: 1.25rem;
+            padding: 1rem 1.25rem;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .message {
-            max-width: 70%;
-            padding: 0.75rem 1rem;
+            max-width: 75%;
+            padding: 0.6rem 0.875rem;
             border-radius: var(--border-radius);
             position: relative;
         }
@@ -757,7 +822,7 @@ if (isset($_SESSION['error'])) {
         }
 
         .message-sender {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             margin-bottom: 0.25rem;
             opacity: 0.8;
@@ -766,35 +831,36 @@ if (isset($_SESSION['error'])) {
         .message-content {
             margin-bottom: 0.5rem;
             line-height: 1.4;
+            font-size: 0.85rem;
         }
 
         .message-time {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             opacity: 0.7;
             text-align: right;
         }
 
         .message-input-area {
-            padding: 1.25rem;
+            padding: 1rem 1.25rem;
             border-top: 1px solid var(--medium-gray);
             background: var(--white);
         }
 
         .message-form {
             display: flex;
-            gap: 0.75rem;
+            gap: 0.5rem;
             align-items: flex-end;
         }
 
         .message-input {
             flex: 1;
-            padding: 0.75rem;
+            padding: 0.6rem 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             resize: none;
-            min-height: 44px;
-            max-height: 120px;
+            min-height: 40px;
+            max-height: 100px;
             font-family: inherit;
         }
 
@@ -804,8 +870,8 @@ if (isset($_SESSION['error'])) {
         }
 
         .send-button {
-            width: 44px;
-            height: 44px;
+            width: 40px;
+            height: 40px;
             border: none;
             background: var(--primary-blue);
             color: white;
@@ -953,9 +1019,9 @@ if (isset($_SESSION['error'])) {
         /* Toast Messages */
         .toast {
             position: fixed;
-            top: 100px;
-            right: 1.5rem;
-            padding: 0.75rem 1.25rem;
+            top: 90px;
+            right: 1rem;
+            padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             color: white;
             font-weight: 500;
@@ -963,6 +1029,7 @@ if (isset($_SESSION['error'])) {
             transform: translateX(400px);
             transition: transform 0.3s ease;
             max-width: 350px;
+            font-size: 0.8rem;
         }
 
         .toast.show {
@@ -980,18 +1047,18 @@ if (isset($_SESSION['error'])) {
         /* Empty State */
         .empty-state {
             text-align: center;
-            padding: 3rem 2rem;
+            padding: 2rem 1.5rem;
             color: var(--dark-gray);
         }
 
         .empty-state i {
-            font-size: 3rem;
-            margin-bottom: 1rem;
+            font-size: 2.5rem;
+            margin-bottom: 0.75rem;
             opacity: 0.5;
         }
 
         .empty-state h3 {
-            font-size: 1.2rem;
+            font-size: 1rem;
             margin-bottom: 0.5rem;
             color: var(--text-dark);
         }
@@ -1000,108 +1067,139 @@ if (isset($_SESSION['error'])) {
             margin-bottom: 1rem;
         }
 
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .messages-container {
-                grid-template-columns: 300px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .messages-container {
+                grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .messages-container {
-                grid-template-columns: 1fr;
-                height: calc(100vh - 120px);
-            }
-            
-            .conversations-sidebar {
-                display: none;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .messages-container {
+                height: calc(100vh - 140px);
             }
         }
 
         @media (max-width: 480px) {
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .messages-container {
+                height: calc(100vh - 150px);
+            }
+
             .message {
                 max-width: 85%;
             }
-        }
 
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .messages-container {
-                grid-template-columns: 300px 1fr;
+            .conversation-avatar {
+                width: 32px;
+                height: 32px;
+                font-size: 0.7rem;
             }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
-            }
-        }
 
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .conversation-title {
+                font-size: 0.8rem;
             }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .messages-container {
-                grid-template-columns: 1fr;
-                height: calc(100vh - 120px);
-            }
-            
-            .conversations-sidebar {
-                display: none;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
-        }
 
-        @media (max-width: 480px) {
-            .main-content {
-                padding: 1rem;
-            }
-            
-            .message {
-                max-width: 85%;
+            .conversation-preview {
+                font-size: 0.7rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1111,6 +1209,9 @@ if (isset($_SESSION['error'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
@@ -1144,7 +1245,10 @@ if (isset($_SESSION['error'])) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-         <nav class="sidebar">
+         <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" >
@@ -1501,6 +1605,67 @@ if (isset($_SESSION['error'])) {
                     themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
                 });
             }
+
+            // Sidebar Toggle
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+            
+            const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+            if (savedSidebarState === 'true') {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('sidebar-collapsed');
+                if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            }
+            
+            function toggleSidebar() {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('sidebar-collapsed');
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                localStorage.setItem('sidebarCollapsed', isCollapsed);
+                const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+                if (sidebarToggle) sidebarToggle.innerHTML = icon;
+                if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+            }
+            
+            if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+            if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+            
+            // Mobile Menu Toggle
+            const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+            const mobileOverlay = document.getElementById('mobileOverlay');
+            
+            if (mobileMenuToggle) {
+                mobileMenuToggle.addEventListener('click', () => {
+                    const isOpen = sidebar.classList.toggle('mobile-open');
+                    mobileOverlay.classList.toggle('active', isOpen);
+                    mobileMenuToggle.innerHTML = isOpen
+                        ? '<i class="fas fa-times"></i>'
+                        : '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = isOpen ? 'hidden' : '';
+                });
+            }
+            
+            if (mobileOverlay) {
+                mobileOverlay.addEventListener('click', () => {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                });
+            }
+
+            // Close mobile nav on resize to desktop
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 992) {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            });
 
             // Functions
             function closeModals() {

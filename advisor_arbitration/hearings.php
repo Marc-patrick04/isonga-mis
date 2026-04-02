@@ -36,10 +36,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $hearing = $stmt->fetch();
             
             if ($hearing) {
+                // PostgreSQL uses CURRENT_TIMESTAMP instead of NOW()
                 $stmt = $pdo->prepare("
                     UPDATE arbitration_hearings 
                     SET hearing_date = ?, location = ?, purpose = ?, minutes = ?, 
-                        decisions = ?, next_hearing_date = ?, status = ?, attendees = ?, updated_at = NOW()
+                        decisions = ?, next_hearing_date = ?, status = ?, attendees = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([
@@ -67,7 +68,7 @@ $filter_date_from = $_GET['date_from'] ?? '';
 $filter_date_to = $_GET['date_to'] ?? '';
 $search = $_GET['search'] ?? '';
 
-// Build query for hearings - only show hearings for cases assigned to this advisor
+// Build query for hearings - only show hearings for cases assigned to this advisor (PostgreSQL syntax)
 $query = "SELECT ah.*, 
                  ac.case_number, ac.title as case_title, ac.complainant_name, ac.respondent_name,
                  u.full_name as creator_name
@@ -84,17 +85,19 @@ if (!empty($filter_status)) {
 }
 
 if (!empty($filter_date_from)) {
-    $query .= " AND DATE(ah.hearing_date) >= ?";
+    // PostgreSQL uses ::date for casting
+    $query .= " AND ah.hearing_date::date >= ?";
     $params[] = $filter_date_from;
 }
 
 if (!empty($filter_date_to)) {
-    $query .= " AND DATE(ah.hearing_date) <= ?";
+    $query .= " AND ah.hearing_date::date <= ?";
     $params[] = $filter_date_to;
 }
 
 if (!empty($search)) {
-    $query .= " AND (ac.case_number LIKE ? OR ac.title LIKE ? OR ac.complainant_name LIKE ? OR ac.respondent_name LIKE ?)";
+    // PostgreSQL uses ILIKE for case-insensitive search
+    $query .= " AND (ac.case_number ILIKE ? OR ac.title ILIKE ? OR ac.complainant_name ILIKE ? OR ac.respondent_name ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -150,7 +153,7 @@ try {
     $committee_members = [];
 }
 
-// Get statistics for assigned cases hearings
+// Get statistics for assigned cases hearings (PostgreSQL syntax)
 try {
     // Total hearings for assigned cases
     $stmt = $pdo->prepare("
@@ -160,17 +163,17 @@ try {
         WHERE ac.assigned_to = ?
     ");
     $stmt->execute([$user_id]);
-    $total_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $total_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
     
-    // Scheduled hearings for assigned cases
+    // Scheduled hearings for assigned cases - PostgreSQL uses CURRENT_DATE
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as scheduled 
         FROM arbitration_hearings ah
         JOIN arbitration_cases ac ON ah.case_id = ac.id
-        WHERE ac.assigned_to = ? AND ah.status = 'scheduled' AND ah.hearing_date >= CURDATE()
+        WHERE ac.assigned_to = ? AND ah.status = 'scheduled' AND ah.hearing_date >= CURRENT_DATE
     ");
     $stmt->execute([$user_id]);
-    $scheduled_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['scheduled'];
+    $scheduled_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['scheduled'] ?? 0;
     
     // Completed hearings for assigned cases
     $stmt = $pdo->prepare("
@@ -180,28 +183,29 @@ try {
         WHERE ac.assigned_to = ? AND ah.status = 'completed'
     ");
     $stmt->execute([$user_id]);
-    $completed_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['completed'];
+    $completed_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['completed'] ?? 0;
     
-    // Today's hearings for assigned cases
+    // Today's hearings for assigned cases - PostgreSQL uses ::date
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as today 
         FROM arbitration_hearings ah
         JOIN arbitration_cases ac ON ah.case_id = ac.id
-        WHERE ac.assigned_to = ? AND DATE(ah.hearing_date) = CURDATE()
+        WHERE ac.assigned_to = ? AND ah.hearing_date::date = CURRENT_DATE
     ");
     $stmt->execute([$user_id]);
-    $today_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['today'];
+    $today_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['today'] ?? 0;
     
-    // Upcoming hearings for assigned cases (next 7 days)
+    // Upcoming hearings for assigned cases (next 7 days) - PostgreSQL uses INTERVAL
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as upcoming 
         FROM arbitration_hearings ah
         JOIN arbitration_cases ac ON ah.case_id = ac.id
-        WHERE ac.assigned_to = ? AND ah.hearing_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY) 
+        WHERE ac.assigned_to = ? AND ah.hearing_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
         AND ah.status = 'scheduled'
     ");
     $stmt->execute([$user_id]);
-    $upcoming_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming'];
+    $upcoming_hearings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming'] ?? 0;
+    
 } catch (PDOException $e) {
     $total_hearings = $scheduled_hearings = $completed_hearings = $today_hearings = $upcoming_hearings = 0;
 }
@@ -225,7 +229,7 @@ try {
         WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
     ");
     $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'];
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
 } catch (PDOException $e) {
     $unread_messages = 0;
 }
@@ -234,7 +238,7 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>My Hearings - Arbitration Advisor - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -253,6 +257,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -260,6 +265,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -298,14 +305,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -315,7 +319,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -336,26 +339,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -363,7 +378,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
+            font-size: 1rem;
             border: 3px solid var(--medium-gray);
             overflow: hidden;
             position: relative;
@@ -387,12 +402,12 @@ try {
 
         .user-name {
             font-weight: 600;
+            font-size: 0.9rem;
             color: var(--text-dark);
-            font-size: 0.95rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -403,25 +418,25 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+            transform: translateY(-1px);
         }
 
         .notification-badge {
@@ -431,50 +446,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -504,9 +554,8 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -521,16 +570,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -558,7 +616,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -582,14 +640,19 @@ try {
             border-left-color: var(--danger);
         }
 
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -604,7 +667,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -612,12 +675,17 @@ try {
             color: var(--danger);
         }
 
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -625,7 +693,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -719,16 +787,6 @@ try {
             transform: translateY(-1px);
         }
 
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-1px);
-        }
-
         .btn-sm {
             padding: 0.25rem 0.5rem;
             font-size: 0.7rem;
@@ -748,6 +806,8 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .card-header h3 {
@@ -761,16 +821,22 @@ try {
         }
 
         /* Table */
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.8rem;
+            min-width: 900px;
         }
 
         .table th, .table td {
             padding: 0.75rem;
             text-align: left;
             border-bottom: 1px solid var(--medium-gray);
+            white-space: nowrap;
         }
 
         .table th {
@@ -794,21 +860,22 @@ try {
             font-size: 0.7rem;
             font-weight: 600;
             text-transform: uppercase;
+            white-space: nowrap;
         }
 
         .status-scheduled {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-postponed {
@@ -818,12 +885,13 @@ try {
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .action-buttons {
             display: flex;
             gap: 0.25rem;
+            white-space: nowrap;
         }
 
         /* Alert Messages */
@@ -833,6 +901,9 @@ try {
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -857,6 +928,7 @@ try {
             width: 100%;
             height: 100%;
             background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(2px);
             align-items: center;
             justify-content: center;
         }
@@ -869,6 +941,18 @@ try {
             max-height: 90vh;
             overflow-y: auto;
             box-shadow: var(--shadow-lg);
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .modal-header {
@@ -981,46 +1065,129 @@ try {
             color: var(--dark-gray);
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
             }
-            
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .filter-form {
                 grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
             .table {
                 display: none;
             }
-            
+
             .hearing-cards {
                 display: grid;
             }
-            
+
             .form-row {
                 grid-template-columns: 1fr;
             }
@@ -1030,21 +1197,46 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .modal-content {
+                margin: 10% auto;
                 padding: 1rem;
             }
-            
-            .page-header {
-                flex-direction: column;
-                gap: 1rem;
-                align-items: flex-start;
-            }
-            
+
             .action-buttons {
                 flex-direction: column;
             }
-            
+
             .action-buttons .btn {
                 width: 100%;
                 justify-content: center;
@@ -1053,10 +1245,16 @@ try {
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1066,8 +1264,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1099,16 +1297,19 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-               <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="cases.php" >
+                    <a href="cases.php">
                         <i class="fas fa-balance-scale"></i>
                         <span>My Cases</span>
                     </a>
@@ -1125,7 +1326,6 @@ try {
                         <span>Elections</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1147,7 +1347,6 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1158,7 +1357,7 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
@@ -1189,7 +1388,7 @@ try {
                         <i class="fas fa-gavel"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_hearings; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_hearings); ?></div>
                         <div class="stat-label">Total Hearings</div>
                     </div>
                 </div>
@@ -1198,7 +1397,7 @@ try {
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $scheduled_hearings; ?></div>
+                        <div class="stat-number"><?php echo number_format($scheduled_hearings); ?></div>
                         <div class="stat-label">Scheduled</div>
                     </div>
                 </div>
@@ -1207,16 +1406,16 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $completed_hearings; ?></div>
+                        <div class="stat-number"><?php echo number_format($completed_hearings); ?></div>
                         <div class="stat-label">Completed</div>
                     </div>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card info">
                     <div class="stat-icon">
                         <i class="fas fa-calendar-day"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $today_hearings; ?></div>
+                        <div class="stat-number"><?php echo number_format($today_hearings); ?></div>
                         <div class="stat-label">Today</div>
                     </div>
                 </div>
@@ -1229,7 +1428,7 @@ try {
                         <i class="fas fa-calendar-week"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_hearings; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_hearings); ?></div>
                         <div class="stat-label">Next 7 Days</div>
                     </div>
                 </div>
@@ -1281,77 +1480,77 @@ try {
                 </div>
                 <div class="card-body">
                     <?php if (empty($hearings)): ?>
-                        <div style="text-align: center; padding: 3rem; color: var(--dark-gray);">
-                            <i class="fas fa-gavel" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state">
+                            <i class="fas fa-gavel"></i>
                             <h3>No hearings found</h3>
                             <p>No arbitration hearings found for your assigned cases.</p>
                         </div>
                     <?php else: ?>
                         <!-- Desktop Table -->
-                        <table class="table">
-                            <thead>
-                                <tr>
-                                    <th>Case</th>
-                                    <th>Date & Time</th>
-                                    <th>Location</th>
-                                    <th>Purpose</th>
-                                    <th>Status</th>
-                                    <th>Parties</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($hearings as $hearing): ?>
+                        <div class="table-wrapper">
+                            <table class="table">
+                                <thead>
                                     <tr>
-                                        <td>
-                                            <div style="font-weight: 500;"><?php echo htmlspecialchars($hearing['case_number']); ?></div>
-                                            <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                <?php echo htmlspecialchars($hearing['case_title']); ?>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div style="font-weight: 500;">
-                                                <?php echo date('M j, Y', strtotime($hearing['hearing_date'])); ?>
-                                            </div>
-                                            <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                <?php echo date('g:i A', strtotime($hearing['hearing_date'])); ?>
-                                            </div>
-                                        </td>
-                                        <td><?php echo htmlspecialchars($hearing['location']); ?></td>
-                                        <td style="max-width: 200px;">
-                                            <?php echo strlen($hearing['purpose']) > 100 ? 
-                                                htmlspecialchars(substr($hearing['purpose'], 0, 100)) . '...' : 
-                                                htmlspecialchars($hearing['purpose']); ?>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge status-<?php echo $hearing['status']; ?>">
-                                                <?php echo ucfirst($hearing['status']); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div style="font-size: 0.8rem;">
-                                                <strong>C:</strong> <?php echo htmlspecialchars($hearing['complainant_name']); ?><br>
-                                                <strong>R:</strong> <?php echo htmlspecialchars($hearing['respondent_name']); ?>
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <div class="action-buttons">
-                                                <button class="btn btn-outline btn-sm" 
-                                                        onclick="openEditModal(<?php echo htmlspecialchars(json_encode($hearing)); ?>)"
-                                                        title="Edit Hearing">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <button class="btn btn-success btn-sm" 
-                                                        onclick="viewHearingDetails(<?php echo $hearing['id']; ?>)"
-                                                        title="View Details">
-                                                    <i class="fas fa-eye"></i>
-                                                </button>
-                                            </div>
-                                        </td>
+                                        <th>Case</th>
+                                        <th>Date & Time</th>
+                                        <th>Location</th>
+                                        <th>Purpose</th>
+                                        <th>Status</th>
+                                        <th>Parties</th>
+                                        <th>Actions</th>
                                     </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($hearings as $hearing): ?>
+                                        <tr>
+                                            <td>
+                                                <div style="font-weight: 500;"><?php echo htmlspecialchars($hearing['case_number']); ?></div>
+                                                <div style="font-size: 0.7rem; color: var(--dark-gray); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px;">
+                                                    <?php echo htmlspecialchars($hearing['case_title']); ?>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div style="font-weight: 500;">
+                                                    <?php echo date('M j, Y', strtotime($hearing['hearing_date'])); ?>
+                                                </div>
+                                                <div style="font-size: 0.7rem; color: var(--dark-gray);">
+                                                    <?php echo date('g:i A', strtotime($hearing['hearing_date'])); ?>
+                                                </div>
+                                            </td>
+                                            <td><?php echo htmlspecialchars($hearing['location'] ?? 'TBA'); ?></td>
+                                            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">
+                                                <?php echo htmlspecialchars($hearing['purpose'] ?? 'N/A'); ?>
+                                            </td>
+                                            <td>
+                                                <span class="status-badge status-<?php echo $hearing['status']; ?>">
+                                                    <?php echo ucfirst($hearing['status']); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div style="font-size: 0.8rem;">
+                                                    <div><strong>C:</strong> <?php echo htmlspecialchars($hearing['complainant_name'] ?? 'N/A'); ?></div>
+                                                    <div><strong>R:</strong> <?php echo htmlspecialchars($hearing['respondent_name'] ?? 'N/A'); ?></div>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="action-buttons">
+                                                    <button class="btn btn-outline btn-sm" 
+                                                            onclick="openEditModal(<?php echo htmlspecialchars(json_encode($hearing)); ?>)"
+                                                            title="Edit Hearing">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                    <button class="btn btn-success btn-sm" 
+                                                            onclick="viewHearingDetails(<?php echo $hearing['id']; ?>)"
+                                                            title="View Details">
+                                                        <i class="fas fa-eye"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
 
                         <!-- Mobile Cards -->
                         <div class="hearing-cards">
@@ -1360,7 +1559,9 @@ try {
                                     <div class="hearing-card-header">
                                         <div>
                                             <div class="hearing-card-title"><?php echo htmlspecialchars($hearing['case_number']); ?></div>
-                                            <div class="hearing-card-case"><?php echo htmlspecialchars($hearing['case_title']); ?></div>
+                                            <div class="hearing-card-case" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;">
+                                                <?php echo htmlspecialchars($hearing['case_title']); ?>
+                                            </div>
                                         </div>
                                         <span class="status-badge status-<?php echo $hearing['status']; ?>">
                                             <?php echo ucfirst($hearing['status']); ?>
@@ -1374,17 +1575,15 @@ try {
                                         </div>
                                         <div class="hearing-detail">
                                             <i class="fas fa-map-marker-alt"></i>
-                                            <?php echo htmlspecialchars($hearing['location']); ?>
+                                            <?php echo htmlspecialchars($hearing['location'] ?? 'TBA'); ?>
                                         </div>
                                         <div class="hearing-detail">
                                             <i class="fas fa-users"></i>
-                                            <?php echo htmlspecialchars($hearing['complainant_name']); ?> vs <?php echo htmlspecialchars($hearing['respondent_name']); ?>
+                                            <?php echo htmlspecialchars($hearing['complainant_name'] ?? 'N/A'); ?> vs <?php echo htmlspecialchars($hearing['respondent_name'] ?? 'N/A'); ?>
                                         </div>
                                         <div class="hearing-detail">
                                             <i class="fas fa-info-circle"></i>
-                                            <?php echo strlen($hearing['purpose']) > 100 ? 
-                                                htmlspecialchars(substr($hearing['purpose'], 0, 100)) . '...' : 
-                                                htmlspecialchars($hearing['purpose']); ?>
+                                            <?php echo htmlspecialchars($hearing['purpose'] ?? 'N/A'); ?>
                                         </div>
                                     </div>
                                     
@@ -1475,7 +1674,7 @@ try {
                                     <div class="attendee-item">
                                         <input type="checkbox" id="edit_attendee_<?php echo $member['id']; ?>" 
                                                name="attendees[]" value="<?php echo $member['id']; ?>">
-                                        <label for="edit_attendee_<?php echo $member['id']; ?>" style="margin: 0; font-size: 0.8rem;">
+                                        <label for="edit_attendee_<?php echo $member['id']; ?>" style="margin: 0; font-size: 0.8rem; cursor: pointer;">
                                             <?php echo htmlspecialchars($member['full_name']); ?>
                                             <small style="color: var(--dark-gray);">(<?php echo str_replace('_', ' ', $member['role']); ?>)</small>
                                         </label>
@@ -1497,6 +1696,67 @@ try {
     </div>
 
     <script>
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Modal functions
         function openEditModal(hearingData) {
             document.getElementById('edit_hearing_id').value = hearingData.id;
@@ -1535,23 +1795,6 @@ try {
                 closeEditModal();
             }
         }
-
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
     </script>
 </body>
 </html>

@@ -20,21 +20,21 @@ try {
     error_log("User query error: " . $e->getMessage());
 }
 
-// Get dashboard statistics for sidebar
+// Get dashboard statistics for sidebar - PostgreSQL compatible
 try {
     // Total tickets
     $stmt = $pdo->query("SELECT COUNT(*) as total_tickets FROM tickets");
-    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'];
+    $total_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['total_tickets'] ?? 0;
     
     // Open tickets
     $stmt = $pdo->query("SELECT COUNT(*) as open_tickets FROM tickets WHERE status = 'open'");
-    $open_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'];
+    $open_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['open_tickets'] ?? 0;
     
     // Pending reports
     $pending_reports = 0;
     try {
         $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'");
-        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'];
+        $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     } catch (Exception $e) {
         error_log("Reports table query error: " . $e->getMessage());
         $pending_reports = 0;
@@ -50,7 +50,7 @@ try {
             WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
         ");
         $stmt->execute([$user_id]);
-        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'];
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     } catch (Exception $e) {
         error_log("Messages query error: " . $e->getMessage());
         $unread_messages = 0;
@@ -60,7 +60,7 @@ try {
     $pending_docs = 0;
     try {
         $stmt = $pdo->query("SELECT COUNT(*) as pending_docs FROM documents WHERE status = 'draft'");
-        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'];
+        $pending_docs = $stmt->fetch(PDO::FETCH_ASSOC)['pending_docs'] ?? 0;
     } catch (Exception $e) {
         error_log("Documents table error: " . $e->getMessage());
         $pending_docs = 0;
@@ -77,7 +77,7 @@ $member_id = $_GET['id'] ?? null;
 $message = '';
 $message_type = '';
 
-// Get all committee members with user details
+// Get all committee members with user details - PostgreSQL compatible
 try {
     $stmt = $pdo->prepare("
         SELECT cm.*, 
@@ -99,7 +99,7 @@ try {
     error_log("Committee members query error: " . $e->getMessage());
 }
 
-// Get all users who are not in committee for adding new members
+// Get all users who are not in committee for adding new members - PostgreSQL compatible
 try {
     $stmt = $pdo->prepare("
         SELECT u.id, u.reg_number, u.full_name, u.email, u.phone, 
@@ -111,7 +111,7 @@ try {
         LEFT JOIN programs p ON u.program_id = p.id
         WHERE u.role = 'student' 
         AND u.status = 'active'
-        AND u.id NOT IN (SELECT user_id FROM committee_members WHERE status = 'active')
+        AND u.id NOT IN (SELECT user_id FROM committee_members WHERE status = 'active' AND user_id IS NOT NULL)
         ORDER BY u.full_name
     ");
     $stmt->execute();
@@ -121,10 +121,10 @@ try {
     error_log("Available students query error: " . $e->getMessage());
 }
 
-// Get departments and programs
+// Get departments and programs - PostgreSQL compatible
 try {
-    $departments = $pdo->query("SELECT * FROM departments WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
-    $programs = $pdo->query("SELECT * FROM programs WHERE is_active = 1 ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+    $departments = $pdo->query("SELECT * FROM departments WHERE is_active = true ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
+    $programs = $pdo->query("SELECT * FROM programs WHERE is_active = true ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $departments = $programs = [];
     error_log("Departments/Programs query error: " . $e->getMessage());
@@ -178,11 +178,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $message = "This role is already assigned to another committee member!";
                             $message_type = 'error';
                         } else {
-                            // Add to committee
+                            // Add to committee - PostgreSQL uses CURRENT_DATE
                             $insert_stmt = $pdo->prepare("
                                 INSERT INTO committee_members 
                                 (reg_number, name, email, phone, department_id, program_id, academic_year, user_id, role, bio, portfolio_description, start_date, status, role_order)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), 'active', ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_DATE, 'active', ?)
                             ");
                             
                             $role_order = array_search($role, array_keys($committee_roles)) + 1;
@@ -231,10 +231,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Update user role if status is active
                     if ($status === 'active') {
                         $user_update = $pdo->prepare("
-                            UPDATE users u 
-                            JOIN committee_members cm ON u.id = cm.user_id 
-                            SET u.role = ? 
-                            WHERE cm.id = ?
+                            UPDATE users 
+                            SET role = ? 
+                            WHERE id = (SELECT user_id FROM committee_members WHERE id = ?)
                         ");
                         $user_update->execute([$role, $member_id]);
                     }
@@ -254,8 +253,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $member_data = $user_stmt->fetch(PDO::FETCH_ASSOC);
                     
                     if ($member_data) {
-                        // Update committee member status
-                        $update_stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive', end_date = CURDATE() WHERE id = ?");
+                        // Update committee member status - PostgreSQL uses CURRENT_DATE
+                        $update_stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive', end_date = CURRENT_DATE WHERE id = ?");
                         $update_stmt->execute([$member_id]);
                         
                         // Reset user role to student
@@ -293,7 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Get performance statistics
+// Get performance statistics - PostgreSQL compatible (using INTERVAL)
 try {
     // Meeting attendance statistics
     $attendance_stmt = $pdo->prepare("
@@ -303,12 +302,12 @@ try {
             cm.role,
             COUNT(ma.id) as total_meetings,
             SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) as meetings_attended,
-            ROUND((SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END) / COUNT(ma.id)) * 100, 2) as attendance_rate
+            ROUND((SUM(CASE WHEN ma.attendance_status = 'present' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(ma.id), 0) * 100), 2) as attendance_rate
         FROM committee_members cm
         LEFT JOIN meeting_attendance ma ON cm.id = ma.committee_member_id
         LEFT JOIN meetings m ON ma.meeting_id = m.id
         WHERE cm.status = 'active'
-        AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         GROUP BY cm.id, cm.name, cm.role
         ORDER BY attendance_rate DESC
     ");
@@ -323,12 +322,12 @@ try {
             cm.role,
             COUNT(t.id) as total_tickets,
             SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END) as resolved_tickets,
-            ROUND((SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END) / COUNT(t.id)) * 100, 2) as resolution_rate
+            ROUND((SUM(CASE WHEN t.status = 'resolved' THEN 1 ELSE 0 END)::numeric / NULLIF(COUNT(t.id), 0) * 100), 2) as resolution_rate
         FROM committee_members cm
         LEFT JOIN users u ON cm.user_id = u.id
         LEFT JOIN tickets t ON u.id = t.assigned_to
         WHERE cm.status = 'active'
-        AND t.created_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND t.created_at >= CURRENT_DATE - INTERVAL '3 months'
         GROUP BY cm.id, cm.name, cm.role
         ORDER BY resolution_rate DESC
     ");
@@ -347,7 +346,7 @@ try {
         LEFT JOIN users u ON cm.user_id = u.id
         LEFT JOIN reports r ON u.id = r.user_id
         WHERE cm.status = 'active'
-        AND r.created_at >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND r.created_at >= CURRENT_DATE - INTERVAL '3 months'
         GROUP BY cm.id, cm.name, cm.role
         ORDER BY submitted_reports DESC
     ");
@@ -389,10 +388,10 @@ foreach ($committee_members as $member) {
     // Calculate overall performance score
     $scores = [];
     if ($attendance && $attendance['total_meetings'] > 0) {
-        $scores[] = $attendance['attendance_rate'];
+        $scores[] = floatval($attendance['attendance_rate']);
     }
     if ($tickets && $tickets['total_tickets'] > 0) {
-        $scores[] = $tickets['resolution_rate'];
+        $scores[] = floatval($tickets['resolution_rate']);
     }
     if ($reports && $reports['total_reports'] > 0) {
         $scores[] = ($reports['submitted_reports'] / $reports['total_reports']) * 100;
@@ -403,7 +402,7 @@ foreach ($committee_members as $member) {
     }
 }
 
-// Get recent committee activities
+// Get recent committee activities - PostgreSQL compatible (using INTERVAL)
 try {
     $activities_stmt = $pdo->prepare("
         (SELECT 
@@ -415,7 +414,7 @@ try {
             cm.role
         FROM meetings m
         LEFT JOIN committee_members cm ON m.chairperson_id = cm.user_id
-        WHERE m.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.created_at >= CURRENT_DATE - INTERVAL '7 days'
         ORDER BY m.created_at DESC
         LIMIT 5)
         
@@ -430,7 +429,7 @@ try {
             cm.role
         FROM tickets t
         LEFT JOIN committee_members cm ON t.assigned_to = cm.user_id
-        WHERE t.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE t.created_at >= CURRENT_DATE - INTERVAL '7 days'
         ORDER BY t.created_at DESC
         LIMIT 5)
         
@@ -445,7 +444,7 @@ try {
             cm.role
         FROM reports r
         LEFT JOIN committee_members cm ON r.user_id = cm.user_id
-        WHERE r.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE r.created_at >= CURRENT_DATE - INTERVAL '7 days'
         ORDER BY r.created_at DESC
         LIMIT 5)
         
@@ -458,18 +457,40 @@ try {
     $recent_activities = [];
     error_log("Recent activities error: " . $e->getMessage());
 }
-?>
 
+// Get new student registrations count (last 7 days) - PostgreSQL syntax
+try {
+    $new_students_stmt = $pdo->prepare("
+        SELECT COUNT(*) as new_students 
+        FROM users 
+        WHERE role = 'student' 
+        AND status = 'active' 
+        AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+    ");
+    $new_students_stmt->execute();
+    $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
+} catch (PDOException $e) {
+    $new_students = 0;
+}
+
+// Calculate average performance
+$avg_performance = 0;
+if (!empty($performance_data)) {
+    $total_score = array_reduce($performance_data, function($carry, $data) {
+        return $carry + $data['overall_score'];
+    }, 0);
+    $avg_performance = round($total_score / count($performance_data), 1);
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Committee Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
-
     <style>
         :root {
             --primary-blue: #0056b3;
@@ -484,26 +505,15 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
+            --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
             --border-radius: 8px;
+            --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
+            --sidebar-width: 260px;
         }
 
         * {
@@ -513,24 +523,23 @@ try {
         }
 
         body {
-            font-family: 'Inter', sans-serif;
-            background: var(--light-gray);
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+            line-height: 1.5;
             color: var(--text-dark);
+            background: var(--light-gray);
+            min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
+        /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -540,7 +549,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -561,26 +569,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -588,22 +608,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -612,12 +617,11 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -628,25 +632,24 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -656,54 +659,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
+        /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
-        }
-
+        /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: 70px;
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -733,9 +767,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -748,24 +780,35 @@ try {
             margin-left: auto;
         }
 
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: 70px;
+        }
+
+        /* Container */
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
 
+        /* Page Header */
         .page-header {
-            background: var(--white);
-            padding: 1.5rem;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
             margin-bottom: 1.5rem;
         }
 
         .page-title h1 {
             font-size: 1.5rem;
             font-weight: 700;
-            color: var(--text-dark);
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
         .page-title p {
@@ -773,125 +816,113 @@ try {
             font-size: 0.9rem;
         }
 
+        /* Alert */
         .alert {
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
-            font-weight: 500;
+            border-left: 4px solid;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
-            background-color: #d4edda;
+            background: #d4edda;
             color: #155724;
-            border: 1px solid #c3e6cb;
+            border-left-color: var(--success);
         }
 
         .alert-danger {
-            background-color: #f8d7da;
+            background: #f8d7da;
             color: #721c24;
-            border: 1px solid #f5c6cb;
+            border-left-color: var(--danger);
         }
 
+        /* Committee Stats */
         .committee-stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            text-align: center;
             border-left: 4px solid var(--primary-blue);
+            transition: var(--transition);
         }
 
-        .stat-card.success { border-left-color: var(--success); }
-        .stat-card.warning { border-left-color: var(--warning); }
-        .stat-card.danger { border-left-color: var(--danger); }
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
 
         .stat-number {
-            font-size: 2rem;
+            font-size: 1.4rem;
             font-weight: 700;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
             color: var(--text-dark);
         }
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.9rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        .card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--medium-gray);
             margin-bottom: 1.5rem;
-            overflow: hidden;
+            gap: 0.25rem;
+            flex-wrap: wrap;
         }
 
-        .card-header {
-            padding: 1.25rem 1.5rem;
-            border-bottom: 1px solid var(--medium-gray);
-            background: var(--light-gray);
+        .tab {
+            padding: 0.75rem 1.25rem;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--dark-gray);
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.85rem;
         }
 
-        .card-header h3 {
-            margin: 0;
-            font-size: 1.2rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .card-body {
-            padding: 1.5rem;
-        }
-
-        .performance-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 1rem;
-        }
-
-        .performance-table th,
-        .performance-table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .performance-table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .performance-table tr:hover {
-            background: var(--light-blue);
-        }
-
-        .role-group {
-            margin-bottom: 2rem;
-        }
-
-        .role-title {
-            font-size: 1.5rem;
-            font-weight: 700;
+        .tab.active {
             color: var(--primary-blue);
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 2px solid var(--light-blue);
+            border-bottom-color: var(--primary-blue);
         }
 
-      /* Committee Grid */
+        .tab:hover:not(.active) {
+            color: var(--primary-blue);
+            background: var(--light-blue);
+            border-radius: var(--border-radius) var(--border-radius) 0 0;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Committee Grid */
         .committee-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1.5rem;
-            margin-bottom: 1.5rem;
         }
 
         .member-card {
@@ -911,7 +942,7 @@ try {
         .member-header {
             background: var(--gradient-primary);
             color: white;
-            padding: 1.5rem;
+            padding: 1.25rem;
             text-align: center;
             position: relative;
         }
@@ -925,27 +956,21 @@ try {
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 1.5rem;
+            font-size: 1.8rem;
             font-weight: 600;
-            margin: 0 auto 1rem;
+            margin: 0 auto 0.75rem;
             border: 3px solid rgba(255, 255, 255, 0.3);
             overflow: hidden;
         }
 
-        .member-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
         .member-name {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             margin-bottom: 0.25rem;
         }
 
         .member-role {
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             opacity: 0.9;
         }
 
@@ -972,40 +997,41 @@ try {
         .info-label {
             font-weight: 600;
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
         }
 
         .info-value {
             color: var(--text-dark);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             text-align: right;
         }
 
+        /* Performance Score */
         .performance-score {
             text-align: center;
-            padding: 1rem;
+            padding: 0.75rem;
             background: var(--light-gray);
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
         }
 
         .score-circle {
-            width: 60px;
-            height: 60px;
+            width: 70px;
+            height: 70px;
             border-radius: 50%;
-            background: conic-gradient(var(--success) 0% var(--score-percent), var(--light-gray) var(--score-percent) 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             margin: 0 auto 0.5rem;
             position: relative;
+            background: conic-gradient(var(--success) 0deg, var(--light-gray) 0deg);
         }
 
         .score-circle::before {
             content: '';
             position: absolute;
-            width: 50px;
-            height: 50px;
+            width: 55px;
+            height: 55px;
             background: var(--white);
             border-radius: 50%;
         }
@@ -1013,57 +1039,28 @@ try {
         .score-value {
             position: relative;
             font-weight: 700;
-            font-size: 1rem;
+            font-size: 1.1rem;
             color: var(--text-dark);
         }
 
         .score-label {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
         }
 
+        /* Member Actions */
         .member-actions {
             display: flex;
             gap: 0.5rem;
+            justify-content: center;
         }
 
-        /* Tables */
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8rem;
-        }
-
-        .table th, .table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.75rem;
-        }
-
-        .status-badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-active { background: var(--success); color: white; }
-        .status-inactive { background: var(--warning); color: black; }
-        .status-graduated { background: var(--dark-gray); color: white; }
-
+        /* Buttons */
         .btn {
             padding: 0.5rem 1rem;
             border: none;
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
             font-weight: 600;
             cursor: pointer;
             transition: var(--transition);
@@ -1071,6 +1068,7 @@ try {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
+            font-family: inherit;
         }
 
         .btn-primary {
@@ -1084,14 +1082,19 @@ try {
             border: 1px solid var(--medium-gray);
         }
 
-        .btn-warning {
-            background: var(--warning);
-            color: black;
+        .btn-info {
+            background: var(--info);
+            color: white;
         }
 
-        .btn-info {
-            background: var(--light-blue);
-            color: var(--primary-blue);
+        .btn-warning {
+            background: var(--warning);
+            color: #856404;
+        }
+
+        .btn-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.7rem;
         }
 
         .btn:hover {
@@ -1099,6 +1102,90 @@ try {
             box-shadow: var(--shadow-sm);
         }
 
+        /* Performance Table */
+        .performance-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .performance-table th,
+        .performance-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .performance-table th {
+            background: var(--light-gray);
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.75rem;
+        }
+
+        .performance-table tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Progress Bar */
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: var(--medium-gray);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.25rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--success);
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill.warning {
+            background: var(--warning);
+        }
+
+        .progress-fill.danger {
+            background: var(--danger);
+        }
+
+        /* Status Badge */
+        .status-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-inactive {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-excellent {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-good {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-needs-improvement {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        /* Activity List */
         .activity-list {
             list-style: none;
         }
@@ -1116,16 +1203,15 @@ try {
         }
 
         .activity-avatar {
-            width: 32px;
-            height: 32px;
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-weight: 600;
-            font-size: 0.7rem;
+            font-size: 0.8rem;
             flex-shrink: 0;
         }
 
@@ -1144,108 +1230,29 @@ try {
             color: var(--dark-gray);
         }
 
-        /* Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 1.5rem;
-        }
-
-        .tab {
-            padding: 0.75rem 1.5rem;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--dark-gray);
-            font-weight: 500;
-            cursor: pointer;
-            transition: var(--transition);
-        }
-
-        .tab.active {
-            color: var(--primary-blue);
-            border-bottom-color: var(--primary-blue);
-        }
-
-        .tab:hover {
-            color: var(--primary-blue);
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Committee Grid */
-        .committee-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        /* Progress Bars */
-        .progress-bar {
-            width: 100%;
-            height: 8px;
-            background: var(--medium-gray);
-            border-radius: 4px;
-            overflow: hidden;
-            margin: 0.5rem 0;
-        }
-
-        .progress-fill {
-            height: 100%;
-            background: var(--success);
-            transition: width 0.3s ease;
-        }
-
-        .progress-fill.warning { background: var(--warning); }
-        .progress-fill.danger { background: var(--danger); }
-
-        /* Performance Score */
-        .performance-score {
-            text-align: center;
-            padding: 1rem;
-            background: var(--light-gray);
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-        }
-
-        .score-circle {
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background: conic-gradient(var(--success) 0% var(--score-percent), var(--light-gray) var(--score-percent) 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 0.5rem;
-            position: relative;
-        }
-
-        .score-circle::before {
-            content: '';
-            position: absolute;
-            width: 50px;
-            height: 50px;
+        /* Card */
+        .card {
             background: var(--white);
-            border-radius: 50%;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
         }
 
-        .score-value {
-            position: relative;
-            font-weight: 700;
+        .card-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
+            background: var(--light-gray);
+        }
+
+        .card-header h3 {
             font-size: 1rem;
+            font-weight: 600;
             color: var(--text-dark);
         }
 
-        .score-label {
-            font-size: 0.8rem;
-            color: var(--dark-gray);
+        .card-body {
+            padding: 1.25rem;
         }
 
         /* Modal Styles */
@@ -1257,33 +1264,39 @@ try {
             top: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.5);
-            animation: fadeIn 0.3s;
+            background-color: rgba(0, 0, 0, 0.5);
+            overflow-y: auto;
         }
 
         .modal-content {
             background-color: var(--white);
-            margin: 5% auto;
-            padding: 0;
-            border-radius: var(--border-radius);
-            width: 90%;
+            margin: 2% auto;
+            border-radius: var(--border-radius-lg);
+            width: 95%;
             max-width: 600px;
-            box-shadow: var(--shadow-md);
-            animation: slideIn 0.3s;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
         }
 
         .modal-header {
-            padding: 1.5rem;
+            padding: 1.25rem 1.5rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            position: sticky;
+            top: 0;
+            background: var(--white);
+            z-index: 10;
         }
 
         .modal-header h3 {
             margin: 0;
-            color: var(--text-dark);
-            font-size: 1.2rem;
+            font-size: 1.1rem;
+            font-weight: 600;
         }
 
         .close {
@@ -1292,6 +1305,7 @@ try {
             font-weight: bold;
             cursor: pointer;
             transition: var(--transition);
+            line-height: 1;
         }
 
         .close:hover {
@@ -1300,8 +1314,20 @@ try {
 
         .modal-body {
             padding: 1.5rem;
+            overflow-y: auto;
+            flex: 1;
         }
 
+        .modal-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--medium-gray);
+            background: var(--white);
+        }
+
+        /* Form Styles */
         .form-group {
             margin-bottom: 1rem;
         }
@@ -1310,105 +1336,180 @@ try {
             display: block;
             margin-bottom: 0.5rem;
             font-weight: 600;
+            font-size: 0.8rem;
             color: var(--text-dark);
         }
 
         .form-control {
             width: 100%;
-            padding: 0.75rem;
+            padding: 0.7rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            font-size: 0.9rem;
-            transition: var(--transition);
+            font-size: 0.85rem;
+            font-family: inherit;
+            background: var(--white);
+            color: var(--text-dark);
         }
 
         .form-control:focus {
             outline: none;
             border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgba(0, 86, 179, 0.1);
         }
 
         textarea.form-control {
             resize: vertical;
-            min-height: 100px;
+            min-height: 80px;
         }
 
-        .modal-actions {
-            display: flex;
-            gap: 0.75rem;
-            justify-content: flex-end;
-            margin-top: 1.5rem;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+        .empty-state i {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
         }
 
-        @keyframes slideIn {
-            from { transform: translateY(-50px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                background: var(--light-gray);
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .committee-stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .committee-grid {
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .member-body {
-                grid-template-columns: 1fr;
-                text-align: center;
-            }
-
-            .member-avatar {
-                margin: 0 auto;
-            }
-
-            .member-contact {
-                justify-content: center;
-            }
-
-            .member-performance {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .committee-stats {
+                grid-template-columns: 1fr;
             }
 
             .committee-grid {
                 grid-template-columns: 1fr;
             }
+
+            .tabs {
+                justify-content: center;
+            }
+
+            .tab {
+                padding: 0.5rem 1rem;
+                font-size: 0.75rem;
+            }
+
+            .performance-table {
+                font-size: 0.7rem;
+            }
+
+            .performance-table th,
+            .performance-table td {
+                padding: 0.5rem;
+            }
+
+            .modal-content {
+                width: 98%;
+                margin: 1% auto;
+            }
         }
 
         @media (max-width: 480px) {
-            .committee-stats {
-                grid-template-columns: 1fr;
+            .stat-number {
+                font-size: 1.2rem;
             }
-            
-            .main-content {
-                padding: 1rem;
+
+            .page-title h1 {
+                font-size: 1.2rem;
             }
-            
+
             .member-actions {
-                flex-direction: column;
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .btn-sm {
+                padding: 0.3rem 0.6rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1418,8 +1519,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -1430,19 +1531,15 @@ try {
                 </div>
                 <div class="user-info">
                     <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
+                        <?php echo strtoupper(substr($_SESSION['full_name'] ?? 'U', 0, 1)); ?>
                     </div>
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Guild President</div>
                     </div>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1451,7 +1548,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1496,22 +1596,6 @@ try {
                     <a href="students.php">
                         <i class="fas fa-user-graduate"></i>
                         <span>Student Management</span>
-                        <?php 
-                        // Get new student registrations count (last 7 days)
-                        try {
-                            $new_students_stmt = $pdo->prepare("
-                                SELECT COUNT(*) as new_students 
-                                FROM users 
-                                WHERE role = 'student' 
-                                AND status = 'active' 
-                                AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-                            ");
-                            $new_students_stmt->execute();
-                            $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'];
-                        } catch (PDOException $e) {
-                            $new_students = 0;
-                        }
-                        ?>
                         <?php if ($new_students > 0): ?>
                             <span class="menu-badge"><?php echo $new_students; ?> new</span>
                         <?php endif; ?>
@@ -1547,7 +1631,8 @@ try {
             </ul>
         </nav>
 
-        <main class="main-content">
+        <!-- Main Content -->
+        <main class="main-content" id="mainContent">
             <div class="container">
                 <!-- Page Header -->
                 <div class="page-header">
@@ -1574,7 +1659,7 @@ try {
                         <div class="stat-number">
                             <?php 
                             $active_count = array_reduce($committee_members, function($carry, $member) {
-                                return $carry + ($member['status'] === 'active' ? 1 : 0);
+                                return $carry + (($member['status'] ?? 'active') === 'active' ? 1 : 0);
                             }, 0);
                             echo $active_count;
                             ?>
@@ -1586,14 +1671,7 @@ try {
                         <div class="stat-label">Available Roles</div>
                     </div>
                     <div class="stat-card warning">
-                        <div class="stat-number">
-                            <?php
-                            $avg_performance = array_reduce($performance_data, function($carry, $data) {
-                                return $carry + $data['overall_score'];
-                            }, 0) / max(count($performance_data), 1);
-                            echo round($avg_performance, 1) . '%';
-                            ?>
-                        </div>
+                        <div class="stat-number"><?php echo $avg_performance; ?>%</div>
                         <div class="stat-label">Average Performance</div>
                     </div>
                 </div>
@@ -1605,85 +1683,94 @@ try {
                     <button class="tab" onclick="switchTab('activities')">Recent Activities</button>
                 </div>
 
-            <!-- Committee Members Tab -->
-            <div id="members-tab" class="tab-content active">
-                <div class="committee-grid">
-                    <?php foreach ($committee_members as $member): ?>
-                        <?php 
-                        $performance = $performance_data[$member['id']] ?? ['overall_score' => 0];
-                        $score_percent = min($performance['overall_score'], 100);
-                        $score_color = $score_percent >= 80 ? 'success' : ($score_percent >= 60 ? 'warning' : 'danger');
-                        ?>
-                        <div class="member-card">
-                            <div class="member-header">
-                                <div class="member-avatar">
-                                    <?php if (!empty($member['avatar_url'])): ?>
-                                        <img src="../<?php echo htmlspecialchars($member['avatar_url']); ?>" alt="Avatar">
-                                    <?php else: ?>
-                                        <?php echo strtoupper(substr($member['name'] ?? 'C', 0, 1)); ?>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
-                                <div class="member-role"><?php echo htmlspecialchars($committee_roles[$member['role']] ?? $member['role']); ?></div>
-                            </div>
-                            <div class="member-body">
-                                <div class="member-info">
-                                    <div class="info-item">
-                                        <span class="info-label">Registration No:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['reg_number']); ?></span>
-                                    </div>
-                                    <div class="info-item">
-                                        <span class="info-label">Email:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['email']); ?></span>
-                                    </div>
-                                    <div class="info-item">
-                                        <span class="info-label">Phone:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['phone']); ?></span>
-                                    </div>
-                                    <?php if ($member['department_name']): ?>
-                                    <div class="info-item">
-                                        <span class="info-label">Department:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['department_name']); ?></span>
-                                    </div>
-                                    <?php endif; ?>
-                                    <?php if ($member['program_name']): ?>
-                                    <div class="info-item">
-                                        <span class="info-label">Program:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['program_name']); ?></span>
-                                    </div>
-                                    <?php endif; ?>
-                                    <div class="info-item">
-                                        <span class="info-label">Academic Year:</span>
-                                        <span class="info-value"><?php echo htmlspecialchars($member['academic_year']); ?></span>
-                                    </div>
-                                </div>
-
-                                <div class="performance-score">
-                                    <div class="score-circle" style="--score-percent: <?php echo $score_percent; ?>%">
-                                        <span class="score-value"><?php echo $score_percent; ?>%</span>
-                                    </div>
-                                    <div class="score-label">Performance Score</div>
-                                </div>
-
-
+                <!-- Committee Members Tab -->
+                <div id="members-tab" class="tab-content active">
+                    <?php if (empty($committee_members)): ?>
+                        <div class="card">
+                            <div class="card-body empty-state">
+                                <i class="fas fa-users"></i>
+                                <h3>No Committee Members</h3>
+                                <p>Start by adding committee members to manage the student union.</p>
+                                <button class="btn btn-primary" onclick="openAddMemberModal()">
+                                    <i class="fas fa-user-plus"></i> Add First Member
+                                </button>
                             </div>
                         </div>
-                    <?php endforeach; ?>
-                </div>
+                    <?php else: ?>
+                        <div class="committee-grid">
+                            <?php foreach ($committee_members as $member): ?>
+                                <?php 
+                                $performance = $performance_data[$member['id']] ?? ['overall_score' => 0];
+                                $score_percent = min($performance['overall_score'], 100);
+                                $score_color = $score_percent >= 80 ? 'success' : ($score_percent >= 60 ? 'warning' : 'danger');
+                                ?>
+                                <div class="member-card">
+                                    <div class="member-header">
+                                        <div class="member-avatar">
+                                            <?php if (!empty($member['avatar_url'])): ?>
+                                                <img src="../<?php echo htmlspecialchars($member['avatar_url']); ?>" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;">
+                                            <?php else: ?>
+                                                <?php echo strtoupper(substr($member['name'] ?? 'C', 0, 1)); ?>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
+                                        <div class="member-role"><?php echo htmlspecialchars($committee_roles[$member['role']] ?? $member['role']); ?></div>
+                                    </div>
+                                    <div class="member-body">
+                                        <div class="member-info">
+                                            <div class="info-item">
+                                                <span class="info-label">Registration No:</span>
+                                                <span class="info-value"><?php echo htmlspecialchars($member['reg_number']); ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Email:</span>
+                                                <span class="info-value"><?php echo htmlspecialchars($member['email']); ?></span>
+                                            </div>
+                                            <div class="info-item">
+                                                <span class="info-label">Phone:</span>
+                                                <span class="info-value"><?php echo htmlspecialchars($member['phone']); ?></span>
+                                            </div>
+                                            <?php if ($member['department_name']): ?>
+                                            <div class="info-item">
+                                                <span class="info-label">Department:</span>
+                                                <span class="info-value"><?php echo htmlspecialchars($member['department_name']); ?></span>
+                                            </div>
+                                            <?php endif; ?>
+                                            <?php if ($member['program_name']): ?>
+                                            <div class="info-item">
+                                                <span class="info-label">Program:</span>
+                                                <span class="info-value"><?php echo htmlspecialchars($member['program_name']); ?></span>
+                                            </div>
+                                            <?php endif; ?>
+                                        </div>
 
-                <?php if (empty($committee_members)): ?>
-                    <div class="card">
-                        <div class="card-body" style="text-align: center; padding: 3rem;">
-                            <i class="fas fa-users" style="font-size: 3rem; color: var(--dark-gray); margin-bottom: 1rem;"></i>
-                            <h3>No Committee Members</h3>
-                            <p>Start by adding committee members to manage the student union.</p>
+                                        <div class="performance-score">
+                                            <div class="score-circle" style="background: conic-gradient(var(--<?php echo $score_color; ?>) 0deg <?php echo $score_percent * 3.6; ?>deg, var(--light-gray) <?php echo $score_percent * 3.6; ?>deg 360deg);">
+                                                <span class="score-value"><?php echo $score_percent; ?>%</span>
+                                            </div>
+                                            <div class="score-label">Performance Score</div>
+                                        </div>
+
+                                        <div class="member-actions">
+                                            <button class="btn btn-info btn-sm" onclick="viewMemberDetails(<?php echo $member['id']; ?>)">
+                                                <i class="fas fa-eye"></i> View
+                                            </button>
+                                            <button class="btn btn-warning btn-sm" onclick="sendMessageToMember(<?php echo $member['user_id']; ?>, '<?php echo htmlspecialchars(addslashes($member['name'])); ?>')">
+                                                <i class="fas fa-envelope"></i> Message
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                        
+                        <div style="margin-top: 1rem; text-align: center;">
                             <button class="btn btn-primary" onclick="openAddMemberModal()">
-                                <i class="fas fa-user-plus"></i> Add First Member
+                                <i class="fas fa-user-plus"></i> Add New Committee Member
                             </button>
                         </div>
-                    </div>
-                <?php endif; ?>
-            </div>
+                    <?php endif; ?>
+                </div>
 
                 <!-- Performance Tracking Tab -->
                 <div id="performance-tab" class="tab-content">
@@ -1760,7 +1847,7 @@ try {
                                                         <strong><?php echo $overall_score; ?>%</strong>
                                                     </td>
                                                     <td>
-                                                        <span class="status-badge status-<?php echo $overall_score >= 80 ? 'active' : ($overall_score >= 60 ? 'inactive' : 'graduated'); ?>">
+                                                        <span class="status-badge status-<?php echo $overall_score >= 80 ? 'excellent' : ($overall_score >= 60 ? 'good' : 'needs-improvement'); ?>">
                                                             <?php echo $overall_score >= 80 ? 'Excellent' : ($overall_score >= 60 ? 'Good' : 'Needs Improvement'); ?>
                                                         </span>
                                                     </td>
@@ -1770,8 +1857,8 @@ try {
                                     </table>
                                 </div>
                             <?php else: ?>
-                                <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-chart-bar" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-chart-bar"></i>
                                     <p>No performance data available. Add committee members to start tracking performance.</p>
                                 </div>
                             <?php endif; ?>
@@ -1818,8 +1905,8 @@ try {
                                     <?php endforeach; ?>
                                 </div>
                             <?php else: ?>
-                                <div style="text-align: center; padding: 2rem; color: var(--dark-gray);">
-                                    <i class="fas fa-clock" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-clock"></i>
                                     <p>No recent activities found.</p>
                                 </div>
                             <?php endif; ?>
@@ -1841,12 +1928,12 @@ try {
                 <input type="hidden" name="action" value="add_member">
                 <div class="modal-body">
                     <div class="form-group">
-                        <label class="form-label" for="user_id">Select Student *</label>
+                        <label for="user_id">Select Student *</label>
                         <select class="form-control" id="user_id" name="user_id" required>
                             <option value="">Select a student</option>
                             <?php foreach ($available_students as $student): ?>
                                 <option value="<?php echo $student['id']; ?>">
-                                    <?php echo htmlspecialchars($student['full_name'] . ' (' . $student['reg_number'] . ') - ' . $student['department_name']); ?>
+                                    <?php echo htmlspecialchars($student['full_name'] . ' (' . $student['reg_number'] . ') - ' . ($student['department_name'] ?? 'No Department')); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -1856,7 +1943,7 @@ try {
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="role">Committee Role *</label>
+                        <label for="role">Committee Role *</label>
                         <select class="form-control" id="role" name="role" required>
                             <option value="">Select a role</option>
                             <?php foreach ($committee_roles as $key => $value): ?>
@@ -1866,12 +1953,12 @@ try {
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="bio">Bio/Description</label>
+                        <label for="bio">Bio/Description</label>
                         <textarea class="form-control" id="bio" name="bio" rows="3" placeholder="Brief description about the member..."></textarea>
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="portfolio_description">Portfolio Description</label>
+                        <label for="portfolio_description">Portfolio Description</label>
                         <textarea class="form-control" id="portfolio_description" name="portfolio_description" rows="3" placeholder="Description of their responsibilities..."></textarea>
                     </div>
                 </div>
@@ -1889,12 +1976,11 @@ try {
     <div id="sendMessageModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Send Message to Member</h3>
+                <h3><i class="fas fa-envelope"></i> Send Message to Member</h3>
                 <span class="close">&times;</span>
             </div>
             <div class="modal-body">
-                <form id="sendMessageForm" method="POST">
-                    <input type="hidden" name="action" value="send_message">
+                <form id="sendMessageForm" method="POST" action="send_message.php">
                     <input type="hidden" name="recipient_id" id="message_recipient_id">
                     
                     <div class="form-group">
@@ -1916,149 +2002,186 @@ try {
         </div>
     </div>
 
-    <!-- Update Portfolio Modal -->
-    <div id="updatePortfolioModal" class="modal">
-        <div class="modal-content">
+    <!-- View Member Details Modal -->
+    <div id="viewMemberModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
             <div class="modal-header">
-                <h3>Update Portfolio Description</h3>
+                <h3><i class="fas fa-user-circle"></i> Member Details</h3>
                 <span class="close">&times;</span>
             </div>
-            <div class="modal-body">
-                <form id="updatePortfolioForm" method="POST">
-                    <input type="hidden" name="action" value="update_portfolio">
-                    <input type="hidden" name="member_id" id="portfolio_member_id">
-                    
-                    <div class="form-group">
-                        <label for="portfolio_description">Portfolio Description:</label>
-                        <textarea name="portfolio_description" id="portfolio_description" class="form-control" rows="8" 
-                                  placeholder="Describe the member's portfolio, responsibilities, and key focus areas..."></textarea>
-                    </div>
-                    
-                    <div class="modal-actions">
-                        <button type="submit" class="btn btn-primary">Update Portfolio</button>
-                        <button type="button" class="btn btn-secondary close-modal">Cancel</button>
-                    </div>
-                </form>
+            <div class="modal-body" id="memberDetailsContent">
+                <!-- Member details will be loaded here -->
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary close-modal">Close</button>
             </div>
         </div>
     </div>
 
     <script>
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Modal functions
+        function openAddMemberModal() {
+            document.getElementById('addMemberModal').style.display = 'block';
+        }
+
+        function sendMessageToMember(userId, memberName) {
+            document.getElementById('message_recipient_id').value = userId;
+            document.getElementById('message_subject').value = 'Message from Guild President - ' + new Date().toLocaleDateString();
+            document.getElementById('message_content').value = '';
+            document.getElementById('sendMessageModal').style.display = 'block';
+        }
+
+        function viewMemberDetails(memberId) {
+            const modal = document.getElementById('viewMemberModal');
+            const content = document.getElementById('memberDetailsContent');
+            
+            content.innerHTML = '<div style="text-align: center; padding: 2rem;"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+            modal.style.display = 'block';
+            
+            fetch('get_member_details.php?id=' + memberId)
+                .then(response => response.text())
+                .then(data => {
+                    content.innerHTML = data;
+                })
+                .catch(error => {
+                    content.innerHTML = '<div class="alert alert-danger">Error loading member details.</div>';
+                });
+        }
+
+        function closeAllModals() {
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.style.display = 'none';
+            });
+        }
+
+        // Sidebar Toggle
         document.addEventListener('DOMContentLoaded', function() {
-            // Tab switching
-            function switchTab(tabName) {
-                // Hide all tabs
-                document.querySelectorAll('.tab-content').forEach(tab => {
-                    tab.classList.remove('active');
-                });
-                document.querySelectorAll('.tab').forEach(tab => {
-                    tab.classList.remove('active');
-                });
-                
-                // Show selected tab
-                document.getElementById(tabName + '-tab').classList.add('active');
-                event.target.classList.add('active');
+            const sidebar = document.getElementById('sidebar');
+            const mainContent = document.getElementById('mainContent');
+            const sidebarToggle = document.getElementById('sidebarToggle');
+            const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+            
+            const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+            if (savedSidebarState === 'true') {
+                sidebar.classList.add('collapsed');
+                mainContent.classList.add('sidebar-collapsed');
+                if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+                if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
             }
-            window.switchTab = switchTab;
-
-            // Modal elements
-            const addMemberModal = document.getElementById('addMemberModal');
-            const messageModal = document.getElementById('sendMessageModal');
-            const portfolioModal = document.getElementById('updatePortfolioModal');
-
-            // Close modals
+            
+            function toggleSidebar() {
+                sidebar.classList.toggle('collapsed');
+                mainContent.classList.toggle('sidebar-collapsed');
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                localStorage.setItem('sidebarCollapsed', isCollapsed);
+                const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+                if (sidebarToggle) sidebarToggle.innerHTML = icon;
+                if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+            }
+            
+            if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+            if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+            
+            // Mobile Menu Toggle
+            const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+            const mobileOverlay = document.getElementById('mobileOverlay');
+            
+            if (mobileMenuToggle) {
+                mobileMenuToggle.addEventListener('click', () => {
+                    const isOpen = sidebar.classList.toggle('mobile-open');
+                    mobileOverlay.classList.toggle('active', isOpen);
+                    mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = isOpen ? 'hidden' : '';
+                });
+            }
+            
+            if (mobileOverlay) {
+                mobileOverlay.addEventListener('click', () => {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                });
+            }
+            
+            window.addEventListener('resize', () => {
+                if (window.innerWidth > 992) {
+                    sidebar.classList.remove('mobile-open');
+                    mobileOverlay.classList.remove('active');
+                    if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                    document.body.style.overflow = '';
+                }
+            });
+            
+            // Modal close handlers
             const closeButtons = document.querySelectorAll('.close, .close-modal');
             closeButtons.forEach(btn => {
                 btn.addEventListener('click', closeAllModals);
             });
-
+            
             window.addEventListener('click', function(event) {
                 if (event.target.classList.contains('modal')) {
                     closeAllModals();
                 }
             });
-
-            // Action button event listeners
-            document.querySelectorAll('.btn-send-message').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const memberId = this.getAttribute('data-id');
-                    const memberName = this.getAttribute('data-name');
-                    openMessageModal(memberId, memberName);
-                });
-            });
-
-            document.querySelectorAll('.btn-update-portfolio').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const memberId = this.getAttribute('data-id');
-                    const currentPortfolio = this.getAttribute('data-portfolio') || '';
-                    openPortfolioModal(memberId, currentPortfolio);
-                });
-            });
-
-            // Functions
-            function closeAllModals() {
-                addMemberModal.style.display = 'none';
-                messageModal.style.display = 'none';
-                portfolioModal.style.display = 'none';
-            }
-
-            function openAddMemberModal() {
-                addMemberModal.style.display = 'block';
-            }
-            window.openAddMemberModal = openAddMemberModal;
-
-            function openMessageModal(memberId, memberName) {
-                document.getElementById('message_recipient_id').value = memberId;
-                document.getElementById('message_subject').value = `Message from Guild President - ${new Date().toLocaleDateString()}`;
-                document.getElementById('message_content').value = '';
-                messageModal.style.display = 'block';
-            }
-
-            function openPortfolioModal(memberId, currentPortfolio) {
-                document.getElementById('portfolio_member_id').value = memberId;
-                document.getElementById('portfolio_description').value = currentPortfolio;
-                portfolioModal.style.display = 'block';
-            }
-
-            // Dark mode toggle
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            if (savedTheme === 'dark') {
-                body.classList.add('dark-mode');
-                themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-            }
-
-            themeToggle.addEventListener('click', () => {
-                body.classList.toggle('dark-mode');
-                const isDark = body.classList.contains('dark-mode');
-                localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-            });
-
-            // Performance score color coding
-            document.querySelectorAll('.score-circle').forEach(circle => {
-                const score = parseInt(circle.querySelector('.score-value').textContent);
-                if (score >= 80) {
-                    circle.style.background = 'conic-gradient(var(--success) 0% ' + score + '%, var(--light-gray) ' + score + '% 100%)';
-                } else if (score >= 60) {
-                    circle.style.background = 'conic-gradient(var(--warning) 0% ' + score + '%, var(--light-gray) ' + score + '% 100%)';
-                } else {
-                    circle.style.background = 'conic-gradient(var(--danger) 0% ' + score + '%, var(--light-gray) ' + score + '% 100%)';
-                }
-            });
-
+            
             // Form validation
-            document.getElementById('addMemberForm')?.addEventListener('submit', function(e) {
-                const userId = document.getElementById('user_id').value;
-                const role = document.getElementById('role').value;
-                
-                if (!userId || !role) {
-                    e.preventDefault();
-                    alert('Please select both a student and a role.');
-                }
+            const addMemberForm = document.getElementById('addMemberForm');
+            if (addMemberForm) {
+                addMemberForm.addEventListener('submit', function(e) {
+                    const userId = document.getElementById('user_id').value;
+                    const role = document.getElementById('role').value;
+                    
+                    if (!userId || !role) {
+                        e.preventDefault();
+                        alert('Please select both a student and a role.');
+                    }
+                });
+            }
+            
+            // Add animation to cards
+            const cards = document.querySelectorAll('.stat-card, .member-card, .card');
+            cards.forEach((card, index) => {
+                card.style.opacity = '0';
+                card.style.animation = `fadeInUp 0.3s ease forwards`;
+                card.style.animationDelay = `${index * 0.05}s`;
             });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 100);
         });
     </script>
 </body>

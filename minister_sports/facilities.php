@@ -10,6 +10,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_sports') {
 
 $user_id = $_SESSION['user_id'];
 
+// Initialize variables to prevent undefined errors
+$unread_messages = 0;
+$pending_tickets = 0;
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -27,18 +31,18 @@ $facility_id = $_GET['id'] ?? '';
 // Add new facility
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add') {
     try {
-        $name = $_POST['name'];
+        $name = trim($_POST['name']);
         $type = $_POST['type'];
-        $location = $_POST['location'];
-        $capacity = $_POST['capacity'] ?? null;
-        $description = $_POST['description'];
-        $equipment_included = $_POST['equipment_included'];
-        $booking_requirements = $_POST['booking_requirements'];
+        $location = trim($_POST['location']);
+        $capacity = $_POST['capacity'] ?: null;
+        $description = trim($_POST['description']);
+        $equipment_included = trim($_POST['equipment_included']);
+        $booking_requirements = trim($_POST['booking_requirements']);
         
         $stmt = $pdo->prepare("
             INSERT INTO sports_facilities 
-            (name, type, location, capacity, description, equipment_included, booking_requirements, created_by, status) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available')
+            (name, type, location, capacity, description, equipment_included, booking_requirements, created_by, status, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'available', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ");
         $stmt->execute([$name, $type, $location, $capacity, $description, $equipment_included, $booking_requirements, $user_id]);
         
@@ -54,19 +58,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'add') {
 // Update facility
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'edit') {
     try {
-        $name = $_POST['name'];
+        $name = trim($_POST['name']);
         $type = $_POST['type'];
-        $location = $_POST['location'];
-        $capacity = $_POST['capacity'] ?? null;
-        $description = $_POST['description'];
-        $equipment_included = $_POST['equipment_included'];
-        $booking_requirements = $_POST['booking_requirements'];
+        $location = trim($_POST['location']);
+        $capacity = $_POST['capacity'] ?: null;
+        $description = trim($_POST['description']);
+        $equipment_included = trim($_POST['equipment_included']);
+        $booking_requirements = trim($_POST['booking_requirements']);
         $status = $_POST['status'];
         
         $stmt = $pdo->prepare("
             UPDATE sports_facilities 
             SET name = ?, type = ?, location = ?, capacity = ?, description = ?, 
-                equipment_included = ?, booking_requirements = ?, status = ?
+                equipment_included = ?, booking_requirements = ?, status = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ");
         $stmt->execute([$name, $type, $location, $capacity, $description, $equipment_included, $booking_requirements, $status, $facility_id]);
@@ -99,7 +103,7 @@ if ($action === 'delete' && $facility_id) {
 if ($action === 'update_status' && $facility_id) {
     try {
         $status = $_GET['status'];
-        $stmt = $pdo->prepare("UPDATE sports_facilities SET status = ? WHERE id = ?");
+        $stmt = $pdo->prepare("UPDATE sports_facilities SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         $stmt->execute([$status, $facility_id]);
         
         $_SESSION['success_message'] = "Facility status updated successfully!";
@@ -120,7 +124,7 @@ try {
         FROM sports_facilities sf
         LEFT JOIN users u ON sf.created_by = u.id
         LEFT JOIN facility_bookings fb ON sf.id = fb.facility_id AND fb.status = 'approved'
-        GROUP BY sf.id
+        GROUP BY sf.id, u.full_name
         ORDER BY sf.name ASC
     ");
     $facilities = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -154,7 +158,7 @@ try {
             SELECT fb.*, u.full_name as booked_by_name
             FROM facility_bookings fb
             LEFT JOIN users u ON fb.booked_by = u.id
-            WHERE fb.facility_id = ? AND fb.booking_date >= CURDATE() AND fb.status = 'approved'
+            WHERE fb.facility_id = ? AND fb.booking_date >= CURRENT_DATE AND fb.status = 'approved'
             ORDER BY fb.booking_date ASC, fb.start_time ASC
             LIMIT 10
         ");
@@ -188,6 +192,35 @@ try {
         $type_distribution[$type]++;
     }
     
+    // Get unread messages count
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as unread_messages 
+            FROM conversation_messages cm
+            JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+            WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+        ");
+        $stmt->execute([$user_id]);
+        $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+    }
+    
+    // Get pending tickets count
+    try {
+        $category_id = 6; // Sports category
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as pending_tickets 
+            FROM tickets 
+            WHERE category_id = ? 
+            AND status IN ('open', 'in_progress')
+        ");
+        $stmt->execute([$category_id]);
+        $pending_tickets = $stmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
+    } catch (PDOException $e) {
+        $pending_tickets = 0;
+    }
+    
 } catch (PDOException $e) {
     error_log("Facilities data error: " . $e->getMessage());
     $facilities = [];
@@ -195,36 +228,22 @@ try {
     $total_facilities = $available_count = $maintenance_count = $occupied_count = 0;
     $type_distribution = [];
 }
-
-// Unread messages count
-try {
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*) as unread_messages 
-        FROM conversation_messages cm
-        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
-        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
-    ");
-    $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
-} catch (PDOException $e) {
-    $unread_messages = 0;
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Sports Facilities Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
-            --primary-blue: #0056b3;
-            --secondary-blue: #1e88e5;
-            --accent-blue: #0d47a1;
-            --light-blue: #e3f2fd;
+            --primary-blue: #3B82F6;
+            --secondary-blue: #60A5FA;
+            --accent-blue: #1D4ED8;
+            --light-blue: #EFF6FF;
             --white: #ffffff;
             --light-gray: #f8f9fa;
             --medium-gray: #e9ecef;
@@ -233,6 +252,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -240,22 +260,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -271,21 +277,17 @@ try {
             background: var(--light-gray);
             min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -295,7 +297,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -304,10 +305,16 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -316,7 +323,7 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -324,18 +331,18 @@ try {
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -343,22 +350,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -367,41 +359,33 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -411,50 +395,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -484,9 +503,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -501,16 +518,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
-            margin-bottom: 1.5rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -528,17 +554,19 @@ try {
         .page-actions {
             display: flex;
             gap: 0.75rem;
+            flex-wrap: wrap;
         }
 
+        /* Buttons */
         .btn {
             padding: 0.6rem 1.2rem;
-            border-radius: 6px;
+            border-radius: var(--border-radius);
             text-decoration: none;
             font-weight: 600;
+            transition: var(--transition);
             font-size: 0.85rem;
             border: none;
             cursor: pointer;
-            transition: var(--transition);
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
@@ -552,6 +580,17 @@ try {
         .btn-primary:hover {
             transform: translateY(-2px);
             box-shadow: var(--shadow-md);
+        }
+
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .btn-outline:hover {
+            background: var(--primary-blue);
+            color: white;
         }
 
         .btn-success {
@@ -569,17 +608,6 @@ try {
             color: white;
         }
 
-        .btn-outline {
-            background: transparent;
-            border: 1px solid var(--primary-blue);
-            color: var(--primary-blue);
-        }
-
-        .btn-outline:hover {
-            background: var(--primary-blue);
-            color: white;
-        }
-
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -593,7 +621,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -618,13 +646,14 @@ try {
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -639,7 +668,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -652,7 +681,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -660,7 +689,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -671,6 +700,8 @@ try {
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -679,6 +710,9 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -712,6 +746,10 @@ try {
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -731,11 +769,13 @@ try {
             font-size: 0.75rem;
         }
 
-        .table tr:hover {
-            background: var(--light-gray);
+        .table tbody tr:hover {
+            background: var(--light-blue);
         }
 
+        /* Status Badges */
         .status-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -745,31 +785,33 @@ try {
 
         .status-available {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-maintenance {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-occupied {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .status-closed {
             background: #e9ecef;
-            color: var(--dark-gray);
+            color: #6c757d;
         }
 
+        /* Action Buttons */
         .action-buttons {
             display: flex;
-            gap: 0.25rem;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         .action-btn {
-            padding: 0.25rem 0.5rem;
+            padding: 0.4rem 0.6rem;
             border: none;
             border-radius: 4px;
             cursor: pointer;
@@ -810,7 +852,7 @@ try {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1.5rem;
-            margin-top: 1.5rem;
+            margin-top: 0;
         }
 
         .facility-card {
@@ -820,11 +862,13 @@ try {
             overflow: hidden;
             transition: var(--transition);
             border-left: 4px solid var(--primary-blue);
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .facility-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
         }
 
         .facility-card.available {
@@ -849,6 +893,7 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
+            background: var(--light-blue);
         }
 
         .facility-title {
@@ -859,20 +904,13 @@ try {
         }
 
         .facility-type {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
-            background: var(--light-blue);
-            padding: 0.25rem 0.5rem;
+            background: var(--white);
+            padding: 0.2rem 0.5rem;
             border-radius: 12px;
             display: inline-block;
             text-transform: capitalize;
-        }
-
-        .facility-status {
-            font-size: 0.7rem;
-            font-weight: 600;
-            padding: 0.25rem 0.5rem;
-            border-radius: 12px;
         }
 
         .facility-body {
@@ -889,7 +927,7 @@ try {
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--text-dark);
         }
 
@@ -899,7 +937,7 @@ try {
         }
 
         .facility-description {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
             line-height: 1.4;
             margin-bottom: 1rem;
@@ -924,15 +962,18 @@ try {
         }
 
         .facility-footer {
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             border-top: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-gray);
         }
 
         .booking-count {
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             color: var(--dark-gray);
             display: flex;
             align-items: center;
@@ -944,6 +985,12 @@ try {
             margin-bottom: 1rem;
         }
 
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+
         .form-label {
             display: block;
             margin-bottom: 0.5rem;
@@ -952,7 +999,7 @@ try {
             font-size: 0.85rem;
         }
 
-        .form-control {
+        .form-control, .form-select {
             width: 100%;
             padding: 0.75rem;
             border: 1px solid var(--medium-gray);
@@ -963,58 +1010,87 @@ try {
             transition: var(--transition);
         }
 
-        .form-control:focus {
+        .form-control:focus, .form-select:focus {
             outline: none;
             border-color: var(--primary-blue);
-            box-shadow: 0 0 0 3px rgba(0, 86, 179, 0.1);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
+        textarea.form-control {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            border-bottom: 1px solid var(--medium-gray);
+            margin-bottom: 1.5rem;
+            gap: 0.25rem;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: var(--dark-gray);
+            cursor: pointer;
+            transition: var(--transition);
+            font-weight: 500;
             font-size: 0.85rem;
         }
 
-        .form-textarea {
-            min-height: 100px;
-            resize: vertical;
+        .tab.active {
+            color: var(--primary-blue);
+            border-bottom-color: var(--primary-blue);
         }
 
-        .form-row {
+        .tab:hover {
+            color: var(--primary-blue);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        /* Type Distribution */
+        .type-distribution {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 1rem;
         }
 
-        /* Alerts */
-        .alert {
-            padding: 0.75rem 1rem;
+        .type-item {
+            background: var(--light-gray);
+            padding: 1rem;
             border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-            font-size: 0.8rem;
+            text-align: center;
+            transition: var(--transition);
         }
 
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left-color: var(--success);
+        .type-item:hover {
+            background: var(--light-blue);
+            transform: translateY(-2px);
         }
 
-        .alert-danger {
-            background: #f8d7da;
-            color: #721c24;
-            border-left-color: var(--danger);
+        .type-name {
+            font-size: 0.75rem;
+            color: var(--dark-gray);
+            margin-bottom: 0.5rem;
+            text-transform: capitalize;
         }
 
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
+        .type-count {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--primary-blue);
         }
 
         /* Modal */
@@ -1043,6 +1119,7 @@ try {
             max-width: 600px;
             max-height: 90vh;
             overflow-y: auto;
+            animation: slideIn 0.3s ease;
         }
 
         .modal-header {
@@ -1051,10 +1128,13 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--light-blue);
+            position: sticky;
+            top: 0;
         }
 
         .modal-header h3 {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
         }
@@ -1065,6 +1145,11 @@ try {
             font-size: 1.2rem;
             color: var(--dark-gray);
             cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .modal-close:hover {
+            color: var(--danger);
         }
 
         .modal-body {
@@ -1079,121 +1164,184 @@ try {
             gap: 0.75rem;
         }
 
-        /* Tabs */
-        .tabs {
-            display: flex;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 1.5rem;
-        }
-
-        .tab {
-            padding: 0.75rem 1.5rem;
-            background: none;
-            border: none;
-            border-bottom: 2px solid transparent;
-            color: var(--dark-gray);
-            cursor: pointer;
-            transition: var(--transition);
-            font-weight: 500;
-        }
-
-        .tab.active {
-            color: var(--primary-blue);
-            border-bottom-color: var(--primary-blue);
-        }
-
-        .tab:hover {
-            color: var(--primary-blue);
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Type Distribution */
-        .type-distribution {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 1rem;
-            margin-top: 1rem;
-        }
-
-        .type-item {
-            background: var(--light-gray);
-            padding: 1rem;
+        /* Alerts */
+        .alert {
+            padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
-            text-align: center;
-            transition: var(--transition);
-        }
-
-        .type-item:hover {
-            background: var(--light-blue);
-            transform: translateY(-2px);
-        }
-
-        .type-name {
+            margin-bottom: 1rem;
+            border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
-            color: var(--dark-gray);
-            margin-bottom: 0.5rem;
-            text-transform: capitalize;
+            animation: fadeInUp 0.3s ease;
         }
 
-        .type-count {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--primary-blue);
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
+        }
+
+        .alert-danger {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        .empty-state h3 {
+            font-size: 1rem;
+            margin-bottom: 0.5rem;
+            color: var(--text-dark);
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
         }
 
         /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
             }
-            
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .facility-cards {
                 grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-            
-            .facility-cards {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .facility-cards {
+                grid-template-columns: 1fr;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .page-actions {
+                width: 100%;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
             .tabs {
                 overflow-x: auto;
+                flex-wrap: nowrap;
+                -webkit-overflow-scrolling: touch;
             }
-            
+
             .type-distribution {
                 grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -1201,47 +1349,76 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .modal-content {
+                width: 95%;
+            }
+
+            .modal-footer {
                 flex-direction: column;
-                gap: 1rem;
-                align-items: flex-start;
             }
-            
-            .page-actions {
+
+            .modal-footer .btn {
                 width: 100%;
-                justify-content: space-between;
+                justify-content: center;
             }
-            
+
             .action-buttons {
                 flex-direction: column;
-                gap: 0.5rem;
+            }
+
+            .facility-footer {
+                flex-direction: column;
+                text-align: center;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Minister of Sports</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1251,8 +1428,10 @@ try {
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                                               <?php endif; ?>
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
+                        <?php else: ?>
+                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
+                        <?php endif; ?>
                     </div>
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
@@ -1269,10 +1448,13 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-         <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1293,13 +1475,15 @@ try {
                     <a href="clubs.php">
                         <i class="fas fa-music"></i>
                         <span>Entertainment Clubs</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Support Tickets</span>
+                        <?php if ($pending_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_tickets; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1309,13 +1493,13 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="equipment.php" >
+                    <a href="equipment.php">
                         <i class="fas fa-baseball-ball"></i>
                         <span>Equipment</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="action-funding.php" >
+                    <a href="action-funding.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Funding & Budget</span>
                     </a>
@@ -1342,6 +1526,9 @@ try {
                     <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1354,11 +1541,11 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
-                    <h1>Sports Facilities Management 🏟️</h1>
+                    <h1><i class="fas fa-building"></i> Sports Facilities Management</h1>
                     <p>Manage all sports facilities, availability, and bookings</p>
                 </div>
                 <div class="page-actions">
@@ -1371,14 +1558,14 @@ try {
             <!-- Success/Error Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1390,7 +1577,7 @@ try {
                         <i class="fas fa-building"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_facilities; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_facilities); ?></div>
                         <div class="stat-label">Total Facilities</div>
                     </div>
                 </div>
@@ -1399,7 +1586,7 @@ try {
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $available_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($available_count); ?></div>
                         <div class="stat-label">Available</div>
                     </div>
                 </div>
@@ -1408,7 +1595,7 @@ try {
                         <i class="fas fa-tools"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $maintenance_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($maintenance_count); ?></div>
                         <div class="stat-label">Under Maintenance</div>
                     </div>
                 </div>
@@ -1417,7 +1604,7 @@ try {
                         <i class="fas fa-times-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $occupied_count; ?></div>
+                        <div class="stat-number"><?php echo number_format($occupied_count); ?></div>
                         <div class="stat-label">Currently Occupied</div>
                     </div>
                 </div>
@@ -1434,8 +1621,8 @@ try {
             <div id="cards" class="tab-content active">
                 <div class="facility-cards">
                     <?php if (empty($facilities)): ?>
-                        <div style="text-align: center; color: var(--dark-gray); padding: 3rem; grid-column: 1 / -1;">
-                            <i class="fas fa-building" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                        <div class="empty-state" style="grid-column: 1 / -1;">
+                            <i class="fas fa-building"></i>
                             <h3>No Sports Facilities Found</h3>
                             <p>Get started by adding your first sports facility.</p>
                             <button class="btn btn-primary" onclick="openModal('addFacilityModal')" style="margin-top: 1rem;">
@@ -1463,7 +1650,7 @@ try {
                                         <?php if ($facility['capacity']): ?>
                                             <div class="info-item">
                                                 <i class="fas fa-users"></i>
-                                                <span>Capacity: <?php echo $facility['capacity']; ?> people</span>
+                                                <span>Capacity: <?php echo number_format($facility['capacity']); ?> people</span>
                                             </div>
                                         <?php endif; ?>
                                         <div class="info-item">
@@ -1474,7 +1661,7 @@ try {
                                     
                                     <?php if ($facility['description']): ?>
                                         <div class="facility-description">
-                                            <?php echo htmlspecialchars($facility['description']); ?>
+                                            <?php echo nl2br(htmlspecialchars($facility['description'])); ?>
                                         </div>
                                     <?php endif; ?>
 
@@ -1482,7 +1669,7 @@ try {
                                         <div class="facility-features">
                                             <span class="feature-tag">
                                                 <i class="fas fa-tools"></i>
-                                                Equipment: <?php echo htmlspecialchars($facility['equipment_included']); ?>
+                                                <?php echo htmlspecialchars($facility['equipment_included']); ?>
                                             </span>
                                         </div>
                                     <?php endif; ?>
@@ -1517,7 +1704,7 @@ try {
             <div id="table" class="tab-content">
                 <div class="card">
                     <div class="card-header">
-                        <h3>All Sports Facilities</h3>
+                        <h3><i class="fas fa-list"></i> All Sports Facilities</h3>
                         <div class="card-header-actions">
                             <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                                 <i class="fas fa-sync-alt"></i>
@@ -1526,70 +1713,72 @@ try {
                     </div>
                     <div class="card-body">
                         <?php if (empty($facilities)): ?>
-                            <div style="text-align: center; color: var(--dark-gray); padding: 3rem;">
-                                <i class="fas fa-building" style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-building"></i>
                                 <h3>No Sports Facilities Found</h3>
                                 <p>Get started by adding your first sports facility.</p>
                             </div>
                         <?php else: ?>
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>Facility Name</th>
-                                        <th>Type</th>
-                                        <th>Location</th>
-                                        <th>Capacity</th>
-                                        <th>Status</th>
-                                        <th>Bookings</th>
-                                        <th>Created</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($facilities as $facility): ?>
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
                                         <tr>
-                                            <td>
-                                                <strong><?php echo htmlspecialchars($facility['name']); ?></strong>
-                                                <?php if ($facility['description']): ?>
-                                                    <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($facility['description'], 0, 50)); ?>...</small>
-                                                <?php endif; ?>
-                                            </td>
-                                            <td>
-                                                <span style="text-transform: capitalize;"><?php echo htmlspecialchars($facility['type']); ?></span>
-                                            </td>
-                                            <td><?php echo htmlspecialchars($facility['location']); ?></td>
-                                            <td><?php echo $facility['capacity'] ? $facility['capacity'] . ' people' : 'N/A'; ?></td>
-                                            <td>
-                                                <span class="status-badge status-<?php echo $facility['status']; ?>">
-                                                    <?php echo ucfirst($facility['status']); ?>
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <span style="font-weight: 600; color: var(--primary-blue);">
-                                                    <?php echo $facility['booking_count']; ?>
-                                                </span>
-                                            </td>
-                                            <td><?php echo date('M j, Y', strtotime($facility['created_at'])); ?></td>
-                                            <td>
-                                                <div class="action-buttons">
-                                                    <a href="facilities.php?action=view&id=<?php echo $facility['id']; ?>" class="action-btn view" title="View Details">
-                                                        <i class="fas fa-eye"></i>
-                                                    </a>
-                                                    <a href="facilities.php?action=edit&id=<?php echo $facility['id']; ?>" class="action-btn edit" title="Edit Facility">
-                                                        <i class="fas fa-edit"></i>
-                                                    </a>
-                                                    <button class="action-btn status" onclick="updateStatus(<?php echo $facility['id']; ?>)" title="Update Status">
-                                                        <i class="fas fa-sync"></i>
-                                                    </button>
-                                                    <button class="action-btn delete" onclick="confirmDelete(<?php echo $facility['id']; ?>)" title="Delete Facility">
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
-                                                </div>
-                                            </td>
+                                            <th>Facility Name</th>
+                                            <th>Type</th>
+                                            <th>Location</th>
+                                            <th>Capacity</th>
+                                            <th>Status</th>
+                                            <th>Bookings</th>
+                                            <th>Created</th>
+                                            <th>Actions</th>
                                         </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($facilities as $facility): ?>
+                                            <tr>
+                                                <td>
+                                                    <strong><?php echo htmlspecialchars($facility['name']); ?></strong>
+                                                    <?php if ($facility['description']): ?>
+                                                        <br><small class="form-text"><?php echo htmlspecialchars(substr($facility['description'], 0, 50)); ?>...</small>
+                                                    <?php endif; ?>
+                                                </td>
+                                                <td>
+                                                    <span style="text-transform: capitalize;"><?php echo htmlspecialchars($facility['type']); ?></span>
+                                                </td>
+                                                <td><?php echo htmlspecialchars($facility['location']); ?></td>
+                                                <td><?php echo $facility['capacity'] ? number_format($facility['capacity']) . ' people' : 'N/A'; ?></td>
+                                                <td>
+                                                    <span class="status-badge status-<?php echo $facility['status']; ?>">
+                                                        <?php echo ucfirst($facility['status']); ?>
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span style="font-weight: 600; color: var(--primary-blue);">
+                                                        <?php echo $facility['booking_count']; ?>
+                                                    </span>
+                                                </td>
+                                                <td><?php echo date('M j, Y', strtotime($facility['created_at'])); ?></td>
+                                                <td>
+                                                    <div class="action-buttons">
+                                                        <a href="facilities.php?action=view&id=<?php echo $facility['id']; ?>" class="action-btn view" title="View Details">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                        <a href="facilities.php?action=edit&id=<?php echo $facility['id']; ?>" class="action-btn edit" title="Edit Facility">
+                                                            <i class="fas fa-edit"></i>
+                                                        </a>
+                                                        <button class="action-btn status" onclick="updateStatus(<?php echo $facility['id']; ?>)" title="Update Status">
+                                                            <i class="fas fa-sync"></i>
+                                                        </button>
+                                                        <button class="action-btn delete" onclick="confirmDelete(<?php echo $facility['id']; ?>)" title="Delete Facility">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
                         <?php endif; ?>
                     </div>
                 </div>
@@ -1599,18 +1788,19 @@ try {
             <div id="types" class="tab-content">
                 <div class="card">
                     <div class="card-header">
-                        <h3>Facility Type Distribution</h3>
+                        <h3><i class="fas fa-chart-pie"></i> Facility Type Distribution</h3>
                     </div>
                     <div class="card-body">
                         <?php if (empty($type_distribution)): ?>
-                            <div style="text-align: center; color: var(--dark-gray); padding: 3rem;">
+                            <div class="empty-state">
+                                <i class="fas fa-chart-pie"></i>
                                 <p>No facility type data available</p>
                             </div>
                         <?php else: ?>
                             <div class="type-distribution">
                                 <?php foreach ($type_distribution as $type => $count): ?>
                                     <div class="type-item">
-                                        <div class="type-name"><?php echo $type; ?></div>
+                                        <div class="type-name"><?php echo ucfirst($type); ?></div>
                                         <div class="type-count"><?php echo $count; ?></div>
                                     </div>
                                 <?php endforeach; ?>
@@ -1626,19 +1816,19 @@ try {
     <div class="modal" id="addFacilityModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Add New Sports Facility</h3>
+                <h3><i class="fas fa-plus-circle"></i> Add New Sports Facility</h3>
                 <button class="modal-close" onclick="closeModal('addFacilityModal')">&times;</button>
             </div>
             <form method="POST" action="facilities.php?action=add">
                 <div class="modal-body">
                     <div class="form-group">
-                        <label class="form-label" for="name">Facility Name *</label>
+                        <label class="form-label" for="name">Facility Name <span style="color: var(--danger);">*</span></label>
                         <input type="text" class="form-control" id="name" name="name" required placeholder="e.g., Main Football Field">
                     </div>
                     
                     <div class="form-row">
                         <div class="form-group">
-                            <label class="form-label" for="type">Facility Type *</label>
+                            <label class="form-label" for="type">Facility Type <span style="color: var(--danger);">*</span></label>
                             <select class="form-select" id="type" name="type" required>
                                 <option value="">Select Facility Type</option>
                                 <?php foreach ($facility_types as $type): ?>
@@ -1653,13 +1843,13 @@ try {
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label" for="location">Location *</label>
+                        <label class="form-label" for="location">Location <span style="color: var(--danger);">*</span></label>
                         <input type="text" class="form-control" id="location" name="location" required placeholder="e.g., Main Campus, Near Library">
                     </div>
                     
                     <div class="form-group">
                         <label class="form-label" for="description">Description</label>
-                        <textarea class="form-control form-textarea" id="description" name="description" placeholder="Brief description of the facility..."></textarea>
+                        <textarea class="form-control" id="description" name="description" rows="3" placeholder="Brief description of the facility..."></textarea>
                     </div>
                     
                     <div class="form-group">
@@ -1669,7 +1859,7 @@ try {
                     
                     <div class="form-group">
                         <label class="form-label" for="booking_requirements">Booking Requirements</label>
-                        <textarea class="form-control form-textarea" id="booking_requirements" name="booking_requirements" placeholder="Any special requirements for booking this facility..."></textarea>
+                        <textarea class="form-control" id="booking_requirements" name="booking_requirements" rows="2" placeholder="Any special requirements for booking this facility..."></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1684,7 +1874,7 @@ try {
     <div class="modal" id="statusModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Update Facility Status</h3>
+                <h3><i class="fas fa-sync-alt"></i> Update Facility Status</h3>
                 <button class="modal-close" onclick="closeModal('statusModal')">&times;</button>
             </div>
             <div class="modal-body">
@@ -1705,55 +1895,91 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Modal Functions
         function openModal(modalId) {
             document.getElementById(modalId).classList.add('show');
+            document.body.style.overflow = 'hidden';
         }
 
         function closeModal(modalId) {
             document.getElementById(modalId).classList.remove('show');
+            document.body.style.overflow = '';
         }
 
         // Close modal when clicking outside
-        window.onclick = function(event) {
+        window.addEventListener('click', function(event) {
             if (event.target.classList.contains('modal')) {
                 event.target.classList.remove('show');
+                document.body.style.overflow = '';
             }
-        }
+        });
 
         // Tab Switching
         function switchTab(tabName) {
-            // Hide all tab contents
             document.querySelectorAll('.tab-content').forEach(tab => {
                 tab.classList.remove('active');
             });
             
-            // Remove active class from all tabs
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
             });
             
-            // Show selected tab content
             document.getElementById(tabName).classList.add('active');
-            
-            // Activate clicked tab
             event.currentTarget.classList.add('active');
         }
 
@@ -1783,17 +2009,19 @@ try {
         setTimeout(() => {
             const alerts = document.querySelectorAll('.alert');
             alerts.forEach(alert => {
-                alert.style.display = 'none';
+                alert.style.opacity = '0';
+                setTimeout(() => {
+                    alert.style.display = 'none';
+                }, 300);
             });
         }, 5000);
 
-        // Initialize tooltips
+        // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
-            const tooltips = document.querySelectorAll('[title]');
-            tooltips.forEach(tooltip => {
-                tooltip.addEventListener('mouseenter', function(e) {
-                    // You can add custom tooltip implementation here if needed
-                });
+            const cards = document.querySelectorAll('.facility-card, .card');
+            cards.forEach((card, index) => {
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
             });
         });
     </script>

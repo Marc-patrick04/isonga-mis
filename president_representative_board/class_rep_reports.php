@@ -265,23 +265,6 @@ try {
             --transition: all 0.2s ease;
         }
 
-        .dark-mode {
-            --primary-blue: #4dabf7;
-            --secondary-blue: #339af0;
-            --accent-blue: #228be6;
-            --light-blue: #1a365d;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --info: #29b6f6;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
-        }
-
         * {
             margin: 0;
             padding: 0;
@@ -326,6 +309,19 @@ try {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logos {
@@ -1009,7 +1005,55 @@ try {
             color: var(--text-dark);
         }
 
-        /* Responsive */
+        /* Overlay for mobile */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+        }
+
         @media (max-width: 1024px) {
             .content-grid {
                 grid-template-columns: 1fr;
@@ -1026,7 +1070,11 @@ try {
             }
             
             .sidebar {
-                display: none;
+                display: none !important;
+            }
+            
+            .sidebar.mobile-open {
+                display: flex !important;
             }
             
             .stats-grid {
@@ -1039,10 +1087,19 @@ try {
             
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
             
             .user-details {
                 display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
             }
         }
 
@@ -1052,16 +1109,34 @@ try {
             }
             
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .welcome-section h1 {
+                font-size: 1.2rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -1071,9 +1146,6 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1104,7 +1176,8 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-         <nav class="sidebar">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" >
@@ -1171,6 +1244,12 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
+                 <li class="menu-item">
+                    <a href="tickets_analysis.php" >
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>Tickets Analysis</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1183,12 +1262,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Class Representative Reports</h1>
-                    <p>Review and manage reports submitted by class representatives</p>
-                </div>
-            </div>
+            
 
             <!-- Message Alert -->
             <?php if ($message): ?>
@@ -1404,28 +1478,6 @@ try {
                 <!-- Right Column -->
                 <div class="right-column">
                     <!-- Report Types Statistics -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Reports by Type</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($type_counts)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <p>No report type statistics available</p>
-                                </div>
-                            <?php else: ?>
-                                <div class="type-stats">
-                                    <?php foreach ($type_counts as $type): ?>
-                                        <div class="type-stat">
-                                            <span class="type-name" style="text-transform: capitalize;"><?php echo $type['report_type']; ?></span>
-                                            <span class="type-count"><?php echo $type['count']; ?></span>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
                     <!-- Quick Actions -->
                     <div class="card">
                         <div class="card-header">
@@ -1446,36 +1498,7 @@ try {
                         </div>
                     </div>
 
-                    <!-- Information Card -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Report Status Guide</h3>
-                        </div>
-                        <div class="card-body">
-                            <div style="font-size: 0.8rem; color: var(--text-dark);">
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                    <span class="status-badge status-draft">Draft</span>
-                                    <span> - Report is being prepared by representative</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                    <span class="status-badge status-submitted">Submitted</span>
-                                    <span> - Awaiting your review</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                    <span class="status-badge status-reviewed">Reviewed</span>
-                                    <span> - You have reviewed the report</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                    <span class="status-badge status-approved">Approved</span>
-                                    <span> - Report has been approved</span>
-                                </div>
-                                <div style="display: flex; align-items: center; gap: 0.5rem;">
-                                    <span class="status-badge status-rejected">Rejected</span>
-                                    <span> - Report needs revision</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                   
                 </div>
             </div>
         </main>
@@ -1533,22 +1556,39 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        const sidebar = document.getElementById('sidebar');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Modal functionality

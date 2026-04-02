@@ -1198,9 +1198,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1209,13 +1207,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Gender & Protocol</div>
@@ -1294,6 +1286,12 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a href="events.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Events</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
@@ -1304,17 +1302,8 @@ try {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="page-header">
-                <h1 class="page-title">Meetings & Attendance 👩‍⚖️</h1>
-                <p class="page-description">View scheduled meetings and track your attendance records</p>
-            </div>
+           
 
-            <!-- Info Alert -->
-            <div class="alert alert-info">
-                <i class="fas fa-info-circle"></i> 
-                <strong>Note:</strong> As Minister of Gender, you can view meeting schedules and your attendance records. 
-                Meeting scheduling is managed by the General Secretary and Guild President.
-            </div>
 
             <!-- Statistics Grid -->
             <div class="stats-grid">
@@ -1562,104 +1551,10 @@ try {
                         </div>
                     </div>
 
-                    <!-- Upcoming Important Meetings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming This Week</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_important)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-calendar-week"></i>
-                                    <p>No upcoming meetings this week</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($upcoming_important as $meeting): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar" style="background: var(--primary-purple);">
-                                                <i class="fas fa-calendar" style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('D, M j', strtotime($meeting['meeting_date'])); ?> 
-                                                    at <?php echo date('g:i A', strtotime($meeting['start_time'])); ?>
-                                                    • <?php echo htmlspecialchars($meeting['location']); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Your Recent Attendance -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Your Recent Attendance</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($user_attendance_history)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-history"></i>
-                                    <p>No attendance records found</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($user_attendance_history as $attendance): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar 
-                                                <?php echo $attendance['attendance_status'] === 'present' ? 'attendance-present' : 
-                                                      ($attendance['attendance_status'] === 'absent' ? 'attendance-absent' : 'attendance-excused'); ?>">
-                                                <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : 
-                                                                   ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" 
-                                                   style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <?php echo htmlspecialchars($attendance['title']); ?>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, Y', strtotime($attendance['meeting_date'])); ?> 
-                                                    • 
-                                                    <span class="status-badge attendance-<?php echo $attendance['attendance_status']; ?>">
-                                                        <?php echo ucfirst($attendance['attendance_status']); ?>
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-    </div>
-
+                   
+                    
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
+       
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');

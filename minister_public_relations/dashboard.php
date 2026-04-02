@@ -1033,14 +1033,14 @@ try {
                 </button>
                 <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
-                    <h1>Isonga - Public Relations & Associations</h1>
+                    <h1>Isonga - Dashboard</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
+                    <!-- <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
-                    </button>
+                    </button> -->
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1049,13 +1049,13 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
+                    <!-- <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
                             <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
-                    </div>
+                    </div> -->
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Public Relations</div>
@@ -1176,8 +1176,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Public Relations Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 📢</h1>
-                    <p>Manage communications, media relations, and student associations for <?php echo date('Y'); ?> academic year</p>
+                    <h1>Welcome, Public Relations Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
+                    <!-- <p>Manage communications, media relations, and student associations for <?php echo date('Y'); ?> academic year</p> -->
                 </div>
             </div>
 
@@ -1217,7 +1217,7 @@ try {
                         <div class="stat-label">Total Events</div>
                     </div>
                 </div>
-                <div class="stat-card danger">
+                <!-- <div class="stat-card danger">
                     <div class="stat-icon">
                         <i class="fas fa-images"></i>
                     </div>
@@ -1225,7 +1225,7 @@ try {
                         <div class="stat-number"><?php echo number_format($total_gallery); ?></div>
                         <div class="stat-label">Gallery Images</div>
                     </div>
-                </div>
+                </div> -->
             </div>
 
             <!-- Additional Stats Grid -->
@@ -1248,7 +1248,7 @@ try {
                         <div class="stat-label">Student Associations</div>
                     </div>
                 </div>
-                <div class="stat-card danger">
+                <!-- <div class="stat-card danger">
                     <div class="stat-icon">
                         <i class="fas fa-calendar-check"></i>
                     </div>
@@ -1256,8 +1256,8 @@ try {
                         <div class="stat-number"><?php echo number_format($upcoming_events); ?></div>
                         <div class="stat-label">Upcoming Events</div>
                     </div>
-                </div>
-                <div class="stat-card success">
+                </div> -->
+                <!-- <div class="stat-card success">
                     <div class="stat-icon">
                         <i class="fas fa-chart-line"></i>
                     </div>
@@ -1270,7 +1270,7 @@ try {
                         </div>
                         <div class="stat-label">Student Engagement</div>
                     </div>
-                </div>
+                </div> -->
             </div>
 
             <!-- Content Grid -->
@@ -1341,7 +1341,7 @@ try {
                     <!-- Upcoming Events -->
                     <div class="card">
                         <div class="card-header">
-                            <h3><i class="fas fa-calendar-alt"></i> Upcoming Events</h3>
+                            <!-- <h3><i class="fas fa-calendar-alt"></i> Upcoming Events</h3> -->
                             <div class="card-header-actions">
                                 <a href="events.php" class="card-header-btn" title="View All">
                                     <i class="fas fa-external-link-alt"></i>
@@ -1435,7 +1435,7 @@ try {
                 <!-- Right Column -->
                 <div class="right-column">
                     <!-- Recent Activities -->
-                    <div class="card">
+                    <!-- <div class="card">
                         <div class="card-header">
                             <h3><i class="fas fa-history"></i> Recent System Activities</h3>
                         </div>
@@ -1462,9 +1462,9 @@ try {
                                 <?php endif; ?>
                             </ul>
                         </div>
-                    </div>
+                    </div> -->
 
-                    <!-- News Categories Overview -->
+                    <!-- News Categories Overview
                     <div class="card">
                         <div class="card-header">
                             <h3><i class="fas fa-chart-pie"></i> News by Category</h3>
@@ -1499,7 +1499,7 @@ try {
                                 <?php endforeach; ?>
                             <?php endif; ?>
                         </div>
-                    </div>
+                    </div> -->
 
                     <!-- Quick Stats -->
                     <div class="card">
@@ -1568,21 +1568,21 @@ try {
 
     <script>
         // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
+        // const themeToggle = document.getElementById('themeToggle');
+        // const body = document.body;
 
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
+        // const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        // if (savedTheme === 'dark') {
+        //     body.classList.add('dark-mode');
+        //     themeToggle.innerHTML = '</i>';
+        // }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+        // themeToggle.addEventListener('click', () => {
+        //     body.classList.toggle('dark-mode');
+        //     const isDark = body.classList.contains('dark-mode');
+        //     localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        //     themeToggle.innerHTML = isDark ? '' : '</i>';
+        // });
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

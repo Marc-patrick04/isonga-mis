@@ -59,7 +59,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $case = $stmt->fetch();
                     
                     if ($case) {
-                        $stmt = $pdo->prepare("UPDATE arbitration_cases SET status = ?, updated_at = NOW() WHERE id = ?");
+                        // PostgreSQL uses CURRENT_TIMESTAMP instead of NOW()
+                        $stmt = $pdo->prepare("UPDATE arbitration_cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([$status, $case_id]);
                         $_SESSION['success_message'] = "Case status updated successfully";
                     } else {
@@ -81,10 +82,10 @@ $priority_filter = $_GET['priority'] ?? '';
 $case_type_filter = $_GET['case_type'] ?? '';
 $search = $_GET['search'] ?? '';
 
-// Build query for assigned cases
+// Build query for assigned cases (PostgreSQL syntax)
 $query = "SELECT ac.*, 
                  u.full_name as assigned_to_name,
-                 DATEDIFF(CURDATE(), ac.filing_date) as days_open,
+                 CURRENT_DATE - ac.filing_date as days_open,
                  (SELECT COUNT(*) FROM case_notes WHERE case_id = ac.id) as note_count,
                  (SELECT COUNT(*) FROM case_documents WHERE case_id = ac.id) as document_count
           FROM arbitration_cases ac 
@@ -109,7 +110,7 @@ if (!empty($case_type_filter)) {
 }
 
 if (!empty($search)) {
-    $query .= " AND (ac.case_number LIKE ? OR ac.title LIKE ? OR ac.complainant_name LIKE ? OR ac.respondent_name LIKE ?)";
+    $query .= " AND (ac.case_number ILIKE ? OR ac.title ILIKE ? OR ac.complainant_name ILIKE ? OR ac.respondent_name ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
@@ -144,7 +145,7 @@ try {
     // Total assigned cases
     $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM arbitration_cases WHERE assigned_to = ?");
     $stmt->execute([$user_id]);
-    $total_cases = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    $total_cases = $stmt->fetch(PDO::FETCH_ASSOC)['total'] ?? 0;
     
     // Cases by status
     $stmt = $pdo->prepare("SELECT status, COUNT(*) as count FROM arbitration_cases WHERE assigned_to = ? GROUP BY status");
@@ -172,7 +173,7 @@ try {
         WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
     ");
     $stmt->execute([$user_id]);
-    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'];
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
 } catch (PDOException $e) {
     $unread_messages = 0;
 }
@@ -181,7 +182,7 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>My Cases - Arbitration Advisor - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -200,6 +201,7 @@ try {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -207,6 +209,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -245,14 +249,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -262,7 +263,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -283,26 +283,38 @@ try {
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -310,7 +322,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
+            font-size: 1rem;
             border: 3px solid var(--medium-gray);
             overflow: hidden;
             position: relative;
@@ -334,12 +346,12 @@ try {
 
         .user-name {
             font-weight: 600;
+            font-size: 0.9rem;
             color: var(--text-dark);
-            font-size: 0.95rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
@@ -350,25 +362,25 @@ try {
         }
 
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
+            transform: translateY(-1px);
         }
 
         .notification-badge {
@@ -378,50 +390,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -451,9 +498,8 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
+            width: 20px;
             text-align: center;
-            font-size: 0.9rem;
         }
 
         .menu-badge {
@@ -468,16 +514,25 @@ try {
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
+        }
+
+        /* Page Header */
         .page-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .page-title h1 {
@@ -505,7 +560,7 @@ try {
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -529,14 +584,19 @@ try {
             border-left-color: var(--danger);
         }
 
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -551,7 +611,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -559,12 +619,17 @@ try {
             color: var(--danger);
         }
 
+        .stat-card.info .stat-icon {
+            background: #cce7ff;
+            color: var(--info);
+        }
+
         .stat-content {
             flex: 1;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -572,7 +637,7 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -675,6 +740,8 @@ try {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem;
         }
 
         .table-header h3 {
@@ -688,10 +755,15 @@ try {
             gap: 0.5rem;
         }
 
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.8rem;
+            min-width: 900px;
         }
 
         .table th, .table td {
@@ -707,6 +779,7 @@ try {
             font-size: 0.75rem;
             cursor: pointer;
             user-select: none;
+            white-space: nowrap;
         }
 
         .table th:hover {
@@ -732,16 +805,17 @@ try {
             font-size: 0.7rem;
             font-weight: 600;
             text-transform: uppercase;
+            white-space: nowrap;
         }
 
         .status-filed {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-under_review {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-hearing_scheduled {
@@ -751,22 +825,22 @@ try {
 
         .status-mediation {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-resolved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-dismissed {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .status-appealed {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-badge {
@@ -774,21 +848,22 @@ try {
             border-radius: 4px;
             font-size: 0.7rem;
             font-weight: 600;
+            white-space: nowrap;
         }
 
         .priority-low {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .priority-medium {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .priority-high {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         .priority-urgent {
@@ -803,11 +878,13 @@ try {
             font-weight: 600;
             background: var(--light-blue);
             color: var(--primary-blue);
+            white-space: nowrap;
         }
 
         .action-buttons {
             display: flex;
             gap: 0.25rem;
+            white-space: nowrap;
         }
 
         /* Alert Messages */
@@ -817,6 +894,9 @@ try {
             margin-bottom: 1rem;
             border-left: 4px solid;
             font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .alert-success {
@@ -850,41 +930,171 @@ try {
             color: var(--text-dark);
         }
 
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(2px);
+        }
+
+        .modal-content {
+            background: var(--white);
+            margin: 5% auto;
+            padding: 2rem;
+            border-radius: var(--border-radius);
+            width: 90%;
+            max-width: 500px;
+            animation: modalSlideIn 0.3s ease;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
             }
-            
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-header h3 {
+            font-size: 1.25rem;
+            color: var(--text-dark);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--dark-gray);
+            padding: 0;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-dark);
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .filters-form {
                 grid-template-columns: 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
             .user-details {
                 display: none;
             }
-            
-            .table {
-                display: block;
-                overflow-x: auto;
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .table th, .table td {
+                padding: 0.5rem;
             }
         }
 
@@ -892,24 +1102,55 @@ try {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
             }
-            
-            .page-header {
-                flex-direction: column;
-                gap: 1rem;
-                align-items: flex-start;
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
+
+            .modal-content {
+                margin: 10% auto;
+                padding: 1.5rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
                 <div class="logos">
                     <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
@@ -919,8 +1160,8 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
@@ -952,10 +1193,13 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-            <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -978,7 +1222,6 @@ try {
                         <span>Elections</span>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-file-alt"></i>
@@ -1000,7 +1243,6 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
-
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1010,9 +1252,8 @@ try {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
@@ -1043,7 +1284,7 @@ try {
                         <i class="fas fa-balance-scale"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_cases; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_cases); ?></div>
                         <div class="stat-label">Total Assigned Cases</div>
                     </div>
                 </div>
@@ -1054,17 +1295,17 @@ try {
                                 <i class="fas fa-clock"></i>
                             </div>
                             <div class="stat-content">
-                                <div class="stat-number"><?php echo $status['count']; ?></div>
+                                <div class="stat-number"><?php echo number_format($status['count']); ?></div>
                                 <div class="stat-label">Filed Cases</div>
                             </div>
                         </div>
                     <?php elseif ($status['status'] === 'under_review'): ?>
-                        <div class="stat-card">
+                        <div class="stat-card info">
                             <div class="stat-icon">
                                 <i class="fas fa-search"></i>
                             </div>
                             <div class="stat-content">
-                                <div class="stat-number"><?php echo $status['count']; ?></div>
+                                <div class="stat-number"><?php echo number_format($status['count']); ?></div>
                                 <div class="stat-label">Under Review</div>
                             </div>
                         </div>
@@ -1074,7 +1315,7 @@ try {
                                 <i class="fas fa-check-circle"></i>
                             </div>
                             <div class="stat-content">
-                                <div class="stat-number"><?php echo $status['count']; ?></div>
+                                <div class="stat-number"><?php echo number_format($status['count']); ?></div>
                                 <div class="stat-label">Resolved</div>
                             </div>
                         </div>
@@ -1151,99 +1392,108 @@ try {
                         <p>You don't have any arbitration cases assigned to you at the moment.</p>
                     </div>
                 <?php else: ?>
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th onclick="sortTable('case_number')">
-                                    Case Number <?php echo $sort === 'case_number' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
-                                </th>
-                                <th onclick="sortTable('title')">
-                                    Title <?php echo $sort === 'title' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
-                                </th>
-                                <th>Parties</th>
-                                <th>Type</th>
-                                <th onclick="sortTable('priority')">
-                                    Priority <?php echo $sort === 'priority' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
-                                </th>
-                                <th onclick="sortTable('status')">
-                                    Status <?php echo $sort === 'status' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
-                                </th>
-                                <th onclick="sortTable('filing_date')">
-                                    Filed <?php echo $sort === 'filing_date' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
-                                </th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($cases as $case): ?>
+                    <div class="table-wrapper">
+                        <table class="table">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        <strong><?php echo htmlspecialchars($case['case_number']); ?></strong>
-                                        <?php if ($case['note_count'] > 0): ?>
-                                            <br><small class="text-muted"><?php echo $case['note_count']; ?> notes</small>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <div style="max-width: 200px;">
-                                            <div style="font-weight: 500;"><?php echo htmlspecialchars($case['title']); ?></div>
-                                            <small style="color: var(--dark-gray);"><?php echo strlen($case['description']) > 100 ? substr($case['description'], 0, 100) . '...' : $case['description']; ?></small>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <small>
-                                            <div><strong>C:</strong> <?php echo htmlspecialchars($case['complainant_name']); ?></div>
-                                            <div><strong>R:</strong> <?php echo htmlspecialchars($case['respondent_name']); ?></div>
-                                        </small>
-                                    </td>
-                                    <td>
-                                        <span class="case-type-badge">
-                                            <?php echo ucfirst(str_replace('_', ' ', $case['case_type'])); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="priority-badge priority-<?php echo $case['priority']; ?>">
-                                            <?php echo ucfirst($case['priority']); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="status-badge status-<?php echo $case['status']; ?>">
-                                            <?php echo ucfirst(str_replace('_', ' ', $case['status'])); ?>
-                                        </span>
-                                        <?php if ($case['days_open'] > 30): ?>
-                                            <br><small class="text-danger"><?php echo $case['days_open']; ?> days</small>
-                                        <?php else: ?>
-                                            <br><small class="text-muted"><?php echo $case['days_open']; ?> days</small>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td>
-                                        <?php echo date('M j, Y', strtotime($case['filing_date'])); ?>
-                                    </td>
-                                    <td>
-                                        <div class="action-buttons">
-                                            <a href="case_details.php?id=<?php echo $case['id']; ?>" class="btn btn-outline btn-sm" title="View Details">
-                                                <i class="fas fa-eye"></i>
-                                            </a>
-                                            <button class="btn btn-outline btn-sm" onclick="openStatusModal(<?php echo $case['id']; ?>, '<?php echo $case['status']; ?>')" title="Update Status">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
-                                            <button class="btn btn-outline btn-sm" onclick="openNoteModal(<?php echo $case['id']; ?>)" title="Add Note">
-                                                <i class="fas fa-sticky-note"></i>
-                                            </button>
-                                        </div>
-                                    </td>
+                                    <th onclick="sortTable('case_number')">
+                                        Case # <?php echo $sort === 'case_number' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
+                                    </th>
+                                    <th onclick="sortTable('title')">
+                                        Title <?php echo $sort === 'title' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
+                                    </th>
+                                    <th>Parties</th>
+                                    <th>Type</th>
+                                    <th onclick="sortTable('priority')">
+                                        Priority <?php echo $sort === 'priority' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
+                                    </th>
+                                    <th onclick="sortTable('status')">
+                                        Status <?php echo $sort === 'status' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
+                                    </th>
+                                    <th onclick="sortTable('filing_date')">
+                                        Filed <?php echo $sort === 'filing_date' ? '<i class="fas fa-sort-' . $order . '"></i>' : '<i class="fas fa-sort"></i>'; ?>
+                                    </th>
+                                    <th>Actions</th>
                                 </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($cases as $case): ?>
+                                    <tr>
+                                        <td>
+                                            <strong><?php echo htmlspecialchars($case['case_number']); ?></strong>
+                                            <?php if ($case['note_count'] > 0): ?>
+                                                <br><small style="color: var(--dark-gray);"><?php echo $case['note_count']; ?> notes</small>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <div style="max-width: 200px;">
+                                                <div style="font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                                    <?php echo htmlspecialchars($case['title']); ?>
+                                                </div>
+                                                <small style="color: var(--dark-gray);">
+                                                    <?php echo strlen($case['description'] ?? '') > 80 ? substr($case['description'], 0, 80) . '...' : ($case['description'] ?? ''); ?>
+                                                </small>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <small>
+                                                <div><strong>C:</strong> <?php echo htmlspecialchars($case['complainant_name'] ?? 'N/A'); ?></div>
+                                                <div><strong>R:</strong> <?php echo htmlspecialchars($case['respondent_name'] ?? 'N/A'); ?></div>
+                                            </small>
+                                        </td>
+                                        <td>
+                                            <span class="case-type-badge">
+                                                <?php echo ucfirst(str_replace('_', ' ', $case['case_type'] ?? 'other')); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="priority-badge priority-<?php echo $case['priority'] ?? 'medium'; ?>">
+                                                <?php echo ucfirst($case['priority'] ?? 'Medium'); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="status-badge status-<?php echo $case['status']; ?>">
+                                                <?php echo ucfirst(str_replace('_', ' ', $case['status'])); ?>
+                                            </span>
+                                            <?php if ($case['days_open'] > 30): ?>
+                                                <br><small style="color: var(--danger);"><?php echo $case['days_open']; ?> days</small>
+                                            <?php else: ?>
+                                                <br><small style="color: var(--dark-gray);"><?php echo $case['days_open']; ?> days</small>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php echo date('M j, Y', strtotime($case['filing_date'])); ?>
+                                        </td>
+                                        <td>
+                                            <div class="action-buttons">
+                                                <a href="case_details.php?id=<?php echo $case['id']; ?>" class="btn btn-outline btn-sm" title="View Details">
+                                                    <i class="fas fa-eye"></i>
+                                                </a>
+                                                <button class="btn btn-outline btn-sm" onclick="openStatusModal(<?php echo $case['id']; ?>, '<?php echo $case['status']; ?>')" title="Update Status">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                                <button class="btn btn-outline btn-sm" onclick="openNoteModal(<?php echo $case['id']; ?>)" title="Add Note">
+                                                    <i class="fas fa-sticky-note"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 <?php endif; ?>
             </div>
         </main>
     </div>
 
     <!-- Add Note Modal -->
-    <div id="noteModal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5);">
-        <div style="background: var(--white); margin: 5% auto; padding: 2rem; border-radius: var(--border-radius); width: 90%; max-width: 500px;">
-            <h3 style="margin-bottom: 1rem;">Add Case Note</h3>
+    <div id="noteModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Add Case Note</h3>
+                <button class="modal-close" onclick="closeNoteModal()">&times;</button>
+            </div>
             <form method="POST" id="noteForm">
                 <input type="hidden" name="action" value="add_note">
                 <input type="hidden" name="case_id" id="noteCaseId">
@@ -1265,13 +1515,13 @@ try {
                 </div>
                 
                 <div class="form-group">
-                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
                         <input type="checkbox" name="is_confidential" value="1">
                         <span>Mark as confidential</span>
                     </label>
                 </div>
                 
-                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <div class="modal-footer">
                     <button type="button" class="btn btn-outline" onclick="closeNoteModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Add Note</button>
                 </div>
@@ -1280,9 +1530,12 @@ try {
     </div>
 
     <!-- Update Status Modal -->
-    <div id="statusModal" class="modal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5);">
-        <div style="background: var(--white); margin: 5% auto; padding: 2rem; border-radius: var(--border-radius); width: 90%; max-width: 400px;">
-            <h3 style="margin-bottom: 1rem;">Update Case Status</h3>
+    <div id="statusModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Update Case Status</h3>
+                <button class="modal-close" onclick="closeStatusModal()">&times;</button>
+            </div>
             <form method="POST" id="statusForm">
                 <input type="hidden" name="action" value="update_status">
                 <input type="hidden" name="case_id" id="statusCaseId">
@@ -1299,7 +1552,7 @@ try {
                     </select>
                 </div>
                 
-                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem;">
+                <div class="modal-footer">
                     <button type="button" class="btn btn-outline" onclick="closeStatusModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Update Status</button>
                 </div>
@@ -1308,21 +1561,65 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen
+                    ? '<i class="fas fa-times"></i>'
+                    : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
 
         // Table Sorting

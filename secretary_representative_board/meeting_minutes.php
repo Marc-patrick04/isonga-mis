@@ -1211,9 +1211,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1225,13 +1223,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1333,12 +1325,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Meeting Minutes</h1>
-                    <p>Record and manage minutes for class representative meetings</p>
-                </div>
-            </div>
+            
 
             <!-- Message Alert -->
             <?php if ($message): ?>
@@ -2027,75 +2014,8 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
                     </div>
 
                     <!-- Recent Meetings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Meetings</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($completed_meetings)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-calendar-times"></i>
-                                    <p>No completed meetings</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach (array_slice($completed_meetings, 0, 5) as $meeting): ?>
-                                    <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--medium-gray);">
-                                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
-                                            <strong style="font-size: 0.8rem;"><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                            <?php if (!empty($meeting['minutes'])): ?>
-                                                <span style="font-size: 0.6rem; color: var(--success);">✓</span>
-                                            <?php endif; ?>
-                                        </div>
-                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                            <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?>
-                                            <br>
-                                            <small><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($meeting['location']); ?></small>
-                                            <br>
-                                            <?php if (empty($meeting['minutes'])): ?>
-                                                <a href="?action=create&meeting_id=<?php echo $meeting['id']; ?>" class="btn btn-sm" style="margin-top: 0.5rem; font-size: 0.6rem; background: var(--light-gray);">
-                                                    <i class="fas fa-file-alt"></i> Take Minutes
-                                                </a>
-                                            <?php else: ?>
-                                                <small style="color: var(--success);">Minutes taken</small>
-                                            <?php endif; ?>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Minutes Statistics -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Minutes Statistics</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="quick-overview">
-                                <div class="overview-item">
-                                    <span class="overview-label">Total Minutes</span>
-                                    <span class="overview-value"><?php echo $total_minutes; ?></span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Draft</span>
-                                    <span class="overview-value"><?php echo $draft_minutes; ?></span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Published</span>
-                                    <span class="overview-value"><?php echo $published_minutes; ?></span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Completion Rate</span>
-                                    <span class="overview-value">
-                                        <?php 
-                                        $total_completed = count($completed_meetings);
-                                        $rate = $total_completed > 0 ? round(($total_minutes / $total_completed) * 100) : 0;
-                                        echo $rate; 
-                                        ?>%
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
+                    
+                    
                     </div>
                 </div>
             </div>
@@ -2103,22 +2023,7 @@ $upcoming_meetings = $sidebar_upcoming_meetings;
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

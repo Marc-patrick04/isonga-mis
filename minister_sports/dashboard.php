@@ -10,6 +10,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_sports') {
 
 $user_id = $_SESSION['user_id'];
 
+// Initialize variables with default values
+$unread_messages = 0;
+$pending_tickets = 0;
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -30,8 +34,8 @@ $total_teams = $total_members = $upcoming_competitions = $total_clubs = 0;
 $recent_competitions = $active_teams = $upcoming_trainings = $recent_activities = [];
 $equipment_status = $team_performance = $recent_events = [];
 $total_students = 0;
-$pending_tickets = 0;
 $total_facilities = 0;
+$active_trainings = 0;
 
 // Get dashboard statistics for Minister of Sports and Entertainment
 try {
@@ -41,21 +45,22 @@ try {
     $total_teams = $result['total_teams'] ?? 0;
     
     // Total team members (sum of members_count from active teams)
-    $stmt = $pdo->query("SELECT SUM(members_count) as total_members FROM sports_teams WHERE status = 'active'");
+    $stmt = $pdo->query("SELECT COALESCE(SUM(members_count), 0) as total_members FROM sports_teams WHERE status = 'active'");
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     $total_members = $result['total_members'] ?? 0;
     
     // Upcoming competitions
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_competitions FROM sports_competitions WHERE status = 'upcoming' AND start_date >= CURDATE()");
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_competitions FROM sports_competitions WHERE status = 'upcoming' AND start_date >= CURRENT_DATE");
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     $upcoming_competitions = $result['upcoming_competitions'] ?? 0;
     
     // Total entertainment clubs - Check if table exists first
-    $stmt = $pdo->query("SHOW TABLES LIKE 'entertainment_clubs'");
-    if ($stmt->rowCount() > 0) {
-        $stmt = $pdo->query("SELECT COUNT(*) as total_clubs FROM entertainment_clubs WHERE status = 'active'");
+    $stmt = $pdo->query("SELECT COUNT(*) as total_clubs FROM entertainment_clubs WHERE status = 'active'");
+    if ($stmt) {
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         $total_clubs = $result['total_clubs'] ?? 0;
+    } else {
+        $total_clubs = 0;
     }
     
     // Total students (for participation rate)
@@ -67,18 +72,16 @@ try {
     $stmt = $pdo->query("
         SELECT COUNT(*) as active_trainings 
         FROM training_sessions 
-        WHERE session_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        WHERE session_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '7 days')
         AND status = 'scheduled'
     ");
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     $active_trainings = $result['active_trainings'] ?? 0;
     
-
-    
     // Recent competitions
     $stmt = $pdo->prepare("
         SELECT * FROM sports_competitions 
-        WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        WHERE start_date >= (CURRENT_DATE - INTERVAL '30 days')
         ORDER BY start_date DESC 
         LIMIT 5
     ");
@@ -106,7 +109,7 @@ try {
         SELECT ts.*, st.team_name
         FROM training_sessions ts
         LEFT JOIN sports_teams st ON ts.team_id = st.id
-        WHERE ts.session_date >= CURDATE()
+        WHERE ts.session_date >= CURRENT_DATE
         AND ts.status = 'scheduled'
         ORDER BY ts.session_date ASC, ts.start_time ASC
         LIMIT 5
@@ -115,22 +118,19 @@ try {
     $upcoming_trainings = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Recent activities (login activities) - Check if table exists first
-    $stmt = $pdo->query("SHOW TABLES LIKE 'login_activities'");
-    if ($stmt->rowCount() > 0) {
-        $stmt = $pdo->query("
-            SELECT la.*, u.full_name, u.role 
-            FROM login_activities la 
-            JOIN users u ON la.user_id = u.id 
-            ORDER BY la.login_time DESC 
-            LIMIT 8
-        ");
+    $stmt = $pdo->query("
+        SELECT la.*, u.full_name, u.role 
+        FROM login_activities la 
+        JOIN users u ON la.user_id = u.id 
+        ORDER BY la.login_time DESC 
+        LIMIT 8
+    ");
+    if ($stmt) {
         $recent_activities = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
-    // Unread messages - Check if tables exist first
-    $stmt = $pdo->query("SHOW TABLES LIKE 'conversation_messages'");
-    $stmt2 = $pdo->query("SHOW TABLES LIKE 'conversation_participants'");
-    if ($stmt->rowCount() > 0 && $stmt2->rowCount() > 0) {
+    // Unread messages
+    try {
         $stmt = $pdo->prepare("
             SELECT COUNT(*) as unread_messages 
             FROM conversation_messages cm
@@ -138,19 +138,20 @@ try {
             WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
         ");
         $stmt->execute([$user_id]);
-        
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         $unread_messages = $result['unread_messages'] ?? 0;
-        
+    } catch (PDOException $e) {
+        $unread_messages = 0;
+        error_log("Unread messages query error: " . $e->getMessage());
     }
     
     // Sports equipment status
     $stmt = $pdo->query("
         SELECT 
-            condition,
+            equipment_condition,
             COUNT(*) as equipment_count
         FROM sports_equipment 
-        GROUP BY condition
+        GROUP BY equipment_condition
         ORDER BY equipment_count DESC
     ");
     $equipment_status = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -169,11 +170,11 @@ try {
     $team_performance = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Recent entertainment events - Check if table exists first
-    $stmt = $pdo->query("SHOW TABLES LIKE 'entertainment_events'");
-    if ($stmt->rowCount() > 0) {
+    $stmt = $pdo->query("SELECT COUNT(*) FROM entertainment_events");
+    if ($stmt && $stmt->fetchColumn() !== false) {
         $stmt = $pdo->prepare("
             SELECT * FROM entertainment_events 
-            WHERE event_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+            WHERE event_date >= (CURRENT_DATE - INTERVAL '30 days')
             ORDER BY event_date DESC 
             LIMIT 5
         ");
@@ -199,27 +200,24 @@ try {
     $total_facilities = $result['total_facilities'] ?? 0;
     
 } catch (PDOException $e) {
-    // Handle general error
     error_log("Minister of Sports and Entertainment dashboard statistics error: " . $e->getMessage());
 }
-$unread_messages = 0;
-$active_trainings = 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Minister of Sports & Entertainment Dashboard - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
-            --primary-blue: #0056b3;
-            --secondary-blue: #1e88e5;
-            --accent-blue: #0d47a1;
-            --light-blue: #e3f2fd;
+            --primary-blue: #3B82F6;
+            --secondary-blue: #60A5FA;
+            --accent-blue: #1D4ED8;
+            --light-blue: #EFF6FF;
             --white: #ffffff;
             --light-gray: #f8f9fa;
             --medium-gray: #e9ecef;
@@ -228,6 +226,7 @@ $active_trainings = 0;
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -235,22 +234,8 @@ $active_trainings = 0;
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         * {
@@ -266,21 +251,17 @@ $active_trainings = 0;
             background: var(--light-gray);
             min-height: 100vh;
             font-size: 0.875rem;
-            transition: var(--transition);
         }
 
         /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -290,7 +271,6 @@ $active_trainings = 0;
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -299,10 +279,16 @@ $active_trainings = 0;
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .logo {
@@ -311,7 +297,7 @@ $active_trainings = 0;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -319,18 +305,18 @@ $active_trainings = 0;
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -338,22 +324,7 @@ $active_trainings = 0;
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--primary-blue);
-            transform: scale(1.05);
-        }
-
-        .user-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
+            font-size: 1rem;
         }
 
         .user-details {
@@ -362,41 +333,33 @@ $active_trainings = 0;
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--primary-blue);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--primary-blue);
         }
 
         .notification-badge {
@@ -406,50 +369,86 @@ $active_trainings = 0;
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 80px;
-            height: calc(100vh - 80px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge,
+        .sidebar.collapsed .member-count {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -479,9 +478,7 @@ $active_trainings = 0;
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -506,9 +503,15 @@ $active_trainings = 0;
 
         /* Main Content */
         .main-content {
+            flex: 1;
             padding: 1.5rem;
             overflow-y: auto;
-            height: calc(100vh - 80px);
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -540,7 +543,7 @@ $active_trainings = 0;
             padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            border-left: 3px solid var(--primary-blue);
+            border-left: 4px solid var(--primary-blue);
             transition: var(--transition);
             display: flex;
             align-items: center;
@@ -565,13 +568,14 @@ $active_trainings = 0;
         }
 
         .stat-icon {
-            width: 40px;
-            height: 40px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
         .stat-card .stat-icon {
@@ -586,7 +590,7 @@ $active_trainings = 0;
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -599,7 +603,7 @@ $active_trainings = 0;
         }
 
         .stat-number {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -607,7 +611,7 @@ $active_trainings = 0;
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -623,6 +627,9 @@ $active_trainings = 0;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
+            margin-bottom: 1.5rem;
+            animation: fadeInUp 0.4s ease forwards;
+            opacity: 0;
         }
 
         .card-header {
@@ -631,6 +638,9 @@ $active_trainings = 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            background: var(--light-blue);
         }
 
         .card-header h3 {
@@ -664,6 +674,10 @@ $active_trainings = 0;
         }
 
         /* Tables */
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -683,7 +697,13 @@ $active_trainings = 0;
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
+        /* Status Badges */
         .status-badge {
+            display: inline-block;
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
@@ -693,22 +713,22 @@ $active_trainings = 0;
 
         .status-upcoming {
             background: #cce7ff;
-            color: var(--primary-blue);
+            color: #004085;
         }
 
         .status-ongoing {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-completed {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
         .status-cancelled {
             background: #f8d7da;
-            color: var(--danger);
+            color: #721c24;
         }
 
         /* Activity List */
@@ -762,7 +782,7 @@ $active_trainings = 0;
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
-            margin-top: 1.5rem;
+            margin-top: 1rem;
         }
 
         .action-btn {
@@ -803,6 +823,9 @@ $active_trainings = 0;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -827,7 +850,7 @@ $active_trainings = 0;
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
             gap: 0.75rem;
-            margin-top: 1rem;
+            margin-top: 0.5rem;
         }
 
         .team-stat {
@@ -844,7 +867,7 @@ $active_trainings = 0;
         }
 
         .team-count {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 700;
             color: var(--primary-blue);
         }
@@ -871,40 +894,110 @@ $active_trainings = 0;
             justify-content: space-between;
         }
 
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--dark-gray);
+        }
+
+        .empty-state i {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
         /* Responsive */
-        @media (max-width: 1024px) {
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 4rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .overlay {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0,0,0,0.45);
+                backdrop-filter: blur(2px);
+                z-index: 999;
+            }
+
+            .overlay.active {
+                display: block;
+            }
+
             .content-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
         @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .sidebar {
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
                 display: none;
             }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
+
+            .main-content {
+                padding: 1rem;
             }
-            
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
             .quick-actions {
                 grid-template-columns: 1fr;
             }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -912,31 +1005,54 @@ $active_trainings = 0;
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
+
             .main-content {
-                padding: 1rem;
+                padding: 0.75rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
             }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+    
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Minister of Sports & Entertainment</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                    <a href="messages.php" class="icon-btn" title="Messages">
+                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -946,7 +1062,7 @@ $active_trainings = 0;
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
@@ -966,7 +1082,10 @@ $active_trainings = 0;
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php" class="active">
@@ -1026,7 +1145,7 @@ $active_trainings = 0;
                         <?php 
                         $maintenance_count = 0;
                         foreach ($equipment_status as $equipment) {
-                            if ($equipment['condition'] === 'poor' || $equipment['condition'] === 'needs_replacement') {
+                            if ($equipment['equipment_condition'] === 'poor' || $equipment['equipment_condition'] === 'needs_replacement') {
                                 $maintenance_count += $equipment['equipment_count'];
                             }
                         }
@@ -1081,10 +1200,10 @@ $active_trainings = 0;
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! ⚽🎭</h1>
+                    <h1>Welcome, Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
                     <p>Manage sports teams, entertainment clubs, and events for <?php echo date('Y'); ?> academic year</p>
                 </div>
             </div>
@@ -1103,7 +1222,7 @@ $active_trainings = 0;
                         <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_teams; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_teams); ?></div>
                         <div class="stat-label">Active Sports Teams</div>
                     </div>
                 </div>
@@ -1112,41 +1231,41 @@ $active_trainings = 0;
                         <i class="fas fa-user-friends"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_members; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_members); ?></div>
                         <div class="stat-label">Team Members</div>
                     </div>
                 </div>
-                <div class="stat-card warning">
-                    <div class="stat-icon">
+                <!-- <div class="stat-card warning">
+                     <div class="stat-icon">
                         <i class="fas fa-building"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_facilities; ?></div>
+                    </div> -->
+                    <!-- <div class="stat-content">
+                        <div class="stat-number"><?php echo number_format($total_facilities); ?></div>
                         <div class="stat-label">Sports Facilities</div>
-                    </div>
-                </div>
+                    </div> 
+                </div> -->
             </div>
 
             <!-- Additional Stats Grid -->
-            <div class="stats-grid" style="margin-top: 1rem;">
+            <div class="stats-grid" style="margin-top: 0;">
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-music"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $total_clubs; ?></div>
+                        <div class="stat-number"><?php echo number_format($total_clubs); ?></div>
                         <div class="stat-label">Entertainment Clubs</div>
                     </div>
                 </div>
-                <div class="stat-card warning">
+                <!-- <div class="stat-card warning">
                     <div class="stat-icon">
                         <i class="fas fa-running"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $active_trainings; ?></div>
+                        <div class="stat-number"><?php echo number_format($active_trainings); ?></div>
                         <div class="stat-label">Training Sessions (Week)</div>
                     </div>
-                </div>
+                </div> -->
                 <div class="stat-card danger">
                     <div class="stat-icon">
                         <i class="fas fa-tools"></i>
@@ -1156,25 +1275,25 @@ $active_trainings = 0;
                             <?php 
                             $maintenance_count = 0;
                             foreach ($equipment_status as $equipment) {
-                                if ($equipment['condition'] === 'poor' || $equipment['condition'] === 'needs_replacement') {
+                                if ($equipment['equipment_condition'] === 'poor' || $equipment['equipment_condition'] === 'needs_replacement') {
                                     $maintenance_count += $equipment['equipment_count'];
                                 }
                             }
-                            echo $maintenance_count;
+                            echo number_format($maintenance_count);
                             ?>
                         </div>
                         <div class="stat-label">Equipment Needs Maintenance</div>
                     </div>
                 </div>
-                <div class="stat-card success">
+                <!-- <div class="stat-card success">
                     <div class="stat-icon">
                         <i class="fas fa-trophy"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_competitions; ?></div>
+                        <div class="stat-number"><?php echo number_format($upcoming_competitions); ?></div>
                         <div class="stat-label">Upcoming Competitions</div>
                     </div>
-                </div>
+                </div> -->
             </div>
 
             <!-- Content Grid -->
@@ -1183,8 +1302,8 @@ $active_trainings = 0;
                 <div class="left-column">
                     <!-- Active Sports Teams -->
                     <div class="card">
-                        <div class="card-header">
-                            <h3>Active Sports Teams</h3>
+                        <!-- <div class="card-header">
+                            <h3><i class="fas fa-users"></i> Active Sports Teams</h3>
                             <div class="card-header-actions">
                                 <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
                                     <i class="fas fa-sync-alt"></i>
@@ -1193,59 +1312,61 @@ $active_trainings = 0;
                                     <i class="fas fa-external-link-alt"></i>
                                 </a>
                             </div>
-                        </div>
-                        <div class="card-body">
+                        </div> -->
+                        <!-- <div class="card-body">
                             <?php if (empty($active_teams)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-users" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-users"></i>
                                     <p>No active sports teams found</p>
                                     <a href="teams.php?action=add" style="color: var(--primary-blue); text-decoration: none; font-weight: 600;">
                                         <i class="fas fa-plus"></i> Add your first team
                                     </a>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Team Name</th>
-                                            <th>Sport Type</th>
-                                            <th>Category</th>
-                                            <th>Members</th>
-                                            <th>Coach</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($active_teams as $team): ?>
+                                <div class="table-responsive">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($team['team_name']); ?></strong>
-                                                    <div style="font-size: 0.7rem; color: var(--dark-gray);">
-                                                        Captain: <?php echo htmlspecialchars($team['captain_name'] ?? 'Not assigned'); ?>
-                                                    </div>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($team['sport_type']); ?></td>
-                                                <td>
-                                                    <?php echo htmlspecialchars(ucfirst($team['team_gender'])); ?><br>
-                                                    <small style="color: var(--dark-gray); font-size: 0.7rem;">
-                                                        <?php echo htmlspecialchars(ucfirst($team['category'] ?? 'General')); ?>
-                                                    </small>
-                                                </td>
-                                                <td>
-                                                    <strong><?php echo $team['member_count'] ?? 0; ?></strong>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($team['coach_name'] ?? 'Not assigned'); ?></td>
+                                                <th>Team Name</th>
+                                                <th>Sport Type</th>
+                                                <th>Category</th>
+                                                <th>Members</th>
+                                                <th>Coach</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($active_teams as $team): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($team['team_name']); ?></strong>
+                                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">
+                                                            Captain: <?php echo htmlspecialchars($team['captain_name'] ?? 'Not assigned'); ?>
+                                                        </div>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($team['sport_type']); ?></td>
+                                                    <td>
+                                                        <?php echo htmlspecialchars(ucfirst($team['team_gender'])); ?><br>
+                                                        <small style="color: var(--dark-gray); font-size: 0.7rem;">
+                                                            <?php echo htmlspecialchars(ucfirst($team['category'] ?? 'General')); ?>
+                                                        </small>
+                                                    </td>
+                                                    <td>
+                                                        <strong><?php echo $team['member_count'] ?? 0; ?></strong>
+                                                    </td>
+                                                    <td><?php echo htmlspecialchars($team['coach_name'] ?? 'Not assigned'); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
                             <?php endif; ?>
                         </div>
-                    </div>
+                    </div> -->
 
                     <!-- Upcoming Training Sessions -->
-                    <div class="card">
+                    <!-- <div class="card">
                         <div class="card-header">
-                            <h3>Upcoming Training Sessions</h3>
+                            <h3><i class="fas fa-running"></i> Upcoming Training Sessions</h3>
                             <div class="card-header-actions">
                                 <a href="training.php" class="card-header-btn" title="View All">
                                     <i class="fas fa-external-link-alt"></i>
@@ -1254,57 +1375,49 @@ $active_trainings = 0;
                         </div>
                         <div class="card-body">
                             <?php if (empty($upcoming_trainings)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-running" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
+                                <div class="empty-state">
+                                    <i class="fas fa-running"></i>
                                     <p>No upcoming training sessions</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Training Session</th>
-                                            <th>Team</th>
-                                            <th>Date & Time</th>
-                                            <th>Duration</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($upcoming_trainings as $training): ?>
+                                <div class="table-responsive">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($training['title']); ?></td>
-                                                <td><?php echo htmlspecialchars($training['team_name']); ?></td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($training['session_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($training['start_time'])); ?></small>
-                                                </td>
-                                                <td>
-                                                    <?php 
-                                                    if (isset($training['end_time']) && isset($training['start_time'])) {
-                                                        $start = new DateTime($training['start_time']);
-                                                        $end = new DateTime($training['end_time']);
-                                                        $interval = $start->diff($end);
-                                                        echo $interval->format('%h hours');
-                                                    } else {
-                                                        echo '2 hours';
-                                                    }
-                                                    ?>
-                                                </td>
+                                                <th>Training Session</th>
+                                                <th>Team</th>
+                                                <th>Date & Time</th>
+                                                <th>Duration</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($upcoming_trainings as $training): ?>
+                                                <tr>
+                                                    <td><?php echo htmlspecialchars($training['title']); ?></td>
+                                                    <td><?php echo htmlspecialchars($training['team_name'] ?? 'General'); ?></td>
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($training['session_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($training['start_time'])); ?></small>
+                                                    </td>
+                                                    <td>2 hours</td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
                             <?php endif; ?>
                         </div>
-                    </div>
+                    </div> -->
 
                     <!-- Recent Events & Competitions -->
-                    <div class="card">
+                    <!-- <div class="card">
                         <div class="card-header">
-                            <h3>Recent Events & Competitions</h3>
+                            <h3><i class="fas fa-trophy"></i> Recent Events & Competitions</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($recent_competitions) && empty($recent_events)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar-alt"></i>
                                     <p>No recent events or competitions</p>
                                 </div>
                             <?php else: ?>
@@ -1330,7 +1443,7 @@ $active_trainings = 0;
                                 </div>
                             <?php endif; ?>
                         </div>
-                    </div>
+                    </div> -->
 
                     <!-- Quick Actions -->
                     <div class="quick-actions">
@@ -1356,14 +1469,14 @@ $active_trainings = 0;
                 <!-- Right Column -->
                 <div class="right-column">
                     <!-- Recent Activities -->
-                    <div class="card">
+                    <!-- <div class="card">
                         <div class="card-header">
-                            <h3>Recent System Activities</h3>
+                            <h3><i class="fas fa-history"></i> Recent System Activities</h3>
                         </div>
                         <div class="card-body">
                             <ul class="activity-list">
                                 <?php if (empty($recent_activities)): ?>
-                                    <li style="text-align: center; color: var(--dark-gray); padding: 2rem;">No recent activities</li>
+                                    <li class="empty-state" style="list-style: none; padding: 1rem;">No recent activities</li>
                                 <?php else: ?>
                                     <?php foreach ($recent_activities as $activity): ?>
                                         <li class="activity-item">
@@ -1383,16 +1496,17 @@ $active_trainings = 0;
                                 <?php endif; ?>
                             </ul>
                         </div>
-                    </div>
+                    </div> -->
 
                     <!-- Team Performance Leaders -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Top Teams by Membership</h3>
+                            <h3><i class="fas fa-chart-line"></i> Top Teams by Membership</h3>
                         </div>
                         <div class="card-body">
                             <?php if (empty($team_performance)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
+                                <div class="empty-state">
+                                    <i class="fas fa-chart-line"></i>
                                     <p>No team data available</p>
                                 </div>
                             <?php else: ?>
@@ -1409,14 +1523,12 @@ $active_trainings = 0;
                                                 </div>
                                             </div>
                                         </div>
-                                        <div class="attendance-progress">
-                                            <div class="progress-bar">
-                                                <div class="progress-fill" style="width: <?php echo min(100, ($team['member_count'] / 30) * 100); ?>%"></div>
-                                            </div>
-                                            <div class="progress-text">
-                                                <span>Capacity</span>
-                                                <span><?php echo min(100, round(($team['member_count'] / 30) * 100)); ?>%</span>
-                                            </div>
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" style="width: <?php echo min(100, ($team['member_count'] / 30) * 100); ?>%"></div>
+                                        </div>
+                                        <div class="progress-text">
+                                            <span>Capacity</span>
+                                            <span><?php echo min(100, round(($team['member_count'] / 30) * 100)); ?>%</span>
                                         </div>
                                     </div>
                                 <?php endforeach; ?>
@@ -1427,32 +1539,31 @@ $active_trainings = 0;
                     <!-- Quick Stats -->
                     <div class="card">
                         <div class="card-header">
-                            <h3>Sports & Entertainment Overview</h3>
+                            <h3><i class="fas fa-chart-simple"></i> Sports & Entertainment Overview</h3>
                         </div>
                         <div class="card-body">
                             <div style="display: grid; gap: 1rem;">
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Active Sports Teams</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_teams; ?> teams</strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($total_teams); ?> teams</strong>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <!-- <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Sports Facilities</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_facilities; ?> facilities</strong>
-                                </div>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($total_facilities); ?> facilities</strong>
+                                </div> -->
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Total Team Members</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_members; ?> members</strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($total_members); ?> members</strong>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; align-items: center;">
                                     <span style="color: var(--dark-gray); font-size: 0.8rem;">Pending Tickets</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $pending_tickets; ?> tickets</strong>
+                                    <strong style="color: var(--text-dark);"><?php echo number_format($pending_tickets); ?> tickets</strong>
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- Pending Actions Alert -->
-
                     <?php if ($pending_tickets > 0): ?>
                         <div class="alert alert-warning">
                             <i class="fas fa-ticket-alt"></i> 
@@ -1466,35 +1577,67 @@ $active_trainings = 0;
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        // Check for saved theme preference or respect OS preference
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
         }
 
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
         });
-
-        // Auto-refresh dashboard every 3 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Sports & Entertainment Dashboard auto-refresh triggered');
-        }, 180000);
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
-                card.style.animationDelay = `${index * 0.1}s`;
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '1';
             });
         });
     </script>
