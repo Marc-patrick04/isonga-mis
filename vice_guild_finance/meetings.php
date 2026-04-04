@@ -1179,9 +1179,7 @@ function getAttendanceClass($status) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1190,13 +1188,7 @@ function getAttendanceClass($status) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Vice Guild Finance</div>
@@ -1259,6 +1251,12 @@ function getAttendanceClass($status) {
                         <span>Allowances</span>
                     </a>
                 </li>
+                 <li class="menu-item">
+                    <a href="accounts.php" >
+                        <i class="fas fa-piggy-bank"></i>
+                        <span>Bank Accounts</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="bank_reconciliation.php">
                         <i class="fas fa-university"></i>
@@ -1305,8 +1303,7 @@ function getAttendanceClass($status) {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Meetings & Attendance 📅</h1>
-                    <p>View scheduled meetings and track your attendance records</p>
+                    <h1>Meetings & Attendance</h1>
                 </div>
             </div>
 
@@ -1526,22 +1523,7 @@ function getAttendanceClass($status) {
         // Pass meetings data to JavaScript
         const meetingsData = <?php echo json_encode($meetings); ?>;
         
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+      
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

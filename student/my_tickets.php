@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? 0)) {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
@@ -23,7 +23,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: my_tickets.php');
+    header('Location: my_tickets');
     exit();
 }
 
@@ -297,12 +297,12 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_tickets.php"><i class="fas fa-arrow-left"></i> Back to Tickets</a></li>
+                <li><a href="class_tickets"><i class="fas fa-arrow-left"></i> Back to Tickets</a></li>
                 <li><a href="#" class="active"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
-                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -322,7 +322,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                             <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
                         </button>
                     </form>
-                    <a href="class_tickets.php" class="btn btn-secondary">
+                    <a href="class_tickets" class="btn btn-secondary">
                         <i class="fas fa-chart-bar"></i> Class Statistics
                     </a>
                 </div>
@@ -331,7 +331,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
             <?php if ($selected_ticket): ?>
                 <!-- Ticket Detail View -->
                 <div class="back-button">
-                    <a href="my_tickets.php" class="btn btn-secondary">
+                    <a href="my_tickets" class="btn btn-secondary">
                         <i class="fas fa-arrow-left"></i> Back to All Tickets
                     </a>
                 </div>
@@ -483,7 +483,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                             <i class="fas fa-ticket-alt"></i>
                             <h3>No Tickets Yet</h3>
                             <p>You haven't submitted any tickets yet. Submit your first ticket to get started.</p>
-                            <a href="class_tickets.php" class="btn btn-primary" style="margin-top: 1rem;">
+                            <a href="class_tickets" class="btn btn-primary" style="margin-top: 1rem;">
                                 <i class="fas fa-plus"></i> Submit First Ticket
                             </a>
                         </div>
@@ -494,7 +494,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                                     <div class="ticket-header">
                                         <div style="flex: 1;">
                                             <div class="ticket-title">
-                                                <a href="my_tickets.php?ticket_id=<?php echo $ticket['id']; ?>" style="color: inherit; text-decoration: none;">
+                                                <a href="my_tickets?ticket_id=<?php echo $ticket['id']; ?>" style="color: inherit; text-decoration: none;">
                                                     <?php echo safe_display($ticket['subject']); ?>
                                                 </a>
                                                 <?php if ($ticket['comment_count'] > 0): ?>
@@ -558,7 +558,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                                     <?php endif; ?>
 
                                     <div style="margin-top: 1rem; text-align: right;">
-                                        <a href="my_tickets.php?ticket_id=<?php echo $ticket['id']; ?>" class="btn btn-info btn-sm">
+                                        <a href="my_tickets?ticket_id=<?php echo $ticket['id']; ?>" class="btn btn-info btn-sm">
                                             <i class="fas fa-eye"></i> View Details & Comments
                                         </a>
                                     </div>

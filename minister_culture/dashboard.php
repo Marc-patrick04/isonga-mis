@@ -1127,9 +1127,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1141,13 +1139,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Culture & Civic Education</div>
@@ -1247,9 +1239,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Culture Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 🎭</h1>
-                    <p>Promote cultural activities, arts, and civic education for the academic year</p>
-                </div>
+                    <h1>Welcome, Culture Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
+                                    </div>
             </div>
 
             <?php if ($password_change_required): ?>
@@ -1279,37 +1270,13 @@ try {
                         <div class="stat-label">Club Members</div>
                     </div>
                 </div>
-                <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-alt"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($upcoming_events); ?></div>
-                        <div class="stat-label">Upcoming Events</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $participation_rate; ?>%</div>
-                        <div class="stat-label">Student Participation</div>
-                    </div>
-                </div>
+               
+                
             </div>
 
             <!-- Additional Stats Grid -->
             <div class="stats-grid">
-                <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-palette"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($weekly_activities); ?></div>
-                        <div class="stat-label">Activities (This Week)</div>
-                    </div>
-                </div>
+                
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-comments"></i>
@@ -1328,23 +1295,7 @@ try {
                         <div class="stat-label">Pending Tickets</div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-check"></i>
-                    </div>
-                    <div class="stat-content">
-                        <?php 
-                        $completed_events = 0;
-                        foreach ($recent_events as $event) {
-                            if (strtotime($event['event_date']) < time()) {
-                                $completed_events++;
-                            }
-                        }
-                        ?>
-                        <div class="stat-number"><?php echo $completed_events; ?></div>
-                        <div class="stat-label">Recent Events</div>
-                    </div>
-                </div>
+              
             </div>
 
             <!-- Content Grid -->
@@ -1402,50 +1353,7 @@ try {
                         </div>
                     </div>
 
-                    <!-- Upcoming Cultural Activities -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Cultural Activities</h3>
-                            <div class="card-header-actions">
-                                <a href="events.php" class="card-header-btn" title="View All Events">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-container">
-                                <?php if (empty($upcoming_activities)): ?>
-                                    <div class="empty-state">
-                                        <i class="fas fa-calendar-alt"></i>
-                                        <p>No upcoming cultural activities</p>
-                                    </div>
-                                <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Event</th>
-                                                <th>Date & Time</th>
-                                                <th>Location</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($upcoming_activities as $activity): ?>
-                                                <tr>
-                                                    <td><strong><?php echo htmlspecialchars($activity['title']); ?></strong></td>
-                                                    <td>
-                                                        <?php echo date('M j, Y', strtotime($activity['event_date'])); ?><br>
-                                                        <small><?php echo date('g:i A', strtotime($activity['start_time'])); ?></small>
-                                                    </td>
-                                                    <td><?php echo htmlspecialchars($activity['location']); ?></td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
-
+                    
                     <!-- Quick Actions -->
                     <div class="quick-actions">
                         <a href="clubs.php?action=add" class="action-btn">
@@ -1469,71 +1377,8 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Top Clubs by Membership -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Top Clubs by Membership</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($club_performance)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-trophy"></i>
-                                    <p>No club data available</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($club_performance as $club): ?>
-                                    <?php 
-                                        $capacity_percent = min(100, round(($club['member_count'] / 50) * 100));
-                                    ?>
-                                    <div class="club-item">
-                                        <div class="club-header">
-                                            <div>
-                                                <div class="club-name"><?php echo htmlspecialchars($club['club_name']); ?></div>
-                                                <div class="club-category"><?php echo ucfirst($club['category']); ?></div>
-                                            </div>
-                                            <div class="club-stats">
-                                                <div class="club-count"><?php echo $club['member_count']; ?> members</div>
-                                            </div>
-                                        </div>
-                                        <div class="progress-bar">
-                                            <div class="progress-fill" style="width: <?php echo $capacity_percent; ?>%"></div>
-                                        </div>
-                                        <div class="progress-text">
-                                            <span>Capacity</span>
-                                            <span><?php echo $capacity_percent; ?>%</span>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Quick Overview -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Cultural Program Overview</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="quick-overview">
-                                <div class="overview-item">
-                                    <span class="overview-label">Active Clubs</span>
-                                    <span class="overview-value"><?php echo $total_clubs; ?> clubs</span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Club Members</span>
-                                    <span class="overview-value"><?php echo number_format($total_members); ?> students</span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Student Participation</span>
-                                    <span class="overview-value"><?php echo $participation_rate; ?>%</span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Activities This Week</span>
-                                    <span class="overview-value"><?php echo $weekly_activities; ?> events</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+                    
+                    
 
                     <!-- Pending Actions Alert -->
                     <?php if ($pending_tickets > 0): ?>
@@ -1548,22 +1393,7 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun</i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

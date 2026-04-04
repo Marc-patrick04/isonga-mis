@@ -1065,11 +1065,7 @@ error_log("Stats: " . print_r($stats, true));
                 </div>
             </div>
             <div class="user-menu">
-                <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
-                </div>
+               
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
@@ -1134,12 +1130,7 @@ error_log("Stats: " . print_r($stats, true));
                         <?php endif; ?>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="performance_tracking.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Performance Tracking</span>
-                    </a>
-                </li>
+               
                 <li class="menu-item">
                     <a href="innovation_projects.php">
                         <i class="fas fa-lightbulb"></i>
@@ -1171,10 +1162,7 @@ error_log("Stats: " . print_r($stats, true));
         <main class="main-content">
             <!-- Page Header -->
             <div class="page-header">
-                <div class="page-title">
-                    <h1>Committee Action Funding 💰</h1>
-                    <p>Request budget for your committee action plans and track funding status</p>
-                </div>
+               
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="window.location.reload()">
                         <i class="fas fa-sync-alt"></i> Refresh
@@ -1384,24 +1372,6 @@ error_log("Stats: " . print_r($stats, true));
     </div>
 
 <script>
-    // ── Dark Mode Toggle ──────────────────────────────────────
-    const themeToggle = document.getElementById('themeToggle');
-    const body = document.body;
-
-    const savedTheme = localStorage.getItem('theme') ||
-        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    if (savedTheme === 'dark') {
-        body.classList.add('dark-mode');
-        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-    }
-
-    themeToggle.addEventListener('click', () => {
-        body.classList.toggle('dark-mode');
-        const isDark = body.classList.contains('dark-mode');
-        localStorage.setItem('theme', isDark ? 'dark' : 'light');
-        themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-    });
-
     // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
     const hamburgerBtn   = document.getElementById('hamburgerBtn');
     const sidebar        = document.querySelector('.sidebar');

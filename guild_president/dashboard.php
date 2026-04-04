@@ -1296,8 +1296,7 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, President <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 👑</h1>
-                    <p>Complete oversight of all RPSU activities and committee performance</p>
+                    <h1>Welcome, President <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
                 </div>
             </div>
 
@@ -1377,15 +1376,7 @@ try {
                         <div class="stat-label">Overdue</div>
                     </div>
                 </div>
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $resolution_rate; ?>%</div>
-                        <div class="stat-label">Resolution Rate</div>
-                    </div>
-                </div>
+                
             </div>
 
             <!-- Charts Grid -->
@@ -1398,18 +1389,6 @@ try {
                     <div class="card-body">
                         <div class="chart-container">
                             <canvas id="ticketTrendsChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Department Distribution Chart -->
-                <div class="chart-card">
-                    <div class="card-header">
-                        <h3>Student Distribution by Department</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="chart-container">
-                            <canvas id="departmentDistributionChart"></canvas>
                         </div>
                     </div>
                 </div>
@@ -1511,39 +1490,7 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Recent Activities -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Committee Activities</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_activities)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-history"></i>
-                                    <p>No recent activities</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($recent_activities as $activity): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar">
-                                                <?php echo strtoupper(substr($activity['full_name'], 0, 1)); ?>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($activity['full_name']); ?></strong> logged in
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, g:i A', strtotime($activity['login_time'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
+                    
                     <!-- Quick Stats -->
                     <div class="card">
                         <div class="card-header">

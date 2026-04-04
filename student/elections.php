@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Redirect if not logged in or not a student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: ../auth/student_login.php');
+    header('Location: ../auth/student_login');
     exit();
 }
 
@@ -610,23 +610,23 @@ $page_title = "Elections - RPSU Musanze College";
             </div>
             
             <nav class="sidebar-nav">
-                <a href="dashboard.php" class="nav-item">
+                <a href="dashboard" class="nav-item">
                     <i class="fas fa-tachometer-alt"></i>
                     Dashboard
                 </a>
-                <a href="tickets.php" class="nav-item">
+                <a href="tickets" class="nav-item">
                     <i class="fas fa-ticket-alt"></i>
                     My Tickets
                 </a>
-                <a href="elections.php" class="nav-item active">
+                <a href="elections" class="nav-item active">
                     <i class="fas fa-vote-yea"></i>
                     Elections
                 </a>
-                <a href="profile.php" class="nav-item">
+                <a href="profile" class="nav-item">
                     <i class="fas fa-user"></i>
                     My Profile
                 </a>
-                <a href="../auth/logout.php" class="nav-item logout-item">
+                <a href="../auth/logout" class="nav-item logout-item">
                     <i class="fas fa-sign-out-alt"></i>
                     Logout
                 </a>
@@ -648,7 +648,7 @@ $page_title = "Elections - RPSU Musanze College";
                         </div>
                         <span><?php echo htmlspecialchars($full_name); ?></span>
                     </div>
-                    <a href="../auth/logout.php" class="logout-btn">
+                    <a href="../auth/logout" class="logout-btn">
                         <i class="fas fa-sign-out-alt"></i> Logout
                     </a>
                 </div>
@@ -676,10 +676,10 @@ $page_title = "Elections - RPSU Musanze College";
                         transparent, and secure election process for all students.
                     </p>
                     <div class="alert-actions">
-                        <a href="dashboard.php" class="btn btn-primary">
+                        <a href="dashboard" class="btn btn-primary">
                             <i class="fas fa-home"></i> Return to Dashboard
                         </a>
-                        <a href="tickets.php" class="btn btn-outline">
+                        <a href="tickets" class="btn btn-outline">
                             <i class="fas fa-ticket-alt"></i> View My Tickets
                         </a>
                         <button class="btn btn-warning" onclick="showNotifications()">

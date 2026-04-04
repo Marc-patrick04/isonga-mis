@@ -1190,21 +1190,13 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Health</div>
@@ -1292,10 +1284,7 @@ try {
         <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
-                <div>
-                    <h1 class="page-title">Epidemics Prevention & Control</h1>
-                    <p class="page-description">Monitor disease outbreaks and implement prevention measures across campus</p>
-                </div>
+                
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="openModal('screeningModal')">
                         <i class="fas fa-stethoscope"></i> Record Screening
@@ -1507,16 +1496,7 @@ try {
             mobileOverlay.classList.remove('active');
         });
 
-        // Theme Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        themeToggle.addEventListener('click', () => {
-            document.body.classList.toggle('dark-mode');
-            if (document.body.classList.contains('dark-mode')) {
-                localStorage.setItem('theme', 'dark');
-            } else {
-                localStorage.setItem('theme', 'light');
-            }
-        });
+        
 
         // Load saved theme preference
         window.addEventListener('DOMContentLoaded', () => {

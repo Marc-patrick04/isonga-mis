@@ -1287,9 +1287,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                  
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1358,28 +1356,19 @@ try {
         <?php endif; ?>
     </a>
 </li>
-                <li class="menu-item">
-                    <a href="academic_meetings.php">
-                        <i class="fas fa-calendar-check"></i>
-                        <span>Meetings</span>
-                    </a>
-                </li>
+                
                 <li class="menu-item">
                     <a href="academic_tickets.php">
                         <i class="fas fa-graduation-cap"></i>
                         <span>Academic Tickets</span>
-                        <?php if ($open_academic_tickets > 0): ?>
-                            <span class="menu-badge"><?php echo $open_academic_tickets; ?></span>
-                        <?php endif; ?>
+                       
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="academic_reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Academic Reports</span>
-                        <?php if ($academic_reports > 0): ?>
-                            <span class="menu-badge"><?php echo $academic_reports; ?></span>
-                        <?php endif; ?>
+                       
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1388,18 +1377,13 @@ try {
                         <span>Academic Clubs</span>
                     </a>
                 </li>
-                                                <li class="menu-item">
+                 <li class="menu-item">
                     <a href="committee_budget_requests.php" >
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="performance_tracking.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Performance Tracking</span>
-                    </a>
-                </li>
+              
                 <li class="menu-item">
                     <a href="innovation_projects.php">
                         <i class="fas fa-lightbulb"></i>
@@ -1432,14 +1416,7 @@ try {
 
         <main class="main-content">
             <div class="container">
-                <!-- Page Header -->
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1>Profile & Settings</h1>
-                        <p>Manage your personal information and account preferences</p>
-                    </div>
-                </div>
-
+                
                 <?php if (isset($_SESSION['success'])): ?>
                     <div class="alert alert-success">
                         <?php echo $_SESSION['success']; unset($_SESSION['success']); ?>
@@ -1499,14 +1476,14 @@ try {
                                     onclick="switchTab('security')">
                                 <i class="fas fa-shield-alt"></i> Security
                             </button>
-                            <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
+                            <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
                                     onclick="switchTab('preferences')">
                                 <i class="fas fa-cog"></i> Preferences
                             </button>
                             <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" 
                                     onclick="switchTab('sessions')">
                                 <i class="fas fa-history"></i> Login History
-                            </button>
+                            </button> -->
                         </div>
 
                         <!-- Tab Content -->
@@ -1628,25 +1605,6 @@ try {
                                         </div>
                                     </form>
                                 </div>
-
-                                <div class="form-section">
-                                    <h4>Two-Factor Authentication</h4>
-                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--academic-light); border-radius: var(--border-radius);">
-                                        <div>
-                                            <div style="font-weight: 600; margin-bottom: 0.25rem;">Two-Factor Authentication</div>
-                                            <div style="font-size: 0.9rem; color: var(--dark-gray);">
-                                                <?php echo $user['two_factor_enabled'] ? 'Enabled' : 'Disabled'; ?>
-                                            </div>
-                                        </div>
-                                        <form method="POST" style="margin: 0;">
-                                            <input type="hidden" name="action" value="<?php echo $user['two_factor_enabled'] ? 'disable_2fa' : 'enable_2fa'; ?>">
-                                            <button type="submit" class="btn <?php echo $user['two_factor_enabled'] ? 'btn-secondary' : 'btn-primary'; ?>">
-                                                <?php echo $user['two_factor_enabled'] ? 'Disable' : 'Enable'; ?> 2FA
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
-
                                 <div class="form-section">
                                     <h4>Account Security</h4>
                                     <div style="font-size: 0.9rem; color: var(--dark-gray);">
@@ -1985,61 +1943,7 @@ try {
                 }
             }
 
-            // Dark mode toggle - FIXED
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            if (themeToggle) {
-                console.log('Theme toggle found');
-                
-                // Check for saved theme or prefer system theme
-                const savedTheme = localStorage.getItem('theme');
-                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                
-                let currentTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
-                
-                // Apply theme
-                if (currentTheme === 'dark') {
-                    body.classList.add('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                    themeToggle.title = 'Switch to Light Mode';
-                } else {
-                    body.classList.remove('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                    themeToggle.title = 'Switch to Dark Mode';
-                }
-
-                themeToggle.addEventListener('click', () => {
-                    body.classList.toggle('dark-mode');
-                    const isDark = body.classList.contains('dark-mode');
-                    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                    
-                    if (isDark) {
-                        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        themeToggle.title = 'Switch to Light Mode';
-                    } else {
-                        themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        themeToggle.title = 'Switch to Dark Mode';
-                    }
-                    
-                    console.log('Theme changed to:', isDark ? 'dark' : 'light');
-                });
-
-                // Listen for system theme changes
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-                    if (!localStorage.getItem('theme')) {
-                        if (e.matches) {
-                            body.classList.add('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        } else {
-                            body.classList.remove('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        }
-                    }
-                });
-            } else {
-                console.error('Theme toggle button not found!');
-            }
+           
         });
 
         // Tab switching

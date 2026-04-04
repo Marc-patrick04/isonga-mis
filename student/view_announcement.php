@@ -4,18 +4,18 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
 // Redirect class representatives to their dedicated dashboard
 if ($_SESSION['is_class_rep'] ?? 0) {
-    header('Location: class_rep_dashboard.php');
+    header('Location: class_rep_dashboard');
     exit();
 }
 
 if (!isset($_GET['id'])) {
-    header('Location: announcements.php');
+    header('Location: announcements');
     exit();
 }
 
@@ -35,7 +35,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: view_announcement.php?id=' . $announcement_id);
+    header('Location: view_announcement?id=' . $announcement_id);
     exit();
 }
 
@@ -52,7 +52,7 @@ $stmt->execute([$announcement_id]);
 $announcement = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$announcement) {
-    header('Location: announcements.php');
+    header('Location: announcements');
     exit();
 }
 
@@ -929,7 +929,7 @@ function formatContent($content) {
 <body>
     <!-- Header -->
     <header class="header">
-<a href="dashboard.php" class="logo">
+<a href="dashboard" class="logo">
     <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo-image">
     <div class="logo-text">Isonga</div>
 </a>
@@ -943,7 +943,7 @@ function formatContent($content) {
     </form>
     
     <!-- Logout Button - Add this -->
-    <a href="../auth/logout.php" class="logout-btn" title="Logout">
+    <a href="../auth/logout" class="logout-btn" title="Logout">
         <i class="fas fa-sign-out-alt"></i>
     </a>
     
@@ -964,38 +964,38 @@ function formatContent($content) {
         <div class="main-nav">
             <ul class="nav-links">
                 <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link">
+                    <a href="dashboard" class="nav-link">
                         <i class="fas fa-home"></i>
                         Dashboard
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="tickets.php" class="nav-link">
+                    <a href="tickets" class="nav-link">
                         <i class="fas fa-ticket-alt"></i>
                         My Tickets
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="financial_aid.php" class="nav-link">
+                    <a href="financial_aid" class="nav-link">
                         <i class="fas fa-hand-holding-usd"></i>
                         Financial Aid
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="profile.php" class="nav-link">
+                    <a href="profile" class="nav-link">
                         <i class="fas fa-user"></i>
                         Profile
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="announcements.php" class="nav-link active">
+                    <a href="announcements" class="nav-link active">
                         <i class="fas fa-bullhorn"></i>
                         Announcements
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="nav-item">
-                    <a href="class_rep_dashboard.php" class="nav-link">
+                    <a href="class_rep_dashboard" class="nav-link">
                         <i class="fas fa-users"></i>
                         Class Rep
                     </a>
@@ -1012,9 +1012,9 @@ function formatContent($content) {
             <div class="header-top">
                 <div class="header-left">
                     <div class="breadcrumb">
-                        <a href="dashboard.php"><i class="fas fa-home"></i> Dashboard</a>
+                        <a href="dashboard"><i class="fas fa-home"></i> Dashboard</a>
                         <i class="fas fa-chevron-right"></i>
-                        <a href="announcements.php">Announcements</a>
+                        <a href="announcements">Announcements</a>
                         <i class="fas fa-chevron-right"></i>
                         <span><?php echo safe_display($announcement['title']); ?></span>
                     </div>
@@ -1086,7 +1086,7 @@ function formatContent($content) {
                 <!-- Action Buttons -->
                 <div class="card-body" style="padding-top: 0;">
                     <div class="action-buttons">
-                        <a href="announcements.php" class="btn btn-secondary">
+                        <a href="announcements" class="btn btn-secondary">
                             <i class="fas fa-arrow-left"></i>
                             Back to Announcements
                         </a>
@@ -1148,7 +1148,7 @@ function formatContent($content) {
                 <div class="sidebar-body">
                     <div class="related-list">
                         <?php foreach ($related_announcements as $related): ?>
-                            <a href="view_announcement.php?id=<?php echo $related['id']; ?>" 
+                            <a href="view_announcement?id=<?php echo $related['id']; ?>" 
                                class="related-item <?php echo $related['is_pinned'] ? 'pinned' : ''; ?>">
                                 <div class="related-icon">
                                     <i class="fas <?php echo getCategoryIcon($related['category']); ?>"></i>
@@ -1180,7 +1180,7 @@ function formatContent($content) {
                 <div class="sidebar-body">
                     <div class="related-list">
                         <?php foreach ($latest_announcements as $latest): ?>
-                            <a href="view_announcement.php?id=<?php echo $latest['id']; ?>" 
+                            <a href="view_announcement?id=<?php echo $latest['id']; ?>" 
                                class="related-item <?php echo $latest['is_pinned'] ? 'pinned' : ''; ?>">
                                 <div class="related-icon">
                                     <i class="fas <?php echo getCategoryIcon($latest['category']); ?>"></i>
@@ -1210,16 +1210,16 @@ function formatContent($content) {
                 </div>
                 <div class="sidebar-body">
                     <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-                        <a href="announcements.php?category=<?php echo urlencode($announcement['category']); ?>" 
+                        <a href="announcements?category=<?php echo urlencode($announcement['category']); ?>" 
                            class="btn btn-secondary btn-sm">
                             <i class="fas <?php echo getCategoryIcon($announcement['category']); ?>"></i>
                             More <?php echo safe_display(ucfirst($announcement['category'])); ?> Announcements
                         </a>
-                        <a href="announcements.php?priority=urgent" class="btn btn-secondary btn-sm">
+                        <a href="announcements?priority=urgent" class="btn btn-secondary btn-sm">
                             <i class="fas fa-exclamation-circle"></i>
                             View Urgent Announcements
                         </a>
-                        <a href="announcements.php?category=academic" class="btn btn-secondary btn-sm">
+                        <a href="announcements?category=academic" class="btn btn-secondary btn-sm">
                             <i class="fas fa-graduation-cap"></i>
                             Academic Announcements
                         </a>
@@ -1313,7 +1313,7 @@ function formatContent($content) {
         document.addEventListener('keydown', function(e) {
             // Escape to go back
             if (e.key === 'Escape') {
-                window.location.href = 'announcements.php';
+                window.location.href = 'announcements';
             }
             
             // Ctrl+P to print

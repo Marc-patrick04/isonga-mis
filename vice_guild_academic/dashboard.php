@@ -1208,9 +1208,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1290,16 +1288,14 @@ try {
                     <a href="academic_reports.php">
                         <i class="fas fa-file-alt"></i>
                         <span>Academic Reports</span>
-                        <?php if ($academic_reports > 0): ?>
-                            <span class="menu-badge"><?php echo $academic_reports; ?></span>
-                        <?php endif; ?>
+                       
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="academic_clubs.php">
                         <i class="fas fa-users"></i>
                         <span>Academic Clubs</span>
-                        <span class="menu-badge"><?php echo count($academic_clubs); ?></span>
+                     
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1308,12 +1304,7 @@ try {
                         <span>Action Funding</span>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="performance_tracking.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Performance Tracking</span>
-                    </a>
-                </li>
+               
                 <li class="menu-item">
                     <a href="innovation_projects.php">
                         <i class="fas fa-lightbulb"></i>
@@ -1351,9 +1342,7 @@ try {
         <main class="main-content">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Vice Guild Academic <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 📚</h1>
-                    <p>Overseeing academic innovation, performance tracking, and academic issues resolution</p>
-                </div>
+                    <h1>Welcome, Vice Guild Academic <?php echo htmlspecialchars($_SESSION['full_name']); ?>! </h1>
             </div>
 
             <?php if ($password_change_required): ?>
@@ -1383,15 +1372,7 @@ try {
                         <div class="stat-label">Pending Academic</div>
                     </div>
                 </div>
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $resolved_academic_tickets; ?></div>
-                        <div class="stat-label">Resolved Academic</div>
-                    </div>
-                </div>
+                
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-file-alt"></i>
@@ -1405,33 +1386,8 @@ try {
 
             <!-- Additional Stats Grid -->
             <div class="stats-grid" style="margin-top: 1rem;">
-                <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $high_priority_academic; ?></div>
-                        <div class="stat-label">High Priority</div>
-                    </div>
-                </div>
-                <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $overdue_academic; ?></div>
-                        <div class="stat-label">Overdue Academic</div>
-                    </div>
-                </div>
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $academic_resolution_rate; ?>%</div>
-                        <div class="stat-label">Resolution Rate</div>
-                    </div>
-                </div>
+               
+               
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-lightbulb"></i>
@@ -1447,62 +1403,7 @@ try {
             <div class="content-grid">
                 <!-- Left Column -->
                 <div class="left-column">
-                    <!-- Recent Academic Tickets -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Academic Issues</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                                <a href="academic_tickets.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-responsive">
-                            <table class="table">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Subject</th>
-                                        <th>Student</th>
-                                        <th>Priority</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php if (empty($recent_academic_tickets)): ?>
-                                        <tr>
-                                            <td colspan="5" style="text-align: center; color: var(--dark-gray); padding: 2rem;">No recent academic tickets</td>
-                                        </tr>
-                                    <?php else: ?>
-                                        <?php foreach ($recent_academic_tickets as $ticket): ?>
-                                            <tr>
-                                                <td>#<?php echo $ticket['id']; ?></td>
-                                                <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                                    <?php echo htmlspecialchars($ticket['subject']); ?>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($ticket['name']); ?></td>
-                                                <td>
-                                                    <span class="priority-badge priority-<?php echo $ticket['priority']; ?>">
-                                                        <?php echo ucfirst($ticket['priority']); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo str_replace(' ', '_', $ticket['status']); ?>">
-                                                        <?php echo ucfirst($ticket['status']); ?>
-                                                    </span>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </tbody>
-                            </table>
-                            </div><!-- /.table-responsive -->
-                        </div>
-                    </div>
+                    
 
                     <!-- Academic Clubs -->
                     <div class="card">
@@ -1579,202 +1480,13 @@ try {
                     </div>
                 </div>
 
-                <!-- Right Column -->
-                <div class="right-column">
-                    <!-- Today's Academic Events -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Today's Academic Events</h3>
-                            <a href="academic_calendar.php" class="card-header-btn" title="View Calendar">
-                                <i class="fas fa-calendar-alt"></i>
-                            </a>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($todays_events)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No academic events today</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="event-list">
-                                    <?php foreach ($todays_events as $event): ?>
-                                        <li class="event-item">
-                                            <div class="event-icon">
-                                                <i class="fas fa-calendar-check"></i>
-                                            </div>
-                                            <div class="event-content">
-                                                <div class="event-title"><?php echo htmlspecialchars($event['title']); ?></div>
-                                                <div class="event-time">
-                                                    <?php echo date('g:i A', strtotime($event['start_time'])); ?> 
-                                                    • <?php echo htmlspecialchars($event['location']); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                    <!-- Add this card in the right column after the "Today's Academic Events" card -->
-<div class="card">
-    <div class="card-header">
-        <h3>Upcoming Meetings</h3>
-        <a href="academic_meetings.php" class="card-header-btn" title="View All Meetings">
-            <i class="fas fa-external-link-alt"></i>
-        </a>
-    </div>
-    <div class="card-body">
-        <?php
-        // Get upcoming meetings for the user
-        try {
-            $stmt = $pdo->prepare("
-                SELECT m.*, ma.attendance_status, u.full_name as chairperson_name
-                FROM meeting_attendees ma 
-                JOIN meetings m ON ma.meeting_id = m.id 
-                JOIN users u ON m.chairperson_id = u.id
-                WHERE ma.user_id = ? 
-                AND m.meeting_date >= CURRENT_DATE 
-                AND m.status = 'scheduled'
-                ORDER BY m.meeting_date, m.start_time 
-                LIMIT 3
-            ");
-            $stmt->execute([$user_id]);
-            $upcoming_meetings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (PDOException $e) {
-            $upcoming_meetings = [];
-        }
-        ?>
-        
-        <?php if (empty($upcoming_meetings)): ?>
-            <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                <i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5;"></i>
-                <p>No upcoming meetings</p>
-            </div>
-        <?php else: ?>
-            <ul class="event-list">
-                <?php foreach ($upcoming_meetings as $meeting): ?>
-                    <li class="event-item">
-                        <div class="event-icon" style="background: <?php 
-                            switch($meeting['attendance_status']) {
-                                case 'confirmed': echo '#d4edda'; break;
-                                case 'declined': echo '#f8d7da'; break;
-                                default: echo '#fff3cd'; break;
-                            }
-                        ?>; color: <?php 
-                            switch($meeting['attendance_status']) {
-                                case 'confirmed': echo '#28a745'; break;
-                                case 'declined': echo '#dc3545'; break;
-                                default: echo '#ffc107'; break;
-                            }
-                        ?>;">
-                            <i class="fas fa-users"></i>
-                        </div>
-                        <div class="event-content">
-                            <div class="event-title"><?php echo htmlspecialchars($meeting['title']); ?></div>
-                            <div class="event-time">
-                                <?php echo date('M j, g:i A', strtotime($meeting['meeting_date'] . ' ' . $meeting['start_time'])); ?>
-                                <br>
-                                <small>
-                                    Status: 
-                                    <span style="color: <?php 
-                                        switch($meeting['attendance_status']) {
-                                            case 'confirmed': echo '#28a745'; break;
-                                            case 'declined': echo '#dc3545'; break;
-                                            default: echo '#ffc107'; break;
-                                        }
-                                    ?>; font-weight: 600;">
-                                        <?php echo ucfirst($meeting['attendance_status']); ?>
-                                    </span>
-                                </small>
-                            </div>
-                        </div>
-                    </li>
-                <?php endforeach; ?>
-            </ul>
-        <?php endif; ?>
-    </div>
-</div>
-
-                    <!-- Academic Committee -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Academic Committee</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($academic_committee)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No committee members found</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="committee-list">
-                                    <?php foreach ($academic_committee as $member): ?>
-                                        <li class="committee-item">
-                                            <div class="committee-avatar">
-                                                <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
-                                            </div>
-                                            <div class="committee-content">
-                                                <div class="committee-name"><?php echo htmlspecialchars($member['name']); ?></div>
-                                                <div class="committee-role"><?php echo str_replace('_', ' ', $member['role']); ?></div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Recent Activities -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Activities</h3>
-                        </div>
-                        <div class="card-body">
-                            <ul class="activity-list">
-                                <?php if (empty($recent_activities)): ?>
-                                    <li style="text-align: center; color: var(--dark-gray); padding: 1rem;">No recent activities</li>
-                                <?php else: ?>
-                                    <?php foreach ($recent_activities as $activity): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar">
-                                                <?php echo strtoupper(substr($activity['full_name'], 0, 1)); ?>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($activity['full_name']); ?></strong> 
-                                                    logged in
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, g:i A', strtotime($activity['login_time'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
+              
             </div>
         </main>
     </div>
 
     <script>
-        // ── Dark Mode Toggle ──────────────────────────────────────
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') ||
-            (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
         const hamburgerBtn  = document.getElementById('hamburgerBtn');

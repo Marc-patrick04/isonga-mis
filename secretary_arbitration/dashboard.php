@@ -967,9 +967,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -981,13 +979,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Arbitration Secretary</div>
@@ -1084,8 +1076,7 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Arbitration Secretary <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 📋</h1>
-                    <p>Manage case documentation, notes, and administrative tasks</p>
+                    <h1>Welcome, Arbitration Secretary <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
                 </div>
             </div>
 
@@ -1125,28 +1116,12 @@ try {
                         <div class="stat-label">Resolved Cases</div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-gavel"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($upcoming_hearings); ?></div>
-                        <div class="stat-label">Upcoming Hearings</div>
-                    </div>
-                </div>
+                
             </div>
 
             <!-- Additional Stats Grid -->
             <div class="stats-grid" style="margin-top: 1rem;">
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-vote-yea"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($active_elections); ?></div>
-                        <div class="stat-label">Active Elections</div>
-                    </div>
-                </div>
+               
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-sticky-note"></i>
@@ -1235,52 +1210,6 @@ try {
                             </div>
                         </div>
                     </div>
-
-                    <!-- Upcoming Hearings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Hearings</h3>
-                            <div class="card-header-actions">
-                                <a href="hearings.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-container">
-                                <?php if (empty($upcoming_hearings_list)): ?>
-                                    <div class="empty-state">
-                                        <i class="fas fa-calendar-check"></i>
-                                        <p>No upcoming hearings</p>
-                                    </div>
-                                <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Case</th>
-                                                <th>Date & Time</th>
-                                                <th>Location</th>
-                                                <th>Purpose</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($upcoming_hearings_list as $hearing): ?>
-                                                <tr>
-                                                    <td><?php echo htmlspecialchars($hearing['case_number']); ?></td>
-                                                    <td><?php echo date('M j, Y g:i A', strtotime($hearing['hearing_date'])); ?></td>
-                                                    <td><?php echo htmlspecialchars($hearing['location']); ?></td>
-                                                    <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                                        <?php echo htmlspecialchars($hearing['purpose'] ?? 'N/A'); ?>
-                                                    </td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Quick Actions -->
                     <div class="quick-actions">
                         <a href="cases.php" class="action-btn">
@@ -1303,41 +1232,7 @@ try {
                 </div>
 
                 <!-- Right Column -->
-                <div class="right-column">
-                    <!-- Recent Activity -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Activity</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_activities)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-box-open"></i>
-                                    <p>No recent activity</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($recent_activities as $activity): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar">
-                                                <?php echo strtoupper(substr($activity['user_name'], 0, 1)); ?>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($activity['user_name']); ?></strong> added a <?php echo htmlspecialchars($activity['note_type']); ?> note to 
-                                                    <strong><?php echo htmlspecialchars($activity['case_number']); ?></strong>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, Y g:i A', strtotime($activity['created_at'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
+                
                     <!-- Active Elections -->
                     <div class="card">
                         <div class="card-header">
@@ -1370,33 +1265,7 @@ try {
                         </div>
                     </div>
 
-                    <!-- Quick Stats -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>System Overview</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="quick-overview">
-                                <div class="overview-item">
-                                    <span class="overview-label">Case Resolution Rate</span>
-                                    <strong class="overview-value">
-                                        <?php echo $total_cases > 0 ? round(($resolved_cases / $total_cases) * 100) : 0; ?>%
-                                    </strong>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Pending Cases</span>
-                                    <strong class="overview-value"><?php echo number_format($pending_cases); ?></strong>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Upcoming Hearings</span>
-                                    <strong class="overview-value"><?php echo number_format($upcoming_hearings); ?></strong>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Active Elections</span>
-                                    <strong class="overview-value"><?php echo number_format($active_elections); ?></strong>
-                                </div>
-                            </div>
-                        </div>
+                    
                     </div>
                 </div>
             </div>
@@ -1430,22 +1299,7 @@ try {
     </style>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

@@ -90,8 +90,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         INSERT INTO events (
                             category_id, title, description, excerpt, image_url, event_date, start_time, end_time,
                             location, organizer, contact_person, contact_email, contact_phone, max_participants,
-                            is_featured, status, registration_required, registration_deadline, created_by, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            is_featured, status, registration_required, registration_deadline, registered_participants, created_by, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     
                     $stmt->execute([
@@ -130,6 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $registration_required = isset($_POST['registration_required']) ? 1 : 0;
                 $registration_deadline = !empty($_POST['registration_deadline']) ? $_POST['registration_deadline'] : null;
                 $status = $_POST['status'] ?? 'published';
+                $remove_image = isset($_POST['remove_image']) ? 1 : 0;
                 
                 // Validate required fields
                 if (empty($title) || empty($description) || empty($category_id) || empty($event_date) || empty($start_time) || empty($location)) {
@@ -137,8 +138,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     break;
                 }
                 
-                // Handle image upload
-                $image_url = $_POST['current_image_url'] ?? null;
+                // Get current event data
+                try {
+                    $stmt = $pdo->prepare("SELECT image_url FROM events WHERE id = ?");
+                    $stmt->execute([$event_id]);
+                    $current_event = $stmt->fetch(PDO::FETCH_ASSOC);
+                } catch (PDOException $e) {
+                    $_SESSION['error_message'] = "Error loading event: " . $e->getMessage();
+                    break;
+                }
+                
+                $image_url = $current_event['image_url'] ?? null;
+                
+                // Handle image removal
+                if ($remove_image && $image_url) {
+                    $old_image_path = '../' . $image_url;
+                    if (file_exists($old_image_path)) {
+                        unlink($old_image_path);
+                    }
+                    $image_url = null;
+                }
+                
+                // Handle new image upload
                 if (isset($_FILES['image_url']) && $_FILES['image_url']['error'] === UPLOAD_ERR_OK) {
                     $upload_dir = '../assets/uploads/events/';
                     if (!is_dir($upload_dir)) {
@@ -153,15 +174,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
                     if (in_array(strtolower($file_extension), $allowed_types)) {
                         if (move_uploaded_file($_FILES['image_url']['tmp_name'], $file_path)) {
-                            $image_url = 'assets/uploads/events/' . $file_name;
-                            
                             // Delete old image if exists
-                            if (!empty($_POST['current_image_url'])) {
-                                $old_image_path = '../' . $_POST['current_image_url'];
-                                if (file_exists($old_image_path)) {
-                                    unlink($old_image_path);
-                                }
+                            if ($image_url && file_exists('../' . $image_url)) {
+                                unlink('../' . $image_url);
                             }
+                            $image_url = 'assets/uploads/events/' . $file_name;
                         }
                     }
                 }
@@ -226,6 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             case 'update_registration_status':
                 $registration_id = $_POST['registration_id'];
                 $status = $_POST['status'];
+                $event_id = $_POST['event_id'] ?? null;
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -235,6 +253,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ");
                     $stmt->execute([$status, $registration_id]);
                     
+                    // Update registered participants count if status changed to/from registered
+                    if ($event_id) {
+                        $stmt = $pdo->prepare("
+                            UPDATE events 
+                            SET registered_participants = (
+                                SELECT COUNT(*) FROM event_registrations 
+                                WHERE event_id = ? AND status = 'registered'
+                            )
+                            WHERE id = ?
+                        ");
+                        $stmt->execute([$event_id, $event_id]);
+                    }
+                    
                     $_SESSION['success_message'] = "Registration status updated successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error updating registration: " . $e->getMessage();
@@ -242,7 +273,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
         }
         
-        header("Location: events.php" . (isset($_POST['event_id']) ? "?view=" . $_POST['event_id'] : ""));
+        header("Location: events.php" . (isset($_POST['event_id']) && $_POST['action'] !== 'delete_event' ? "?view=" . $_POST['event_id'] : ""));
         exit();
     }
 }
@@ -320,10 +351,12 @@ try {
 }
 
 // Get event categories for filter and form
+$event_categories = [];
 try {
     $stmt = $pdo->query("SELECT * FROM event_categories WHERE is_active = true ORDER BY name");
     $event_categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
+    error_log("Event categories query error: " . $e->getMessage());
     $event_categories = [];
 }
 
@@ -359,7 +392,7 @@ try {
     $total_events = $my_events = $upcoming_events = $featured_events = $total_registrations = 0;
 }
 
-// Check if we're viewing/editing a specific event
+// Check if we're viewing a specific event
 $view_event = null;
 $event_registrations = [];
 if (isset($_GET['view']) && is_numeric($_GET['view'])) {
@@ -394,31 +427,35 @@ if (isset($_GET['view']) && is_numeric($_GET['view'])) {
     }
 }
 
-// Check if we're editing an event
+// Check if we're editing an event (new or existing)
 $edit_event = null;
-if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
-    try {
-        $stmt = $pdo->prepare("
-            SELECT e.*, ec.name as category_name
-            FROM events e
-            LEFT JOIN event_categories ec ON e.category_id = ec.id
-            WHERE e.id = ?
-        ");
-        $stmt->execute([$_GET['edit']]);
-        $edit_event = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$edit_event) {
-            $_SESSION['error_message'] = "Event not found.";
+if (isset($_GET['edit'])) {
+    if ($_GET['edit'] === 'new') {
+        // New event mode
+        $edit_event = [];
+    } elseif (is_numeric($_GET['edit'])) {
+        // Edit existing event
+        try {
+            $stmt = $pdo->prepare("
+                SELECT e.*, ec.name as category_name
+                FROM events e
+                LEFT JOIN event_categories ec ON e.category_id = ec.id
+                WHERE e.id = ?
+            ");
+            $stmt->execute([$_GET['edit']]);
+            $edit_event = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$edit_event) {
+                $_SESSION['error_message'] = "Event not found.";
+                header("Location: events.php");
+                exit();
+            }
+        } catch (PDOException $e) {
+            $_SESSION['error_message'] = "Error loading event: " . $e->getMessage();
             header("Location: events.php");
             exit();
         }
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error loading event: " . $e->getMessage();
-        header("Location: events.php");
-        exit();
     }
-} elseif (isset($_GET['edit']) && $_GET['edit'] === 'new') {
-    $edit_event = []; // Initialize for new event
 }
 ?>
 
@@ -588,6 +625,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            position: relative;
         }
 
         .icon-btn:hover {
@@ -1559,10 +1597,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <!-- <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button> -->
-                    <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
+                    <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
                             <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1570,13 +1605,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <!-- <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div> -->
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Public Relations</div>
@@ -1681,7 +1709,10 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
-                
+                <div class="welcome-section">
+                    <h1>Events Management</h1>
+                    <p>Create and manage events for the student community</p>
+                </div>
                 <div class="header-actions">
                     <?php if ($view_event || $edit_event): ?>
                         <a href="events.php" class="btn btn-secondary">
@@ -1888,15 +1919,14 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     <?php endif; ?>
                 </div>
 
-            <?php elseif ($edit_event): ?>
-                <!-- Event Form -->
+            <?php elseif ($edit_event !== null): ?>
+                <!-- Event Form (New or Edit) -->
                 <div class="event-form">
                     <h2 class="form-title"><?php echo isset($edit_event['id']) ? 'Edit Event' : 'Create New Event'; ?></h2>
-                    <form method="POST" enctype="multipart/form-data">
+                    <form method="POST" enctype="multipart/form-data" id="eventForm">
                         <input type="hidden" name="action" value="<?php echo isset($edit_event['id']) ? 'update_event' : 'create_event'; ?>">
                         <?php if (isset($edit_event['id'])): ?>
                             <input type="hidden" name="event_id" value="<?php echo $edit_event['id']; ?>">
-                            <input type="hidden" name="current_image_url" value="<?php echo htmlspecialchars($edit_event['image_url'] ?? ''); ?>">
                         <?php endif; ?>
                         
                         <div class="form-grid">
@@ -1933,7 +1963,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                             </div>
                             
                             <div class="form-group">
-                                <label class                            <div class="form-group">
                                 <label class="form-label">End Time</label>
                                 <input type="time" name="end_time" class="form-input" 
                                        value="<?php echo htmlspecialchars($edit_event['end_time'] ?? ''); ?>">
@@ -1966,6 +1995,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                                         <p>Current Image:</p>
                                         <img src="../<?php echo htmlspecialchars($edit_event['image_url']); ?>" 
                                              alt="Event Image" style="max-width: 200px; border-radius: var(--border-radius);">
+                                        <div style="margin-top: 0.5rem;">
+                                            <label>
+                                                <input type="checkbox" name="remove_image" value="1"> Remove current image
+                                            </label>
+                                        </div>
                                     </div>
                                 <?php endif; ?>
                             </div>
@@ -2030,13 +2064,13 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                             <div class="form-group" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                                 <div>
                                     <input type="checkbox" name="is_featured" value="1" class="form-checkbox" 
-                                           <?php echo ($edit_event['is_featured'] ?? 0) ? 'checked' : ''; ?>>
+                                           <?php echo (isset($edit_event['is_featured']) && $edit_event['is_featured']) ? 'checked' : ''; ?>>
                                     <label class="form-label" style="display: inline; margin: 0;">Featured Event</label>
                                 </div>
                                 
                                 <div>
                                     <input type="checkbox" name="registration_required" value="1" class="form-checkbox" 
-                                           <?php echo ($edit_event['registration_required'] ?? 0) ? 'checked' : ''; ?>>
+                                           <?php echo (isset($edit_event['registration_required']) && $edit_event['registration_required']) ? 'checked' : ''; ?>>
                                     <label class="form-label" style="display: inline; margin: 0;">Registration Required</label>
                                 </div>
                             </div>
@@ -2158,6 +2192,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                                                                 <form method="POST" style="display: inline;">
                                                                     <input type="hidden" name="action" value="update_registration_status">
                                                                     <input type="hidden" name="registration_id" value="<?php echo $registration['id']; ?>">
+                                                                    <input type="hidden" name="event_id" value="<?php echo $view_event['id']; ?>">
                                                                     <select name="status" class="form-select" style="font-size: 0.7rem; padding: 0.25rem; width: auto;" onchange="this.form.submit()">
                                                                         <option value="registered" <?php echo $registration['status'] === 'registered' ? 'selected' : ''; ?>>Registered</option>
                                                                         <option value="attended" <?php echo $registration['status'] === 'attended' ? 'selected' : ''; ?>>Attended</option>
@@ -2309,23 +2344,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
     </form>
 
     <script>
-        // Dark Mode Toggle
-        // const themeToggle = document.getElementById('themeToggle');
-        // const body = document.body;
-
-        // const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        // if (savedTheme === 'dark') {
-        //     body.classList.add('dark-mode');
-        //     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        // }
-
-        // themeToggle.addEventListener('click', () => {
-        //     body.classList.toggle('dark-mode');
-        //     const isDark = body.classList.contains('dark-mode');
-        //     localStorage.setItem('theme', isDark ? 'dark' : 'light');
-        //     themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        // });
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
@@ -2465,101 +2483,92 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
 
         // Form validation
         document.addEventListener('DOMContentLoaded', function() {
-            const eventForms = document.querySelectorAll('form[action="create_event"], form[action="update_event"]');
-            eventForms.forEach(eventForm => {
-                if (eventForm) {
-                    eventForm.addEventListener('submit', function(e) {
-                        const title = document.querySelector('input[name="title"]');
-                        const description = document.querySelector('textarea[name="description"]');
-                        const category = document.querySelector('select[name="category_id"]');
-                        const eventDate = document.querySelector('input[name="event_date"]');
-                        const startTime = document.querySelector('input[name="start_time"]');
-                        const location = document.querySelector('input[name="location"]');
-                        
-                        let isValid = true;
-                        
-                        if (!title.value.trim()) {
-                            showError(title, 'Event title is required');
-                            isValid = false;
-                        }
-                        
-                        if (!description.value.trim()) {
-                            showError(description, 'Event description is required');
-                            isValid = false;
-                        }
-                        
-                        if (!category.value) {
-                            showError(category, 'Please select a category');
-                            isValid = false;
-                        }
-                        
-                        if (!eventDate.value) {
-                            showError(eventDate, 'Event date is required');
-                            isValid = false;
-                        }
-                        
-                        if (!startTime.value) {
-                            showError(startTime, 'Start time is required');
-                            isValid = false;
-                        }
-                        
-                        if (!location.value.trim()) {
-                            showError(location, 'Location is required');
-                            isValid = false;
-                        }
-                        
-                        if (!isValid) {
-                            e.preventDefault();
-                            // Scroll to first error
-                            const firstError = document.querySelector('.error-message');
-                            if (firstError) {
-                                firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }
-                        }
-                    });
+            const eventForm = document.getElementById('eventForm');
+            if (eventForm) {
+                eventForm.addEventListener('submit', function(e) {
+                    const title = document.querySelector('input[name="title"]');
+                    const description = document.querySelector('textarea[name="description"]');
+                    const category = document.querySelector('select[name="category_id"]');
+                    const eventDate = document.querySelector('input[name="event_date"]');
+                    const startTime = document.querySelector('input[name="start_time"]');
+                    const location = document.querySelector('input[name="location"]');
                     
-                    function showError(element, message) {
-                        // Remove existing error
-                        const existingError = element.parentNode.querySelector('.error-message');
-                        if (existingError) {
-                            existingError.remove();
-                        }
-                        
-                        // Add error styling
-                        element.style.borderColor = 'var(--danger)';
-                        
-                        // Create error message
-                        const errorDiv = document.createElement('div');
-                        errorDiv.className = 'error-message';
-                        errorDiv.style.color = 'var(--danger)';
-                        errorDiv.style.fontSize = '0.75rem';
-                        errorDiv.style.marginTop = '0.25rem';
-                        errorDiv.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${message}`;
-                        
-                        element.parentNode.appendChild(errorDiv);
+                    let isValid = true;
+                    
+                    if (!title.value.trim()) {
+                        showError(title, 'Event title is required');
+                        isValid = false;
                     }
                     
-                    // Remove error on input
-                    const inputs = eventForm.querySelectorAll('input, textarea, select');
-                    inputs.forEach(input => {
-                        input.addEventListener('input', function() {
-                            this.style.borderColor = '';
-                            const error = this.parentNode.querySelector('.error-message');
-                            if (error) {
-                                error.remove();
-                            }
-                        });
-                    });
+                    if (!description.value.trim()) {
+                        showError(description, 'Event description is required');
+                        isValid = false;
+                    }
+                    
+                    if (!category.value) {
+                        showError(category, 'Please select a category');
+                        isValid = false;
+                    }
+                    
+                    if (!eventDate.value) {
+                        showError(eventDate, 'Event date is required');
+                        isValid = false;
+                    }
+                    
+                    if (!startTime.value) {
+                        showError(startTime, 'Start time is required');
+                        isValid = false;
+                    }
+                    
+                    if (!location.value.trim()) {
+                        showError(location, 'Location is required');
+                        isValid = false;
+                    }
+                    
+                    if (!isValid) {
+                        e.preventDefault();
+                        // Scroll to first error
+                        const firstError = document.querySelector('.error-message');
+                        if (firstError) {
+                            firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }
+                    }
+                });
+                
+                function showError(element, message) {
+                    // Remove existing error
+                    const existingError = element.parentNode.querySelector('.error-message');
+                    if (existingError) {
+                        existingError.remove();
+                    }
+                    
+                    // Add error styling
+                    element.style.borderColor = 'var(--danger)';
+                    
+                    // Create error message
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'error-message';
+                    errorDiv.style.color = 'var(--danger)';
+                    errorDiv.style.fontSize = '0.75rem';
+                    errorDiv.style.marginTop = '0.25rem';
+                    errorDiv.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${message}`;
+                    
+                    element.parentNode.appendChild(errorDiv);
                 }
-            });
-        });
-
-        // Auto-refresh events list every 5 minutes
-        setInterval(() => {
-            if (!window.location.search.includes('view=') && !window.location.search.includes('edit=')) {
-                window.location.reload();
+                
+                // Remove error on input
+                const inputs = eventForm.querySelectorAll('input, textarea, select');
+                inputs.forEach(input => {
+                    input.addEventListener('input', function() {
+                        this.style.borderColor = '';
+                        const error = this.parentNode.querySelector('.error-message');
+                        if (error) {
+                            error.remove();
+                        }
+                    });
+                });
             }
-        }, 300000);
+        });
 
         // Auto-close alerts after 5 seconds
         setTimeout(() => {

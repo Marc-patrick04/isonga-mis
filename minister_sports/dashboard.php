@@ -1204,7 +1204,7 @@ try {
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Welcome, Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
-                    <p>Manage sports teams, entertainment clubs, and events for <?php echo date('Y'); ?> academic year</p>
+                   
                 </div>
             </div>
 

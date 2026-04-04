@@ -1220,9 +1220,7 @@ if (isset($_SESSION['error'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                  
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1292,9 +1290,7 @@ if (isset($_SESSION['error'])) {
                     <a href="academic_tickets.php">
                         <i class="fas fa-graduation-cap"></i>
                         <span>Academic Tickets</span>
-                        <?php if ($academic_tickets > 0): ?>
-                            <span class="menu-badge"><?php echo $academic_tickets; ?></span>
-                        <?php endif; ?>
+                       
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1315,19 +1311,12 @@ if (isset($_SESSION['error'])) {
                         <span>Action Funding</span>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="performance_tracking.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Performance Tracking</span>
-                    </a>
-                </li>
+               
                 <li class="menu-item">
                     <a href="innovation_projects.php" class="active">
                         <i class="fas fa-lightbulb"></i>
                         <span>Innovation Projects</span>
-                        <?php if ($pending_projects > 0): ?>
-                            <span class="menu-badge"><?php echo $pending_projects; ?></span>
-                        <?php endif; ?>
+                       
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1358,13 +1347,7 @@ if (isset($_SESSION['error'])) {
         <main class="main-content">
             <div class="container">
                 <!-- Page Header -->
-                <div class="page-header">
-                    <div class="page-title">
-                        <h1>Innovation Projects & Club Management</h1>
-                        <p>Manage student innovation projects and innovation club activities</p>
-                    </div>
-                </div>
-
+               
                 <?php if (isset($success_message)): ?>
                     <div class="alert alert-success">
                         <?php echo $success_message; ?>
@@ -2039,25 +2022,7 @@ if (isset($_SESSION['error'])) {
             }
         }
 
-        // Dark mode toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        if (themeToggle) {
-            const savedTheme = localStorage.getItem('theme') || 'light';
-            if (savedTheme === 'dark') {
-                body.classList.add('dark-mode');
-                themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-            }
-
-            themeToggle.addEventListener('click', () => {
-                body.classList.toggle('dark-mode');
-                const isDark = body.classList.contains('dark-mode');
-                localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-            });
-        }
-
+    
         // Auto-fill department when student is selected
         document.getElementById('student_id')?.addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];

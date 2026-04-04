@@ -1919,7 +1919,7 @@ try {
                 <div class="page-header">
                     <div class="page-title">
                         <h1><i class="fas fa-users"></i> Sports Teams Management</h1>
-                        <p>Manage all sports teams, members, and team information</p>
+                       
                     </div>
                     <div class="page-actions">
                         <button class="btn btn-primary" onclick="openModal('addTeamModal')">

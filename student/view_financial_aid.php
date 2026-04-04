@@ -4,18 +4,18 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
 // Redirect class representatives to their dedicated dashboard
 if ($_SESSION['is_class_rep'] ?? 0) {
-    header('Location: class_rep_dashboard.php');
+    header('Location: class_rep_dashboard');
     exit();
 }
 
 if (!isset($_GET['id'])) {
-    header('Location: financial_aid.php');
+    header('Location: financial_aid');
     exit();
 }
 
@@ -44,7 +44,7 @@ $stmt->execute([$request_id, $student_id]);
 $request = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$request) {
-    header('Location: financial_aid.php');
+    header('Location: financial_aid');
     exit();
 }
 
@@ -54,7 +54,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: view_financial_aid.php?id=' . $request_id);
+    header('Location: view_financial_aid?id=' . $request_id);
     exit();
 }
 
@@ -731,7 +731,7 @@ function getUrgencyBadge($urgency) {
     <!-- Header -->
     <!-- Header -->
     <header class="header">
-<a href="dashboard.php" class="logo">
+<a href="dashboard" class="logo">
     <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo-image">
     <div class="logo-text">Isonga</div>
 </a>
@@ -745,7 +745,7 @@ function getUrgencyBadge($urgency) {
     </form>
     
     <!-- Logout Button - Add this -->
-    <a href="../auth/logout.php" class="logout-btn" title="Logout">
+    <a href="../auth/logout" class="logout-btn" title="Logout">
         <i class="fas fa-sign-out-alt"></i>
     </a>
     
@@ -765,38 +765,38 @@ function getUrgencyBadge($urgency) {
         <div class="main-nav">
             <ul class="nav-links">
                 <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link">
+                    <a href="dashboard" class="nav-link">
                         <i class="fas fa-home"></i>
                         Dashboard
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="tickets.php" class="nav-link">
+                    <a href="tickets" class="nav-link">
                         <i class="fas fa-ticket-alt"></i>
                         My Tickets
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="financial_aid.php" class="nav-link active">
+                    <a href="financial_aid" class="nav-link active">
                         <i class="fas fa-hand-holding-usd"></i>
                         Financial Aid
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="profile.php" class="nav-link">
+                    <a href="profile" class="nav-link">
                         <i class="fas fa-user"></i>
                         Profile
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="announcements.php" class="nav-link">
+                    <a href="announcements" class="nav-link">
                         <i class="fas fa-bullhorn"></i>
                         Announcements
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="nav-item">
-                    <a href="class_rep_dashboard.php" class="nav-link">
+                    <a href="class_rep_dashboard" class="nav-link">
                         <i class="fas fa-users"></i>
                         Class Rep
                     </a>
@@ -830,12 +830,12 @@ function getUrgencyBadge($urgency) {
                 </div>
                 
                 <div style="display: flex; gap: 0.75rem;">
-                    <a href="financial_aid.php" class="btn btn-secondary">
+                    <a href="financial_aid" class="btn btn-secondary">
                         <i class="fas fa-arrow-left"></i>
                         Back to List
                     </a>
                     <?php if ($request['status'] === 'approved'): ?>
-                        <a href="generate_approval_letter.php?id=<?php echo $request_id; ?>" class="btn btn-success">
+                        <a href="generate_approval_letter?id=<?php echo $request_id; ?>" class="btn btn-success">
                             <i class="fas fa-download"></i>
                             Approval Letter
                         </a>

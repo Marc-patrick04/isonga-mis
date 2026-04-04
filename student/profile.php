@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
@@ -23,7 +23,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: profile.php');
+    header('Location: profile');
     exit();
 }
 
@@ -85,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             $_SESSION['full_name'] = $full_name;
             
             $_SESSION['success_message'] = "Profile updated successfully!";
-            header('Location: profile.php');
+            header('Location: profile');
             exit();
             
         } catch (PDOException $e) {
@@ -115,7 +115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_preferences'])
         ]);
         
         $_SESSION['success_message'] = "Preferences updated successfully!";
-        header('Location: profile.php');
+        header('Location: profile');
         exit();
         
     } catch (PDOException $e) {
@@ -144,7 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
                     $update_password_stmt->execute([$new_password, $student_id]);
                     
                     $_SESSION['success_message'] = "Password changed successfully!";
-                    header('Location: profile.php');
+                    header('Location: profile');
                     exit();
                     
                 } catch (PDOException $e) {
@@ -928,7 +928,7 @@ function safe_display($data) {
     <!-- Header -->
     <!-- Header -->
     <header class="header">
-<a href="dashboard.php" class="logo">
+<a href="dashboard" class="logo">
     <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo-image">
     <div class="logo-text">Isonga</div>
 </a>
@@ -942,7 +942,7 @@ function safe_display($data) {
     </form>
     
     <!-- Logout Button - Add this -->
-    <a href="../auth/logout.php" class="logout-btn" title="Logout">
+    <a href="../auth/logout" class="logout-btn" title="Logout">
         <i class="fas fa-sign-out-alt"></i>
     </a>
     
@@ -963,31 +963,31 @@ function safe_display($data) {
         <div class="main-nav">
             <ul class="nav-links">
                 <li class="nav-item">
-                    <a href="dashboard.php" class="nav-link">
+                    <a href="dashboard" class="nav-link">
                         <i class="fas fa-home"></i>
                         Dashboard
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="tickets.php" class="nav-link">
+                    <a href="tickets" class="nav-link">
                         <i class="fas fa-ticket-alt"></i>
                         My Tickets
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="financial_aid.php" class="nav-link">
+                    <a href="financial_aid" class="nav-link">
                         <i class="fas fa-hand-holding-usd"></i>
                         Financial Aid
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="#" class="nav-link active">
+                    <a href="profile" class="nav-link active">
                         <i class="fas fa-user"></i>
                         Profile
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="announcements.php" class="nav-link">
+                    <a href="announcements" class="nav-link">
                         <i class="fas fa-bullhorn"></i>
                         Announcements
                     </a>
@@ -1005,7 +1005,7 @@ function safe_display($data) {
                 <p class="page-subtitle">Manage your personal information and settings</p>
             </div>
             <div class="header-actions-row">
-                <a href="dashboard.php" class="btn btn-outline">
+                <a href="dashboard" class="btn btn-outline">
                     <i class="fas fa-arrow-left"></i>
                     Back to Dashboard
                 </a>
@@ -1066,10 +1066,7 @@ function safe_display($data) {
                                 <span class="info-label">Academic Year</span>
                                 <span class="info-value">Year <?php echo safe_display($user_data['academic_year']); ?></span>
                             </div>
-                            <div class="info-item">
-                                <span class="info-label">Member Since</span>
-                                <span class="info-value"><?php echo $user_data['created_at'] ? date('F Y', strtotime($user_data['created_at'])) : 'N/A'; ?></span>
-                            </div>
+                           
                         </div>
                     </div>
                 </div>
@@ -1087,10 +1084,7 @@ function safe_display($data) {
                         <i class="fas fa-shield-alt"></i>
                         Security
                     </button>
-                    <button class="tab-btn" onclick="switchTab('preferences')">
-                        <i class="fas fa-sliders-h"></i>
-                        Preferences
-                    </button>
+                  
                 </div>
 
                 <!-- Personal Info Tab -->
@@ -1110,7 +1104,7 @@ function safe_display($data) {
                                     <div class="form-group">
                                         <label class="form-label" for="full_name">Full Name *</label>
                                         <input type="text" id="full_name" name="full_name" class="form-control" 
-                                               value="<?php echo safe_display($user_data['full_name']); ?>" required>
+                                               value="<?php echo safe_display($user_data['full_name']); ?>" disabled>
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" for="email">Email Address *</label>
@@ -1130,18 +1124,18 @@ function safe_display($data) {
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" for="gender">Gender</label>
-                                        <select id="gender" name="gender" class="form-control">
+                                        <select id="gender" name="gender" class="form-control" disabled>
                                             <option value="">Select Gender</option>
                                             <option value="male" <?php echo ($user_data['gender'] === 'male') ? 'selected' : ''; ?>>Male</option>
                                             <option value="female" <?php echo ($user_data['gender'] === 'female') ? 'selected' : ''; ?>>Female</option>
-                                            <option value="other" <?php echo ($user_data['gender'] === 'other') ? 'selected' : ''; ?>>Other</option>
+                                          
                                         </select>
                                     </div>
                                     <div class="form-group">
                                         <label class="form-label" for="reg_number">Registration Number</label>
                                         <input type="text" id="reg_number" class="form-control" 
                                                value="<?php echo safe_display($user_data['reg_number']); ?>" disabled>
-                                        <span class="helper-text">Registration number cannot be changed</span>
+                                     
                                     </div>
                                 </div>
                             </div>
@@ -1160,9 +1154,9 @@ function safe_display($data) {
                                                value="<?php echo safe_display($user_data['department_name']); ?>" disabled>
                                     </div>
                                     <div class="form-group">
-                                        <label class="form-label">Academic Year</label>
+                                        <label class="form-label">Year of study</label>
                                         <input type="text" class="form-control" 
-                                               value="Year <?php echo safe_display($user_data['academic_year']); ?>" disabled>
+                                               value=" <?php echo safe_display($user_data['academic_year']); ?>" disabled>
                                     </div>
                                 </div>
                             </div>
@@ -1274,10 +1268,7 @@ function safe_display($data) {
                                     <span class="activity-label">Last Password Change</span>
                                     <span class="activity-value"><?php echo $user_data['last_password_change'] ? date('F j, Y g:i A', strtotime($user_data['last_password_change'])) : 'Never changed'; ?></span>
                                 </div>
-                                <div class="activity-item">
-                                    <span class="activity-label">Login Count</span>
-                                    <span class="activity-value"><?php echo $user_data['login_count'] ?? 0; ?> times</span>
-                                </div>
+                              
                                 <div class="activity-item">
                                     <span class="activity-label">Last Login</span>
                                     <span class="activity-value"><?php echo $user_data['last_login'] ? date('M j, Y g:i A', strtotime($user_data['last_login'])) : 'Never'; ?></span>
@@ -1291,66 +1282,7 @@ function safe_display($data) {
                     </div>
                 </div>
 
-                <!-- Preferences Tab -->
-                <div id="preferences-tab" class="tab-content">
-                    <div class="form-card">
-                        <div class="card-header">
-                            <h3 class="card-title">
-                                <i class="fas fa-sliders-h"></i>
-                                Preferences
-                            </h3>
-                        </div>
-                        
-                        <form method="POST" id="preferencesForm">
-                            <div class="form-section">
-                                <h4 class="section-title">Notification Preferences</h4>
-                                <div class="form-grid">
-                                    <div class="checkbox-group">
-                                        <input type="checkbox" id="email_notifications" name="email_notifications" 
-                                               value="1" <?php echo ($user_data['email_notifications'] ?? 0) ? 'checked' : ''; ?>>
-                                        <label for="email_notifications">Email Notifications</label>
-                                    </div>
-                                    <div class="checkbox-group">
-                                        <input type="checkbox" id="sms_notifications" name="sms_notifications" 
-                                               value="1" <?php echo ($user_data['sms_notifications'] ?? 0) ? 'checked' : ''; ?>>
-                                        <label for="sms_notifications">SMS Notifications</label>
-                                    </div>
-                                </div>
-                                <span class="helper-text">Receive notifications about ticket updates and announcements</span>
-                            </div>
-
-                            <div class="form-section">
-                                <h4 class="section-title">Display Preferences</h4>
-                                <div class="form-grid">
-                                    <div class="form-group">
-                                        <label class="form-label" for="preferred_language">Preferred Language</label>
-                                        <select id="preferred_language" name="preferred_language" class="form-control">
-                                            <option value="en" <?php echo ($user_data['preferred_language'] ?? 'en') === 'en' ? 'selected' : ''; ?>>English</option>
-                                            <option value="rw" <?php echo ($user_data['preferred_language'] ?? 'en') === 'rw' ? 'selected' : ''; ?>>Kinyarwanda</option>
-                                            <option value="fr" <?php echo ($user_data['preferred_language'] ?? 'en') === 'fr' ? 'selected' : ''; ?>>French</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" for="theme_preference">Theme Preference</label>
-                                        <select id="theme_preference" name="theme_preference" class="form-control">
-                                            <option value="auto" <?php echo ($user_data['theme_preference'] ?? 'auto') === 'auto' ? 'selected' : ''; ?>>Auto (Follow system)</option>
-                                            <option value="light" <?php echo ($user_data['theme_preference'] ?? 'auto') === 'light' ? 'selected' : ''; ?>>Light Mode</option>
-                                            <option value="dark" <?php echo ($user_data['theme_preference'] ?? 'auto') === 'dark' ? 'selected' : ''; ?>>Dark Mode</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="form-actions">
-                                <button type="button" class="btn btn-secondary" onclick="resetForm('preferencesForm')">
-                                    <i class="fas fa-redo"></i>
-                                    Reset
-                                </button>
-                                <button type="submit" name="update_preferences" class="btn btn-primary">
-                                    <i class="fas fa-save"></i>
-                                    Save Preferences
-                                </button>
-                            </div>
+                
                         </form>
                     </div>
                 </div>

@@ -2045,9 +2045,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                     </a>
@@ -2137,12 +2135,7 @@ try {
                         <span>Action Funding</span>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="performance_tracking.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Performance Tracking</span>
-                    </a>
-                </li>
+              
                 <li class="menu-item">
                     <a href="innovation_projects.php">
                         <i class="fas fa-lightbulb"></i>
@@ -2174,14 +2167,9 @@ try {
         <main class="main-content">
             <!-- Page Header -->
             <div class="page-header">
-                <div class="page-title">
-                    <h1>Academic Clubs Management</h1>
-                    <p>Manage all academic clubs, members, activities, and resources</p>
-                </div>
+               
                 <div class="page-actions">
-                    <a href="dashboard.php" class="btn btn-outline">
-                        <i class="fas fa-arrow-left"></i> Back to Dashboard
-                    </a>
+                   
                     <?php if (!$current_club): ?>
                         <a href="?action=new" class="btn btn-primary">
                             <i class="fas fa-plus"></i> New Club
@@ -2869,15 +2857,7 @@ try {
                             <div class="stat-label">Total Clubs</div>
                         </div>
                     </div>
-                    <div class="stat-card success">
-                        <div class="stat-icon">
-                            <i class="fas fa-check-circle"></i>
-                        </div>
-                        <div class="stat-content">
-                            <div class="stat-number"><?php echo $club_stats['active_clubs']; ?></div>
-                            <div class="stat-label">Active Clubs</div>
-                        </div>
-                    </div>
+                    
                     <div class="stat-card">
                         <div class="stat-icon">
                             <i class="fas fa-user-friends"></i>
@@ -3016,24 +2996,7 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
-        // Mobile Sidebar Toggle
+               // Mobile Sidebar Toggle
         const hamburgerBtn = document.getElementById('hamburgerBtn');
         const sidebar = document.querySelector('.sidebar');
         const overlay = document.getElementById('mobileNavOverlay');

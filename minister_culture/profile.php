@@ -1340,9 +1340,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1354,13 +1352,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Culture & Civic Education</div>
@@ -1460,8 +1452,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div class="page-title">
-                    <h1>Profile & Settings ⚙️</h1>
-                    <p>Manage your personal information and account preferences</p>
+                    <h1>Profile & Settings</h1>
+                  
                 </div>
             </div>
 
@@ -1525,12 +1517,12 @@ try {
                         <button class="profile-tab <?php echo $active_tab === 'security' ? 'active' : ''; ?>" onclick="switchTab(event, 'security')">
                             <i class="fas fa-shield-alt"></i> Security
                         </button>
-                        <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" onclick="switchTab(event, 'preferences')">
+                        <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" onclick="switchTab(event, 'preferences')">
                             <i class="fas fa-cog"></i> Preferences
                         </button>
                         <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" onclick="switchTab(event, 'sessions')">
                             <i class="fas fa-history"></i> Login History
-                        </button>
+                        </button> -->
                     </div>
 
                     <!-- Tab Content -->
@@ -1652,7 +1644,7 @@ try {
                                 </form>
                             </div>
 
-                            <div class="form-section">
+                            <!-- <div class="form-section">
                                 <h4>Two-Factor Authentication</h4>
                                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-purple); border-radius: var(--border-radius);">
                                     <div>
@@ -1668,7 +1660,7 @@ try {
                                         </button>
                                     </form>
                                 </div>
-                            </div>
+                            </div> -->
 
                             <div class="form-section">
                                 <h4>Account Security</h4>
@@ -1832,22 +1824,7 @@ try {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

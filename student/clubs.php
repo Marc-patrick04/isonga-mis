@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
@@ -23,7 +23,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/"); // 30 days
-    header('Location: clubs.php');
+    header('Location: clubs');
     exit();
 }
 
@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['join_club'])) {
             
             $_SESSION['success_message'] = "Successfully joined the club!";
         }
-        header('Location: clubs.php');
+        header('Location: clubs');
         exit();
         
     } catch (PDOException $e) {
@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['leave_club'])) {
         } else {
             $_SESSION['error_message'] = "You are not a member of this club.";
         }
-        header('Location: clubs.php');
+        header('Location: clubs');
         exit();
         
     } catch (PDOException $e) {
@@ -868,10 +868,10 @@ $recent_activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="nav-section">
                 <h3 class="nav-title">Main Navigation</h3>
                 <ul class="nav-links">
-                    <li><a href="dashboard.php"><i class="fas fa-home"></i> Dashboard</a></li>
-                    <li><a href="tickets.php"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
-                    <li><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
-                    <li><a href="news.php"><i class="fas fa-newspaper"></i> News</a></li>
+                    <li><a href="dashboard"><i class="fas fa-home"></i> Dashboard</a></li>
+                    <li><a href="tickets"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
+                    <li><a href="events"><i class="fas fa-calendar-alt"></i> Events</a></li>
+                    <li><a href="news"><i class="fas fa-newspaper"></i> News</a></li>
                     <li><a href="#" class="active"><i class="fas fa-users"></i> Clubs</a></li>
                 </ul>
             </div>
@@ -879,9 +879,9 @@ $recent_activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="nav-section">
                 <h3 class="nav-title">Account</h3>
                 <ul class="nav-links">
-                    <li><a href="profile.php"><i class="fas fa-user"></i> My Profile</a></li>
-                    <li><a href="settings.php"><i class="fas fa-cog"></i> Settings</a></li>
-                    <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                    <li><a href="profile"><i class="fas fa-user"></i> My Profile</a></li>
+                    <li><a href="settings"><i class="fas fa-cog"></i> Settings</a></li>
+                    <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
                 </ul>
             </div>
         </div>
@@ -926,7 +926,7 @@ $recent_activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
 
             <!-- Club Statistics -->
             <div class="stats-grid">
-                <div class="stat-card <?php echo $category_filter === 'all' ? 'active' : ''; ?>" onclick="window.location.href='clubs.php?category=all&search=<?php echo urlencode($search_query); ?>'">
+                <div class="stat-card <?php echo $category_filter === 'all' ? 'active' : ''; ?>" onclick="window.location.href='clubs?category=all&search=<?php echo urlencode($search_query); ?>'">
                     <div class="stat-icon all">
                         <i class="fas fa-users"></i>
                     </div>
@@ -997,7 +997,7 @@ $recent_activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
             <!-- Filter Section -->
             <div class="filter-section">
                 <h3 style="margin-bottom: 1rem;">Find Clubs</h3>
-                <form method="GET" action="clubs.php">
+                <form method="GET" action="clubs">
                     <div class="filter-grid">
                         <div class="form-group search-box">
                             <label for="search">Search Clubs</label>
@@ -1021,7 +1021,7 @@ $recent_activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-filter"></i> Apply Filters
                         </button>
-                        <a href="clubs.php" class="btn btn-secondary">
+                        <a href="clubs" class="btn btn-secondary">
                             <i class="fas fa-times"></i> Clear Filters
                         </a>
                     </div>

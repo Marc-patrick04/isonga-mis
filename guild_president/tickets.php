@@ -1455,7 +1455,6 @@ try {
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>All Student Tickets</h1>
-                    <p>Manage and monitor all student support tickets across the system</p>
                 </div>
             </div>
 

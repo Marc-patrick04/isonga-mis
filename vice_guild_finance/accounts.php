@@ -20,6 +20,21 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get unread messages count
+$unread_messages = 0;
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_count 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Get current academic year
 $current_academic_year = '2024-2025';
 
@@ -37,12 +52,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $stmt = $pdo->prepare("
                 INSERT INTO financial_accounts 
-                (account_name, account_number, bank_name, account_type, current_balance, authorized_signatories, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                (account_name, account_number, bank_name, account_type, current_balance, authorized_signatories, is_active, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, '1', ?)
             ");
             $stmt->execute([
-                $account_name, $account_number, $bank_name, $account_type, 
-                $current_balance, $authorized_signatories
+                $account_name, 
+                $account_number, 
+                $bank_name, 
+                $account_type, 
+                $current_balance, 
+                $authorized_signatories,
+                $user_id
             ]);
             
             $_SESSION['success_message'] = "Bank account added successfully!";
@@ -63,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $account_type = $_POST['account_type'];
             $current_balance = $_POST['current_balance'];
             $authorized_signatories = json_encode($_POST['authorized_signatories'] ?? []);
-            $is_active = isset($_POST['is_active']) ? 1 : 0;
+            $is_active = isset($_POST['is_active']) ? '1' : '0';
             
             $stmt = $pdo->prepare("
                 UPDATE financial_accounts 
@@ -93,6 +113,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new_balance = $_POST['new_balance'];
             $balance_notes = $_POST['balance_notes'] ?? '';
             
+            // Get current balance
+            $stmt = $pdo->prepare("SELECT current_balance FROM financial_accounts WHERE id = ?");
+            $stmt->execute([$account_id]);
+            $current_balance = $stmt->fetch(PDO::FETCH_ASSOC)['current_balance'];
+            
             $stmt = $pdo->prepare("
                 UPDATE financial_accounts 
                 SET current_balance = ?, updated_at = CURRENT_TIMESTAMP
@@ -101,23 +126,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$new_balance, $account_id]);
             
             // Create account_balance_history table if it doesn't exist
-            try {
-                $stmt = $pdo->query("
-                    CREATE TABLE IF NOT EXISTS account_balance_history (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        account_id INT NOT NULL,
-                        previous_balance DECIMAL(15,2) NOT NULL,
-                        new_balance DECIMAL(15,2) NOT NULL,
-                        updated_by INT NOT NULL,
-                        notes TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (account_id) REFERENCES financial_accounts(id),
-                        FOREIGN KEY (updated_by) REFERENCES users(id)
-                    )
-                ");
-            } catch (PDOException $e) {
-                // Table might already exist
-            }
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS account_balance_history (
+                    id SERIAL PRIMARY KEY,
+                    account_id INTEGER NOT NULL,
+                    previous_balance DECIMAL(15,2) NOT NULL,
+                    new_balance DECIMAL(15,2) NOT NULL,
+                    updated_by INTEGER NOT NULL,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ");
             
             // Log balance update
             $stmt = $pdo->prepare("
@@ -125,7 +144,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 (account_id, previous_balance, new_balance, updated_by, notes)
                 VALUES (?, ?, ?, ?, ?)
             ");
-            $current_balance = $_POST['current_balance']; // Previous balance
             $stmt->execute([$account_id, $current_balance, $new_balance, $user_id, $balance_notes]);
             
             $_SESSION['success_message'] = "Account balance updated successfully!";
@@ -143,7 +161,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $stmt = $pdo->prepare("
                 UPDATE financial_accounts 
-                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                SET is_active = '0', updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ");
             $stmt->execute([$account_id]);
@@ -163,7 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             $stmt = $pdo->prepare("
                 UPDATE financial_accounts 
-                SET is_active = 1, updated_at = CURRENT_TIMESTAMP
+                SET is_active = '1', updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ");
             $stmt->execute([$account_id]);
@@ -185,36 +203,47 @@ if (isset($_GET['edit_account'])) {
         $stmt = $pdo->prepare("SELECT * FROM financial_accounts WHERE id = ?");
         $stmt->execute([$account_id]);
         $edit_account = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($edit_account) {
+            $edit_account['authorized_signatories_array'] = json_decode($edit_account['authorized_signatories'] ?? '[]', true);
+        }
     } catch (PDOException $e) {
         $_SESSION['error_message'] = "Error loading account for editing: " . $e->getMessage();
     }
 }
 
-// Get accounts data
+// Get accounts data - PostgreSQL compatible with string is_active
 try {
-    // All bank accounts
+    // All bank accounts with correct counting
     $stmt = $pdo->query("
         SELECT fa.*, 
-               (SELECT COUNT(*) FROM financial_transactions ft WHERE ft.account_id = fa.id AND ft.status = 'completed') as transaction_count,
-               (SELECT SUM(amount) FROM financial_transactions ft WHERE ft.account_id = fa.id AND ft.transaction_type = 'income' AND ft.status = 'completed') as total_income,
-               (SELECT SUM(amount) FROM financial_transactions ft WHERE ft.account_id = fa.id AND ft.transaction_type = 'expense' AND ft.status = 'completed') as total_expenses
+               COALESCE((
+                   SELECT COUNT(*) FROM financial_transactions ft 
+                   WHERE ft.account_id = fa.id AND ft.status = 'completed'
+               ), 0) as transaction_count,
+               COALESCE((
+                   SELECT SUM(amount) FROM financial_transactions ft 
+                   WHERE ft.account_id = fa.id AND ft.transaction_type = 'income' AND ft.status = 'completed'
+               ), 0) as total_income,
+               COALESCE((
+                   SELECT SUM(amount) FROM financial_transactions ft 
+                   WHERE ft.account_id = fa.id AND ft.transaction_type = 'expense' AND ft.status = 'completed'
+               ), 0) as total_expenses
         FROM financial_accounts fa
         ORDER BY fa.is_active DESC, fa.account_type, fa.account_name
     ");
     $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Account statistics
+    // Account statistics - Using string values for is_active
     $stmt = $pdo->query("
         SELECT 
             COUNT(*) as total_accounts,
-            SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_accounts,
-            SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as inactive_accounts,
-            SUM(current_balance) as total_balance,
-            AVG(current_balance) as average_balance,
-            MAX(current_balance) as highest_balance,
-            MIN(current_balance) as lowest_balance
+            COUNT(CASE WHEN is_active = '1' THEN 1 END) as active_accounts,
+            COUNT(CASE WHEN is_active = '0' THEN 1 END) as inactive_accounts,
+            COALESCE(SUM(current_balance), 0) as total_balance,
+            COALESCE(AVG(current_balance), 0) as average_balance,
+            COALESCE(MAX(current_balance), 0) as highest_balance,
+            COALESCE(MIN(current_balance), 0) as lowest_balance
         FROM financial_accounts
-        WHERE is_active = 1
     ");
     $account_stats = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -230,7 +259,7 @@ try {
     ");
     $recent_transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Balance history (if table exists)
+    // Balance history
     $balance_history = [];
     try {
         $stmt = $pdo->query("
@@ -243,7 +272,6 @@ try {
         ");
         $balance_history = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (PDOException $e) {
-        // Table might not exist yet - create sample data for demonstration
         $balance_history = [];
     }
 
@@ -257,28 +285,28 @@ try {
     ");
     $authorized_users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Account type distribution
+    // Account type distribution - Using string for is_active
     $stmt = $pdo->query("
         SELECT 
             account_type,
             COUNT(*) as account_count,
-            SUM(current_balance) as total_balance
+            COALESCE(SUM(current_balance), 0) as total_balance
         FROM financial_accounts 
-        WHERE is_active = 1
+        WHERE is_active = '1'
         GROUP BY account_type
         ORDER BY total_balance DESC
     ");
     $account_types = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Monthly balance trends (using actual data from financial_transactions)
+    // Monthly balance trends - PostgreSQL compatible
     $balance_trends = [];
     $stmt = $pdo->query("
         SELECT 
-            DATE_FORMAT(transaction_date, '%Y-%m') as month,
-            SUM(CASE WHEN transaction_type = 'income' THEN amount ELSE -amount END) as net_flow
+            TO_CHAR(transaction_date, 'YYYY-MM') as month,
+            COALESCE(SUM(CASE WHEN transaction_type = 'income' THEN amount ELSE -amount END), 0) as net_flow
         FROM financial_transactions 
         WHERE status = 'completed'
-        GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
+        GROUP BY TO_CHAR(transaction_date, 'YYYY-MM')
         ORDER BY month DESC
         LIMIT 6
     ");
@@ -296,7 +324,11 @@ try {
 
 } catch (PDOException $e) {
     error_log("Accounts error: " . $e->getMessage());
-    $accounts = $recent_transactions = $balance_history = $authorized_users = $account_types = [];
+    $accounts = [];
+    $recent_transactions = [];
+    $balance_history = [];
+    $authorized_users = [];
+    $account_types = [];
     $account_stats = [
         'total_accounts' => 0,
         'active_accounts' => 0,
@@ -311,9 +343,9 @@ try {
 
 // Calculate additional metrics
 $utilization_rate = $account_stats['total_balance'] > 0 ? 
-    round(($account_stats['total_balance'] / 10000000) * 100, 1) : 0; // Assuming 10M as target
+    round(($account_stats['total_balance'] / 10000000) * 100, 1) : 0;
 
-// Calculate growth rate based on actual data
+// Calculate growth rate
 $growth_rate = 0;
 if (count($balance_trends) >= 2) {
     $current = end($balance_trends)['balance'];
@@ -322,20 +354,38 @@ if (count($balance_trends) >= 2) {
         $growth_rate = round((($current - $previous) / $previous) * 100, 1);
     }
 }
+
+function safe_display($data) {
+    return $data ? htmlspecialchars($data) : '';
+}
+
+// Badge counts for sidebar
+$pending_approvals = 0;
+$pending_budget_requests = 0;
+$pending_aid_requests = 0;
+try {
+    $r = $pdo->query("SELECT COUNT(*) as c FROM financial_transactions WHERE status = 'approved_by_finance'");
+    $pending_approvals = $r->fetch(PDO::FETCH_ASSOC)['c'] ?? 0;
+    $r = $pdo->query("SELECT COUNT(*) as c FROM committee_budget_requests WHERE status IN ('submitted','under_review')");
+    $pending_budget_requests = $r->fetch(PDO::FETCH_ASSOC)['c'] ?? 0;
+    $r = $pdo->query("SELECT COUNT(*) as c FROM student_financial_aid WHERE status IN ('submitted','under_review')");
+    $pending_aid_requests = $r->fetch(PDO::FETCH_ASSOC)['c'] ?? 0;
+} catch (PDOException $e) { /* silent */ }
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Bank Accounts Management - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* All the CSS styles from your original code remain the same */
+        /* ... keep all existing CSS styles ... */
+        /* (same CSS as before - no changes needed) */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -360,6 +410,8 @@ if (count($balance_trends) >= 2) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -379,7 +431,6 @@ if (count($balance_trends) >= 2) {
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
         }
 
         * {
@@ -402,14 +453,11 @@ if (count($balance_trends) >= 2) {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -419,7 +467,6 @@ if (count($balance_trends) >= 2) {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -428,38 +475,44 @@ if (count($balance_trends) >= 2) {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -467,16 +520,7 @@ if (count($balance_trends) >= 2) {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
+            font-size: 1rem;
         }
 
         .user-avatar img {
@@ -491,41 +535,33 @@ if (count($balance_trends) >= 2) {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -535,57 +571,85 @@ if (count($balance_trends) >= 2) {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -615,9 +679,7 @@ if (count($balance_trends) >= 2) {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -628,6 +690,19 @@ if (count($balance_trends) >= 2) {
             font-size: 0.7rem;
             font-weight: 600;
             margin-left: auto;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -649,14 +724,14 @@ if (count($balance_trends) >= 2) {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--finance-primary);
@@ -684,17 +759,14 @@ if (count($balance_trends) >= 2) {
         }
 
         .stat-icon {
-            width: 50px;
-            height: 50px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             flex-shrink: 0;
-        }
-
-        .stat-card .stat-icon {
             background: var(--finance-light);
             color: var(--finance-primary);
         }
@@ -706,7 +778,7 @@ if (count($balance_trends) >= 2) {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -719,7 +791,7 @@ if (count($balance_trends) >= 2) {
         }
 
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.3rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -727,7 +799,7 @@ if (count($balance_trends) >= 2) {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -748,228 +820,37 @@ if (count($balance_trends) >= 2) {
             color: var(--danger);
         }
 
-        /* Content Grid */
-        .content-grid {
+        /* Charts */
+        .charts-grid {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 1.5rem;
+            margin-bottom: 1.5rem;
         }
 
-        .card {
+        .chart-card {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            overflow: hidden;
+            padding: 1rem;
         }
 
-        .card-header {
-            padding: 1rem 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
+        .chart-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background: var(--finance-light);
+            margin-bottom: 1rem;
         }
 
-        .card-header h3 {
+        .chart-title {
             font-size: 1rem;
             font-weight: 600;
             color: var(--text-dark);
         }
 
-        .card-header-actions {
-            display: flex;
-            gap: 0.5rem;
-        }
-
-        .card-header-btn {
-            background: none;
-            border: none;
-            color: var(--dark-gray);
-            cursor: pointer;
-            padding: 0.25rem;
-            border-radius: 4px;
-            transition: var(--transition);
-        }
-
-        .card-header-btn:hover {
-            background: var(--light-gray);
-            color: var(--text-dark);
-        }
-
-        .card-body {
-            padding: 1.25rem;
-        }
-
-        /* Tables */
-        .table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8rem;
-        }
-
-        .table th, .table td {
-            padding: 0.75rem;
-            text-align: left;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .table th {
-            background: var(--light-gray);
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.75rem;
-        }
-
-        .amount {
-            font-weight: 600;
-            font-family: 'Courier New', monospace;
-        }
-
-        .amount.income {
-            color: var(--success);
-        }
-
-        .amount.expense {
-            color: var(--danger);
-        }
-
-        .status-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-
-        .status-active {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-inactive {
-            background: #e2e3e5;
-            color: var(--dark-gray);
-        }
-
-        .account-type-main {
-            background: #cce7ff;
-            color: var(--primary-blue);
-        }
-
-        .account-type-savings {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .account-type-project {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .account-type-emergency {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--finance-primary);
-            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-        }
-
-        .form-check {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .form-check-input {
-            width: 16px;
-            height: 16px;
-        }
-
-        .form-check-label {
-            font-size: 0.8rem;
-            color: var(--text-dark);
-        }
-
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: var(--border-radius);
-            font-weight: 600;
-            cursor: pointer;
-            transition: var(--transition);
-            font-size: 0.8rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.75rem;
-        }
-
-        .btn-primary {
-            background: var(--finance-primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--finance-accent);
-            transform: translateY(-1px);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: var(--text-dark);
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-secondary {
-            background: var(--light-gray);
-            color: var(--text-dark);
+        .chart-container {
+            position: relative;
+            height: 250px;
         }
 
         /* Tabs */
@@ -977,17 +858,20 @@ if (count($balance_trends) >= 2) {
             display: flex;
             border-bottom: 1px solid var(--medium-gray);
             margin-bottom: 1.5rem;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         .tab {
-            padding: 0.75rem 1.5rem;
+            padding: 0.6rem 1.2rem;
             background: none;
             border: none;
+            border-bottom: 2px solid transparent;
             color: var(--dark-gray);
             cursor: pointer;
             transition: var(--transition);
             font-weight: 500;
-            border-bottom: 2px solid transparent;
+            font-size: 0.85rem;
         }
 
         .tab.active {
@@ -1010,7 +894,7 @@ if (count($balance_trends) >= 2) {
         /* Account Cards */
         .account-cards {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
@@ -1019,10 +903,9 @@ if (count($balance_trends) >= 2) {
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
-            padding: 1.5rem;
+            padding: 1rem;
             border-left: 4px solid var(--finance-primary);
             transition: var(--transition);
-            position: relative;
         }
 
         .account-card:hover {
@@ -1030,44 +913,38 @@ if (count($balance_trends) >= 2) {
             box-shadow: var(--shadow-md);
         }
 
-        .account-card.main {
-            border-left-color: var(--primary-blue);
-        }
-
-        .account-card.savings {
-            border-left-color: var(--success);
-        }
-
-        .account-card.project {
-            border-left-color: var(--warning);
-        }
-
-        .account-card.emergency {
-            border-left-color: var(--danger);
-        }
-
         .account-card-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
         }
 
         .account-name {
             font-weight: 700;
-            color: var(--text-dark);
             font-size: 1rem;
+            color: var(--text-dark);
         }
 
         .account-status {
-            padding: 0.25rem 0.5rem;
+            padding: 0.2rem 0.5rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
         }
 
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-inactive {
+            background: #e2e3e5;
+            color: #383d41;
+        }
+
         .account-details {
-            margin-bottom: 1rem;
+            margin-bottom: 0.75rem;
         }
 
         .account-detail {
@@ -1087,26 +964,236 @@ if (count($balance_trends) >= 2) {
         }
 
         .account-balance {
-            font-size: 1.5rem;
+            font-size: 1.3rem;
             font-weight: 700;
             text-align: center;
-            margin: 1rem 0;
+            margin: 0.75rem 0;
             color: var(--text-dark);
-            font-family: 'Courier New', monospace;
+            font-family: monospace;
         }
 
         .account-actions {
             display: flex;
             gap: 0.5rem;
             justify-content: center;
+            flex-wrap: wrap;
         }
 
-        /* Alert */
+        /* Card */
+        .card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--finance-light);
+        }
+
+        .card-header h3 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .card-body {
+            padding: 1rem;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--text-dark);
+        }
+
+        .form-control, .form-select {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--finance-primary);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .form-check {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .form-check-input {
+            width: 16px;
+            height: 16px;
+        }
+
+        .form-check-label {
+            font-size: 0.8rem;
+            color: var(--text-dark);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-secondary {
+            background: var(--white);
+            color: var(--text-dark);
+            border: 1px solid var(--medium-gray);
+        }
+
+        .btn-secondary:hover {
+            background: var(--light-gray);
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: var(--text-dark);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-sm {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.75rem;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+
+        .table th, .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .table th {
+            background: var(--light-gray);
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+
+        .table tbody tr:hover {
+            background: var(--finance-light);
+        }
+
+        .amount {
+            font-weight: 600;
+            font-family: monospace;
+        }
+
+        .amount.income {
+            color: var(--success);
+        }
+
+        .amount.expense {
+            color: var(--danger);
+        }
+
+        /* Status Badges */
+        .status-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .account-type-main { background: #cce7ff; color: #004085; }
+        .account-type-savings { background: #d4edda; color: #155724; }
+        .account-type-project { background: #fff3cd; color: #856404; }
+        .account-type-emergency { background: #f8d7da; color: #721c24; }
+
+        /* Signatory List */
+        .signatory-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin-top: 0.25rem;
+        }
+
+        .signatory-badge {
+            background: var(--finance-light);
+            color: var(--finance-primary);
+            padding: 0.2rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        /* Alerts */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
             font-size: 0.8rem;
         }
 
@@ -1122,53 +1209,10 @@ if (count($balance_trends) >= 2) {
             border-left-color: var(--danger);
         }
 
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
-        }
-
-        .alert a {
-            color: inherit;
-            font-weight: 600;
-            text-decoration: none;
-        }
-
-        .alert a:hover {
-            text-decoration: underline;
-        }
-
-        /* Charts */
-        .charts-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-
-        .chart-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.5rem;
-        }
-
-        .chart-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .chart-title {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .chart-container {
-            position: relative;
-            height: 200px;
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left-color: var(--info);
         }
 
         /* Quick Actions */
@@ -1176,7 +1220,7 @@ if (count($balance_trends) >= 2) {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
-            margin-top: 1.5rem;
+            margin-top: 1rem;
         }
 
         .action-btn {
@@ -1184,7 +1228,7 @@ if (count($balance_trends) >= 2) {
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 1rem;
+            padding: 0.75rem;
             background: var(--white);
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
@@ -1201,101 +1245,14 @@ if (count($balance_trends) >= 2) {
         }
 
         .action-btn i {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+            margin-bottom: 0.25rem;
             color: var(--finance-primary);
         }
 
         .action-label {
             font-weight: 600;
-            font-size: 0.75rem;
-        }
-
-        /* Account Actions */
-        .account-actions {
-            display: flex;
-            gap: 0.25rem;
-            flex-wrap: wrap;
-        }
-
-        /* Signatory List */
-        .signatory-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-top: 0.5rem;
-        }
-
-        .signatory-badge {
-            background: var(--finance-light);
-            color: var(--finance-primary);
-            padding: 0.25rem 0.5rem;
-            border-radius: 12px;
             font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        /* Responsive */
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .charts-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
-            }
-            
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-            
-            .account-cards {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-            
-            .sidebar {
-                display: none;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr 1fr;
-            }
-            
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
-            .nav-container {
-                padding: 0 1rem;
-            }
-            
-            .user-details {
-                display: none;
-            }
-            
-            .account-actions {
-                flex-direction: column;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 1rem;
-            }
         }
 
         /* Modal */
@@ -1308,21 +1265,25 @@ if (count($balance_trends) >= 2) {
             width: 100%;
             height: 100%;
             background-color: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
         }
 
         .modal-content {
             background-color: var(--white);
-            margin: 5% auto;
-            padding: 0;
             border-radius: var(--border-radius);
-            width: 600px;
+            width: 500px;
             max-width: 90%;
             max-height: 90vh;
             overflow-y: auto;
         }
 
         .modal-header {
-            padding: 1rem 1.25rem;
+            padding: 1rem;
             border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
@@ -1330,80 +1291,164 @@ if (count($balance_trends) >= 2) {
             background: var(--finance-light);
         }
 
+        .modal-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--dark-gray);
+        }
+
         .modal-body {
-            padding: 1.25rem;
+            padding: 1rem;
         }
 
         .modal-footer {
-            padding: 1rem 1.25rem;
+            padding: 1rem;
             border-top: 1px solid var(--medium-gray);
             display: flex;
             justify-content: flex-end;
             gap: 0.5rem;
         }
 
-        /* View Account Details */
-        .account-detail-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1rem;
-            margin-bottom: 1.5rem;
+        /* Overlay */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
         }
 
-        .detail-group {
-            background: var(--light-gray);
-            padding: 1rem;
-            border-radius: var(--border-radius);
+        .overlay.active {
+            display: block;
         }
 
-        .detail-label {
-            font-weight: 600;
-            color: var(--dark-gray);
-            font-size: 0.8rem;
-            margin-bottom: 0.25rem;
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
+            }
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .account-cards {
+                grid-template-columns: 1fr;
+            }
         }
 
-        .detail-value {
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.9rem;
+        @media (max-width: 768px) {
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .brand-text h1 {
+                font-size: 1rem;
+            }
+
+            .user-details {
+                display: none;
+            }
+
+            .main-content {
+                padding: 1rem;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .tabs {
+                overflow-x: auto;
+                flex-wrap: nowrap;
+            }
+
+            .quick-actions {
+                grid-template-columns: 1fr;
+            }
         }
 
-        .transaction-history {
-            margin-top: 1.5rem;
-        }
+        @media (max-width: 480px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
 
-        .transaction-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem;
-            border-bottom: 1px solid var(--medium-gray);
-        }
+            .main-content {
+                padding: 0.75rem;
+            }
 
-        .transaction-info {
-            flex: 1;
-        }
+            .logo {
+                height: 32px;
+            }
 
-        .transaction-description {
-            font-weight: 600;
-            color: var(--text-dark);
-        }
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
 
-        .transaction-meta {
-            font-size: 0.75rem;
-            color: var(--dark-gray);
+            .account-actions {
+                flex-direction: column;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Bank Accounts</h1>
                 </div>
@@ -1413,20 +1458,26 @@ if (count($balance_trends) >= 2) {
                     <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
                         <i class="fas fa-moon"></i>
                     </button>
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
                     <div class="user-avatar">
                         <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                            <img src="../<?php echo safe_display($user['avatar_url']); ?>" alt="Profile">
                         <?php else: ?>
                             <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
                         <?php endif; ?>
                     </div>
                     <div class="user-details">
-                        <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
+                        <div class="user-name"><?php echo safe_display($_SESSION['full_name']); ?></div>
                         <div class="user-role">Vice Guild Finance</div>
                     </div>
                 </div>
@@ -1440,7 +1491,10 @@ if (count($balance_trends) >= 2) {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1458,12 +1512,39 @@ if (count($balance_trends) >= 2) {
                     <a href="transactions.php">
                         <i class="fas fa-exchange-alt"></i>
                         <span>Transactions</span>
+                        <?php if ($pending_approvals > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_approvals; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="payment_requests.php">
-                        <i class="fas fa-file-invoice-dollar"></i>
-                        <span>Payment Requests</span>
+                    <a href="committee_requests.php">
+                        <i class="fas fa-clipboard-list"></i>
+                        <span>Committee Requests</span>
+                        <?php if ($pending_budget_requests > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_budget_requests; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="student_aid.php">
+                        <i class="fas fa-hand-holding-heart"></i>
+                        <span>Student Financial Aid</span>
+                        <?php if ($pending_aid_requests > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_aid_requests; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="rental_management.php">
+                        <i class="fas fa-home"></i>
+                        <span>Rental Properties</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="allowances.php">
+                        <i class="fas fa-money-check"></i>
+                        <span>Allowances</span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1473,15 +1554,27 @@ if (count($balance_trends) >= 2) {
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a href="bank_reconciliation.php">
+                        <i class="fas fa-university"></i>
+                        <span>Bank Reconciliation</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a href="financial_reports.php">
                         <i class="fas fa-chart-bar"></i>
                         <span>Financial Reports</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="approvals.php">
-                        <i class="fas fa-clipboard-check"></i>
-                        <span>Approvals</span>
+                    <a href="documents.php">
+                        <i class="fas fa-file-contract"></i>
+                        <span>Official Documents</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1500,7 +1593,7 @@ if (count($balance_trends) >= 2) {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Bank Accounts Management 🏦</h1>
@@ -1511,14 +1604,14 @@ if (count($balance_trends) >= 2) {
             <!-- Success/Error Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
+                    <i class="fas fa-check-circle"></i> <?php echo safe_display($_SESSION['success_message']); ?>
                 </div>
                 <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['error_message'])): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo $_SESSION['error_message']; ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo safe_display($_SESSION['error_message']); ?>
                 </div>
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
@@ -1526,53 +1619,31 @@ if (count($balance_trends) >= 2) {
             <!-- Accounts Overview Stats -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-piggy-bank"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-piggy-bank"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $account_stats['total_accounts']; ?></div>
                         <div class="stat-label">Total Accounts</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-chart-line"></i> All accounts
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-wallet"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-wallet"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($account_stats['total_balance'], 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($account_stats['total_balance'], 0); ?></div>
                         <div class="stat-label">Total Balance</div>
-                        <div class="stat-trend <?php echo $growth_rate >= 0 ? 'trend-positive' : 'trend-negative'; ?>">
-                            <i class="fas fa-<?php echo $growth_rate >= 0 ? 'trend-up' : 'trend-down'; ?>"></i> 
-                            <?php echo $growth_rate; ?>% growth
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $account_stats['active_accounts']; ?></div>
                         <div class="stat-label">Active Accounts</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-check"></i> Operational
-                        </div>
                     </div>
                 </div>
-                <div class="stat-card <?php echo $utilization_rate > 80 ? 'success' : ($utilization_rate > 50 ? 'warning' : 'danger'); ?>">
-                    <div class="stat-icon">
-                        <i class="fas fa-percentage"></i>
-                    </div>
+                <div class="stat-card warning">
+                    <div class="stat-icon"><i class="fas fa-percentage"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $utilization_rate; ?>%</div>
                         <div class="stat-label">Funds Utilization</div>
-                        <div class="stat-trend <?php echo $utilization_rate > 80 ? 'trend-positive' : 'trend-negative'; ?>">
-                            <i class="fas fa-<?php echo $utilization_rate > 80 ? 'check' : 'exclamation'; ?>-circle"></i>
-                            <?php echo $utilization_rate > 80 ? 'Optimal' : ($utilization_rate > 50 ? 'Moderate' : 'Low'); ?>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -1580,58 +1651,37 @@ if (count($balance_trends) >= 2) {
             <!-- Additional Metrics -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-bar"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-chart-bar"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($account_stats['average_balance'], 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($account_stats['average_balance'], 0); ?></div>
                         <div class="stat-label">Average Balance</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-balance-scale"></i> Per account
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-arrow-up"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-arrow-up"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($account_stats['highest_balance'], 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($account_stats['highest_balance'], 0); ?></div>
                         <div class="stat-label">Highest Balance</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-trophy"></i> Top account
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-arrow-down"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-arrow-down"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($account_stats['lowest_balance'], 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($account_stats['lowest_balance'], 0); ?></div>
                         <div class="stat-label">Lowest Balance</div>
-                        <div class="stat-trend trend-negative">
-                            <i class="fas fa-info-circle"></i> Needs monitoring
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-ban"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-ban"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $account_stats['inactive_accounts']; ?></div>
                         <div class="stat-label">Inactive Accounts</div>
-                        <div class="stat-trend trend-negative">
-                            <i class="fas fa-exclamation-triangle"></i> Requires attention
-                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Charts Section -->
             <div class="charts-grid">
-                <!-- Account Types Distribution -->
                 <div class="chart-card">
                     <div class="chart-header">
                         <h3 class="chart-title">Account Types Distribution</h3>
@@ -1640,8 +1690,6 @@ if (count($balance_trends) >= 2) {
                         <canvas id="accountTypesChart"></canvas>
                     </div>
                 </div>
-
-                <!-- Balance Trends -->
                 <div class="chart-card">
                     <div class="chart-header">
                         <h3 class="chart-title">Balance Trends</h3>
@@ -1657,19 +1705,17 @@ if (count($balance_trends) >= 2) {
                 <button class="tab active" onclick="openTab(event, 'accounts-overview')">Accounts Overview</button>
                 <button class="tab" onclick="openTab(event, 'add-account')"><?php echo $edit_account ? 'Edit Account' : 'Add New Account'; ?></button>
                 <button class="tab" onclick="openTab(event, 'balance-history')">Balance History</button>
-                <button class="tab" onclick="openTab(event, 'reports')">Reports</button>
             </div>
 
             <!-- Accounts Overview Tab -->
             <div id="accounts-overview" class="tab-content active">
-                <!-- Account Cards View -->
                 <div class="account-cards">
                     <?php if (empty($accounts)): ?>
                         <div class="card">
-                            <div class="card-body" style="text-align: center; padding: 3rem;">
-                                <i class="fas fa-piggy-bank" style="font-size: 3rem; color: var(--dark-gray); margin-bottom: 1rem;"></i>
-                                <h3 style="color: var(--dark-gray); margin-bottom: 1rem;">No Bank Accounts Found</h3>
-                                <p style="color: var(--dark-gray); margin-bottom: 1.5rem;">Get started by adding your first bank account.</p>
+                            <div class="card-body" style="text-align: center; padding: 2rem;">
+                                <i class="fas fa-piggy-bank" style="font-size: 2.5rem; color: var(--dark-gray); margin-bottom: 1rem;"></i>
+                                <h3 style="color: var(--dark-gray);">No Bank Accounts Found</h3>
+                                <p style="color: var(--dark-gray); margin-bottom: 1rem;">Get started by adding your first bank account.</p>
                                 <button class="btn btn-primary" onclick="openTab(event, 'add-account')">
                                     <i class="fas fa-plus"></i> Add First Account
                                 </button>
@@ -1677,36 +1723,36 @@ if (count($balance_trends) >= 2) {
                         </div>
                     <?php else: ?>
                         <?php foreach ($accounts as $account): 
-                            // Get user names for authorized signatories
                             $signatory_names = [];
                             if (!empty($account['authorized_signatories'])) {
                                 $signatory_ids = json_decode($account['authorized_signatories'], true);
-                                foreach ($signatory_ids as $signatory_id) {
-                                    foreach ($authorized_users as $user) {
-                                        if ($user['id'] == $signatory_id) {
-                                            $signatory_names[] = $user['full_name'];
-                                            break;
+                                if (is_array($signatory_ids)) {
+                                    foreach ($signatory_ids as $signatory_id) {
+                                        foreach ($authorized_users as $user) {
+                                            if ($user['id'] == $signatory_id) {
+                                                $signatory_names[] = $user['full_name'];
+                                                break;
+                                            }
                                         }
                                     }
                                 }
                             }
                         ?>
-                            <div class="account-card <?php echo $account['account_type']; ?>">
+                            <div class="account-card">
                                 <div class="account-card-header">
-                                    <div class="account-name"><?php echo htmlspecialchars($account['account_name']); ?></div>
+                                    <div class="account-name"><?php echo safe_display($account['account_name']); ?></div>
                                     <span class="account-status status-<?php echo $account['is_active'] ? 'active' : 'inactive'; ?>">
                                         <?php echo $account['is_active'] ? 'Active' : 'Inactive'; ?>
                                     </span>
                                 </div>
-                                
                                 <div class="account-details">
                                     <div class="account-detail">
                                         <span class="account-detail-label">Account Number:</span>
-                                        <span class="account-detail-value"><?php echo htmlspecialchars($account['account_number']); ?></span>
+                                        <span class="account-detail-value"><?php echo safe_display($account['account_number']); ?></span>
                                     </div>
                                     <div class="account-detail">
                                         <span class="account-detail-label">Bank:</span>
-                                        <span class="account-detail-value"><?php echo htmlspecialchars($account['bank_name']); ?></span>
+                                        <span class="account-detail-value"><?php echo safe_display($account['bank_name']); ?></span>
                                     </div>
                                     <div class="account-detail">
                                         <span class="account-detail-label">Type:</span>
@@ -1723,22 +1769,20 @@ if (count($balance_trends) >= 2) {
                                             <span class="account-detail-label">Signatories:</span>
                                             <div class="signatory-list">
                                                 <?php foreach ($signatory_names as $name): ?>
-                                                    <span class="signatory-badge"><?php echo htmlspecialchars($name); ?></span>
+                                                    <span class="signatory-badge"><?php echo safe_display($name); ?></span>
                                                 <?php endforeach; ?>
                                             </div>
                                         </div>
                                     <?php endif; ?>
                                 </div>
-                                
                                 <div class="account-balance">
-                                    RWF <?php echo number_format($account['current_balance'], 2); ?>
+                                    RWF <?php echo number_format($account['current_balance'], 0); ?>
                                 </div>
-                                
                                 <div class="account-actions">
                                     <button class="btn btn-sm btn-secondary" onclick="viewAccountDetails(<?php echo $account['id']; ?>)">
                                         <i class="fas fa-eye"></i> View
                                     </button>
-                                    <a href="accounts.php?edit_account=<?php echo $account['id']; ?>" class="btn btn-sm btn-warning">
+                                    <a href="?edit_account=<?php echo $account['id']; ?>" class="btn btn-sm btn-warning">
                                         <i class="fas fa-edit"></i> Edit
                                     </a>
                                     <button class="btn btn-sm btn-primary" onclick="updateBalance(<?php echo $account['id']; ?>, <?php echo $account['current_balance']; ?>)">
@@ -1765,94 +1809,152 @@ if (count($balance_trends) >= 2) {
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
+            </div>
 
-                <!-- Accounts Table View -->
+            <!-- Add/Edit Account Tab -->
+            <div id="add-account" class="tab-content <?php echo $edit_account ? 'active' : ''; ?>">
                 <div class="card">
                     <div class="card-header">
-                        <h3>All Accounts Summary</h3>
-                        <div class="card-header-actions">
-                            <button class="card-header-btn" onclick="exportAccounts()" title="Export Data">
-                                <i class="fas fa-download"></i>
-                            </button>
-                            <button class="card-header-btn" onclick="printAccounts()" title="Print">
-                                <i class="fas fa-print"></i>
-                            </button>
-                        </div>
+                        <h3><?php echo $edit_account ? 'Edit Bank Account' : 'Add New Bank Account'; ?></h3>
                     </div>
                     <div class="card-body">
-                        <?php if (empty($accounts)): ?>
-                            <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                No bank accounts found.
+                        <form method="POST">
+                            <?php if ($edit_account): ?>
+                                <input type="hidden" name="account_id" value="<?php echo $edit_account['id']; ?>">
+                            <?php endif; ?>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Account Name *</label>
+                                    <input type="text" class="form-control" name="account_name" required
+                                           value="<?php echo $edit_account ? safe_display($edit_account['account_name']) : ''; ?>">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Account Number *</label>
+                                    <input type="text" class="form-control" name="account_number" required
+                                           value="<?php echo $edit_account ? safe_display($edit_account['account_number']) : ''; ?>">
+                                </div>
+                            </div>
+                            
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Bank Name *</label>
+                                    <input type="text" class="form-control" name="bank_name" required
+                                           value="<?php echo $edit_account ? safe_display($edit_account['bank_name']) : ''; ?>">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Account Type *</label>
+                                    <select class="form-select" name="account_type" required>
+                                        <option value="">Select type</option>
+                                        <option value="main" <?php echo ($edit_account && $edit_account['account_type'] == 'main') ? 'selected' : ''; ?>>Main Account</option>
+                                        <option value="savings" <?php echo ($edit_account && $edit_account['account_type'] == 'savings') ? 'selected' : ''; ?>>Savings Account</option>
+                                        <option value="project" <?php echo ($edit_account && $edit_account['account_type'] == 'project') ? 'selected' : ''; ?>>Project Account</option>
+                                        <option value="emergency" <?php echo ($edit_account && $edit_account['account_type'] == 'emergency') ? 'selected' : ''; ?>>Emergency Fund</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">Current Balance (RWF)</label>
+                                <input type="number" class="form-control" name="current_balance" step="0.01" min="0"
+                                       value="<?php echo $edit_account ? $edit_account['current_balance'] : '0'; ?>">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">Authorized Signatories</label>
+                                <div style="border: 1px solid var(--medium-gray); border-radius: var(--border-radius); padding: 0.75rem;">
+                                    <?php 
+                                    $selected_signatories = [];
+                                    if ($edit_account && !empty($edit_account['authorized_signatories'])) {
+                                        $selected_signatories = json_decode($edit_account['authorized_signatories'], true);
+                                        if (!is_array($selected_signatories)) $selected_signatories = [];
+                                    }
+                                    ?>
+                                    <?php foreach ($authorized_users as $user): ?>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="authorized_signatories[]" 
+                                                   value="<?php echo $user['id']; ?>" id="signatory_<?php echo $user['id']; ?>"
+                                                   <?php echo in_array($user['id'], $selected_signatories) ? 'checked' : ''; ?>>
+                                            <label class="form-check-label" for="signatory_<?php echo $user['id']; ?>">
+                                                <?php echo safe_display($user['full_name']); ?> 
+                                                <small style="color: var(--dark-gray);">(<?php echo safe_display($user['role']); ?>)</small>
+                                            </label>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                            
+                            <?php if ($edit_account): ?>
+                                <div class="form-group">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="is_active" id="is_active" value="1"
+                                               <?php echo $edit_account['is_active'] ? 'checked' : ''; ?>>
+                                        <label class="form-check-label" for="is_active">Account is active</label>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <div class="form-group">
+                                <?php if ($edit_account): ?>
+                                    <button type="submit" name="update_account" class="btn btn-primary">
+                                        <i class="fas fa-save"></i> Update Account
+                                    </button>
+                                    <a href="accounts.php" class="btn btn-secondary">
+                                        <i class="fas fa-times"></i> Cancel
+                                    </a>
+                                <?php else: ?>
+                                    <button type="submit" name="add_account" class="btn btn-primary">
+                                        <i class="fas fa-save"></i> Save Account
+                                    </button>
+                                    <button type="reset" class="btn btn-secondary">
+                                        <i class="fas fa-redo"></i> Reset
+                                    </button>
+                                <?php endif; ?>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Balance History Tab -->
+            <div id="balance-history" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Balance Update History</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php if (empty($balance_history)): ?>
+                            <div class="empty-state" style="text-align: center; padding: 2rem;">
+                                <i class="fas fa-history" style="font-size: 2rem; color: var(--dark-gray); margin-bottom: 0.5rem;"></i>
+                                <p>No balance history available</p>
                             </div>
                         <?php else: ?>
-                            <div style="overflow-x: auto;">
+                            <div class="table-container">
                                 <table class="table">
                                     <thead>
                                         <tr>
-                                            <th>Account Name</th>
-                                            <th>Account Number</th>
-                                            <th>Bank Name</th>
-                                            <th>Type</th>
-                                            <th>Current Balance</th>
-                                            <th>Transactions</th>
-                                            <th>Status</th>
-                                            <th>Actions</th>
+                                            <th>Date</th>
+                                            <th>Account</th>
+                                            <th>Previous Balance</th>
+                                            <th>New Balance</th>
+                                            <th>Change</th>
+                                            <th>Updated By</th>
+                                            <th>Notes</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php foreach ($accounts as $account): 
-                                            $signatory_names = [];
-                                            if (!empty($account['authorized_signatories'])) {
-                                                $signatory_ids = json_decode($account['authorized_signatories'], true);
-                                                foreach ($signatory_ids as $signatory_id) {
-                                                    foreach ($authorized_users as $user) {
-                                                        if ($user['id'] == $signatory_id) {
-                                                            $signatory_names[] = $user['full_name'];
-                                                            break;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        ?>
+                                        <?php foreach ($balance_history as $history): ?>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($account['account_name']); ?></strong>
-                                                    <?php if (!empty($signatory_names)): ?>
-                                                        <br>
-                                                        <div class="signatory-list">
-                                                            <?php foreach ($signatory_names as $name): ?>
-                                                                <span class="signatory-badge"><?php echo htmlspecialchars($name); ?></span>
-                                                            <?php endforeach; ?>
-                                                        </div>
-                                                    <?php endif; ?>
+                                                <td><?php echo date('M j, Y H:i', strtotime($history['created_at'])); ?></td>
+                                                <td><?php echo safe_display($history['account_name']); ?></td>
+                                                <td class="amount">RWF <?php echo number_format($history['previous_balance'], 0); ?></td>
+                                                <td class="amount">RWF <?php echo number_format($history['new_balance'], 0); ?></td>
+                                                <td class="amount <?php echo ($history['new_balance'] - $history['previous_balance']) >= 0 ? 'income' : 'expense'; ?>">
+                                                    <?php echo ($history['new_balance'] - $history['previous_balance']) >= 0 ? '+' : ''; ?>
+                                                    RWF <?php echo number_format($history['new_balance'] - $history['previous_balance'], 0); ?>
                                                 </td>
-                                                <td><?php echo htmlspecialchars($account['account_number']); ?></td>
-                                                <td><?php echo htmlspecialchars($account['bank_name']); ?></td>
-                                                <td>
-                                                    <span class="status-badge account-type-<?php echo $account['account_type']; ?>">
-                                                        <?php echo ucfirst($account['account_type']); ?>
-                                                    </span>
-                                                </td>
-                                                <td class="amount">RWF <?php echo number_format($account['current_balance'], 2); ?></td>
-                                                <td><?php echo $account['transaction_count']; ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $account['is_active'] ? 'active' : 'inactive'; ?>">
-                                                        <?php echo $account['is_active'] ? 'Active' : 'Inactive'; ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <div class="account-actions">
-                                                        <button class="btn btn-sm btn-secondary" onclick="viewAccountDetails(<?php echo $account['id']; ?>)">
-                                                            <i class="fas fa-eye"></i>
-                                                        </button>
-                                                        <a href="accounts.php?edit_account=<?php echo $account['id']; ?>" class="btn btn-sm btn-warning">
-                                                            <i class="fas fa-edit"></i>
-                                                        </a>
-                                                        <button class="btn btn-sm btn-primary" onclick="updateBalance(<?php echo $account['id']; ?>, <?php echo $account['current_balance']; ?>)">
-                                                            <i class="fas fa-sync"></i>
-                                                        </button>
-                                                    </div>
-                                                </td>
+                                                <td><?php echo safe_display($history['updated_by_name']); ?></td>
+                                                <td><?php echo safe_display($history['notes'] ?? '—'); ?></td>
                                             </tr>
                                         <?php endforeach; ?>
                                     </tbody>
@@ -1862,385 +1964,20 @@ if (count($balance_trends) >= 2) {
                     </div>
                 </div>
             </div>
-
-            <!-- Add/Edit Account Tab -->
-            <div id="add-account" class="tab-content <?php echo $edit_account ? 'active' : ''; ?>">
-                <div class="content-grid">
-                    <div class="left-column">
-                        <div class="card">
-                            <div class="card-header">
-                                <h3><?php echo $edit_account ? 'Edit Bank Account' : 'Add New Bank Account'; ?></h3>
-                            </div>
-                            <div class="card-body">
-                                <form method="POST" id="accountForm">
-                                    <?php if ($edit_account): ?>
-                                        <input type="hidden" name="account_id" value="<?php echo $edit_account['id']; ?>">
-                                    <?php endif; ?>
-                                    
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label class="form-label" for="account_name">Account Name *</label>
-                                            <input type="text" class="form-control" id="account_name" name="account_name" 
-                                                   required placeholder="e.g., RPSU Main Account"
-                                                   value="<?php echo $edit_account ? htmlspecialchars($edit_account['account_name']) : ''; ?>">
-                                        </div>
-                                        <div class="form-group">
-                                            <label class="form-label" for="account_number">Account Number *</label>
-                                            <input type="text" class="form-control" id="account_number" name="account_number" 
-                                                   required placeholder="e.g., 00123456789"
-                                                   value="<?php echo $edit_account ? htmlspecialchars($edit_account['account_number']) : ''; ?>">
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label class="form-label" for="bank_name">Bank Name *</label>
-                                            <input type="text" class="form-control" id="bank_name" name="bank_name" 
-                                                   required placeholder="e.g., Bank of Kigali"
-                                                   value="<?php echo $edit_account ? htmlspecialchars($edit_account['bank_name']) : ''; ?>">
-                                        </div>
-                                        <div class="form-group">
-                                            <label class="form-label" for="account_type">Account Type *</label>
-                                            <select class="form-control" id="account_type" name="account_type" required>
-                                                <option value="">Select account type</option>
-                                                <option value="main" <?php echo $edit_account && $edit_account['account_type'] == 'main' ? 'selected' : ''; ?>>Main Account</option>
-                                                <option value="savings" <?php echo $edit_account && $edit_account['account_type'] == 'savings' ? 'selected' : ''; ?>>Savings Account</option>
-                                                <option value="project" <?php echo $edit_account && $edit_account['account_type'] == 'project' ? 'selected' : ''; ?>>Project Account</option>
-                                                <option value="emergency" <?php echo $edit_account && $edit_account['account_type'] == 'emergency' ? 'selected' : ''; ?>>Emergency Fund</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="form-group">
-                                        <label class="form-label" for="current_balance">Current Balance (RWF)</label>
-                                        <input type="number" class="form-control" id="current_balance" name="current_balance" 
-                                               step="0.01" min="0" placeholder="Enter current balance"
-                                               value="<?php echo $edit_account ? $edit_account['current_balance'] : '0'; ?>">
-                                    </div>
-                                    
-                                    <div class="form-group">
-                                        <label class="form-label">Authorized Signatories</label>
-                                        <div style="border: 1px solid var(--medium-gray); border-radius: var(--border-radius); padding: 1rem;">
-                                            <?php 
-                                            $selected_signatories = [];
-                                            if ($edit_account && !empty($edit_account['authorized_signatories'])) {
-                                                $selected_signatories = json_decode($edit_account['authorized_signatories'], true);
-                                            }
-                                            ?>
-                                            <?php foreach ($authorized_users as $user): ?>
-                                                <div class="form-check">
-                                                    <input class="form-check-input" type="checkbox" name="authorized_signatories[]" 
-                                                           value="<?php echo $user['id']; ?>" id="signatory_<?php echo $user['id']; ?>"
-                                                           <?php echo in_array($user['id'], $selected_signatories) ? 'checked' : ''; ?>>
-                                                    <label class="form-check-label" for="signatory_<?php echo $user['id']; ?>">
-                                                        <?php echo htmlspecialchars($user['full_name']); ?> 
-                                                        <small style="color: var(--dark-gray);">(<?php echo $user['role']; ?>)</small>
-                                                    </label>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        </div>
-                                        <small style="color: var(--dark-gray);">Select users authorized to operate this account</small>
-                                    </div>
-                                    
-                                    <?php if ($edit_account): ?>
-                                        <div class="form-group">
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="checkbox" name="is_active" id="is_active" 
-                                                       <?php echo $edit_account['is_active'] ? 'checked' : ''; ?>>
-                                                <label class="form-check-label" for="is_active">
-                                                    Account is active
-                                                </label>
-                                            </div>
-                                        </div>
-                                    <?php endif; ?>
-                                    
-                                    <div class="form-group">
-                                        <?php if ($edit_account): ?>
-                                            <button type="submit" name="update_account" class="btn btn-primary">
-                                                <i class="fas fa-save"></i> Update Account
-                                            </button>
-                                            <a href="accounts.php" class="btn btn-secondary">
-                                                <i class="fas fa-times"></i> Cancel
-                                            </a>
-                                        <?php else: ?>
-                                            <button type="submit" name="add_account" class="btn btn-primary">
-                                                <i class="fas fa-save"></i> Save Account
-                                            </button>
-                                            <button type="reset" class="btn btn-secondary">
-                                                <i class="fas fa-redo"></i> Reset Form
-                                            </button>
-                                        <?php endif; ?>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="right-column">
-                        <!-- Account Types Guide -->
-                        <div class="card">
-                            <div class="card-header">
-                                <h3>Account Types Guide</h3>
-                            </div>
-                            <div class="card-body">
-                                <div style="display: grid; gap: 1rem;">
-                                    <div class="alert alert-info">
-                                        <strong>Main Account</strong><br>
-                                        Primary operating account for daily transactions and expenses.
-                                    </div>
-                                    <div class="alert alert-success">
-                                        <strong>Savings Account</strong><br>
-                                        For accumulating funds and earning interest on surplus money.
-                                    </div>
-                                    <div class="alert alert-warning">
-                                        <strong>Project Account</strong><br>
-                                        Dedicated account for specific projects or initiatives.
-                                    </div>
-                                    <div class="alert alert-danger">
-                                        <strong>Emergency Fund</strong><br>
-                                        Reserved for unexpected expenses and emergency situations.
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Quick Actions -->
-                        <div class="card">
-                            <div class="card-header">
-                                <h3>Quick Actions</h3>
-                            </div>
-                            <div class="card-body">
-                                <div class="quick-actions">
-                                    <a href="transactions.php" class="action-btn">
-                                        <i class="fas fa-exchange-alt"></i>
-                                        <span class="action-label">View Transactions</span>
-                                    </a>
-                                    <a href="financial_reports.php" class="action-btn">
-                                        <i class="fas fa-chart-bar"></i>
-                                        <span class="action-label">Account Reports</span>
-                                    </a>
-                                    <a href="#" class="action-btn" onclick="printAccountSummary()">
-                                        <i class="fas fa-print"></i>
-                                        <span class="action-label">Print Summary</span>
-                                    </a>
-                                    <a href="#" class="action-btn" onclick="exportAccountDetails()">
-                                        <i class="fas fa-download"></i>
-                                        <span class="action-label">Export Data</span>
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Balance History Tab -->
-            <div id="balance-history" class="tab-content">
-                <div class="content-grid">
-                    <div class="left-column">
-                        <div class="card">
-                            <div class="card-header">
-                                <h3>Balance Update History</h3>
-                            </div>
-                            <div class="card-body">
-                                <?php if (empty($balance_history)): ?>
-                                    <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                        <i class="fas fa-history" style="font-size: 3rem; color: var(--dark-gray); margin-bottom: 1rem;"></i>
-                                        <h3>No Balance History Available</h3>
-                                        <p>Balance updates will appear here once you start updating account balances.</p>
-                                    </div>
-                                <?php else: ?>
-                                    <div style="overflow-x: auto;">
-                                        <table class="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Date</th>
-                                                    <th>Account</th>
-                                                    <th>Previous Balance</th>
-                                                    <th>New Balance</th>
-                                                    <th>Difference</th>
-                                                    <th>Updated By</th>
-                                                    <th>Notes</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <?php foreach ($balance_history as $history): ?>
-                                                    <tr>
-                                                        <td><?php echo date('M j, Y H:i', strtotime($history['created_at'])); ?></td>
-                                                        <td><?php echo htmlspecialchars($history['account_name']); ?></td>
-                                                        <td class="amount">RWF <?php echo number_format($history['previous_balance'], 2); ?></td>
-                                                        <td class="amount">RWF <?php echo number_format($history['new_balance'], 2); ?></td>
-                                                        <td class="amount <?php echo ($history['new_balance'] - $history['previous_balance']) >= 0 ? 'income' : 'expense'; ?>">
-                                                            RWF <?php echo number_format($history['new_balance'] - $history['previous_balance'], 2); ?>
-                                                        </td>
-                                                        <td><?php echo htmlspecialchars($history['updated_by_name']); ?></td>
-                                                        <td><?php echo htmlspecialchars($history['notes'] ?? 'N/A'); ?></td>
-                                                    </tr>
-                                                <?php endforeach; ?>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="right-column">
-                        <!-- Recent Transactions -->
-                        <div class="card">
-                            <div class="card-header">
-                                <h3>Recent Transactions</h3>
-                            </div>
-                            <div class="card-body">
-                                <?php if (empty($recent_transactions)): ?>
-                                    <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                        No recent transactions
-                                    </div>
-                                <?php else: ?>
-                                    <?php foreach ($recent_transactions as $transaction): ?>
-                                        <div style="display: flex; justify-content: between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid var(--medium-gray);">
-                                            <div style="flex: 1;">
-                                                <div style="font-weight: 600; color: var(--text-dark);"><?php echo htmlspecialchars($transaction['description']); ?></div>
-                                                <div style="font-size: 0.75rem; color: var(--dark-gray);">
-                                                    <?php echo date('M j', strtotime($transaction['transaction_date'])); ?> • 
-                                                    <?php echo htmlspecialchars($transaction['account_name']); ?>
-                                                </div>
-                                            </div>
-                                            <div class="amount <?php echo $transaction['transaction_type']; ?>">
-                                                RWF <?php echo number_format($transaction['amount'], 2); ?>
-                                            </div>
-                                        </div>
-                                    <?php endforeach; ?>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Reports Tab -->
-            <div id="reports" class="tab-content">
-                <div class="content-grid">
-                    <div class="left-column">
-                        <div class="card">
-                            <div class="card-header">
-                                <h3>Account Reports</h3>
-                            </div>
-                            <div class="card-body">
-                                <div style="display: grid; gap: 1rem;">
-                                    <div class="alert alert-info">
-                                        <i class="fas fa-info-circle"></i>
-                                        Generate comprehensive account reports for analysis and auditing.
-                                    </div>
-                                    
-                                    <div class="quick-actions">
-                                        <a href="financial_reports.php?type=account_summary" class="action-btn">
-                                            <i class="fas fa-file-alt"></i>
-                                            <span class="action-label">Account Summary</span>
-                                        </a>
-                                        <a href="financial_reports.php?type=balance_sheet" class="action-btn">
-                                            <i class="fas fa-balance-scale"></i>
-                                            <span class="action-label">Balance Sheet</span>
-                                        </a>
-                                        <a href="financial_reports.php?type=transaction_analysis" class="action-btn">
-                                            <i class="fas fa-chart-line"></i>
-                                            <span class="action-label">Transaction Analysis</span>
-                                        </a>
-                                        <a href="#" class="action-btn" onclick="generateCustomAccountReport()">
-                                            <i class="fas fa-cog"></i>
-                                            <span class="action-label">Custom Report</span>
-                                        </a>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label">Report Period</label>
-                                        <select class="form-control" id="account_report_period">
-                                            <option value="current_month">Current Month</option>
-                                            <option value="last_month">Last Month</option>
-                                            <option value="current_quarter">Current Quarter</option>
-                                            <option value="current_year">Current Year (<?php echo $current_academic_year; ?>)</option>
-                                            <option value="custom">Custom Period</option>
-                                        </select>
-                                    </div>
-
-                                    <div class="form-group" id="account_custom_period" style="display: none;">
-                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                                            <div>
-                                                <label class="form-label">Start Date</label>
-                                                <input type="date" class="form-control" id="account_start_date">
-                                            </div>
-                                            <div>
-                                                <label class="form-label">End Date</label>
-                                                <input type="date" class="form-control" id="account_end_date">
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label">Report Format</label>
-                                        <select class="form-control" id="account_report_format">
-                                            <option value="pdf">PDF Document</option>
-                                            <option value="excel">Excel Spreadsheet</option>
-                                            <option value="csv">CSV File</option>
-                                        </select>
-                                    </div>
-
-                                    <button class="btn btn-primary" onclick="generateAccountReport()">
-                                        <i class="fas fa-download"></i> Generate Report
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="right-column">
-                        <div class="card">
-                            <div class="card-header">
-                                <h3>Report Templates</h3>
-                            </div>
-                            <div class="card-body">
-                                <div style="display: grid; gap: 1rem;">
-                                    <div class="alert alert-success">
-                                        <i class="fas fa-file-pdf"></i>
-                                        <strong>Account Summary Report</strong><br>
-                                        Comprehensive overview of all accounts with balances and transactions.
-                                    </div>
-                                    
-                                    <div class="alert alert-warning">
-                                        <i class="fas fa-balance-scale"></i>
-                                        <strong>Balance Sheet Report</strong><br>
-                                        Detailed financial position showing assets, liabilities, and equity.
-                                    </div>
-                                    
-                                    <div class="alert alert-info">
-                                        <i class="fas fa-chart-bar"></i>
-                                        <strong>Transaction Analysis</strong><br>
-                                        Analysis of transaction patterns and cash flow across accounts.
-                                    </div>
-                                    
-                                    <div class="alert alert-secondary">
-                                        <i class="fas fa-cogs"></i>
-                                        <strong>Custom Report Builder</strong><br>
-                                        Create customized reports with specific parameters and filters.
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </main>
     </div>
 
-    <!-- View Account Details Modal -->
+    <!-- View Account Modal -->
     <div id="viewAccountModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Account Details</h3>
-                <button class="card-header-btn" onclick="closeViewAccountModal()">&times;</button>
+                <button class="modal-close" onclick="closeViewAccountModal()">&times;</button>
             </div>
             <div class="modal-body" id="viewAccountModalBody">
-                <!-- Account details will be loaded here via AJAX -->
+                <div style="text-align: center; padding: 1rem;">
+                    <i class="fas fa-spinner fa-spin"></i> Loading...
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeViewAccountModal()">Close</button>
@@ -2253,21 +1990,20 @@ if (count($balance_trends) >= 2) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Update Account Balance</h3>
-                <button class="card-header-btn" onclick="closeUpdateBalanceModal()">&times;</button>
+                <button class="modal-close" onclick="closeUpdateBalanceModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <form method="POST" id="updateBalanceForm">
-                    <input type="hidden" id="balance_account_id" name="account_id">
-                    <input type="hidden" id="current_balance_value" name="current_balance">
+                    <input type="hidden" name="account_id" id="balance_account_id">
+                    <input type="hidden" name="current_balance" id="current_balance_value">
+                    
                     <div class="form-group">
-                        <label class="form-label" for="new_balance">New Balance (RWF) *</label>
-                        <input type="number" class="form-control" id="new_balance" name="new_balance" 
-                               step="0.01" min="0" required placeholder="Enter new balance">
+                        <label class="form-label">New Balance (RWF) *</label>
+                        <input type="number" class="form-control" name="new_balance" id="new_balance" step="0.01" min="0" required>
                     </div>
                     <div class="form-group">
-                        <label class="form-label" for="balance_notes">Update Notes (Optional)</label>
-                        <textarea class="form-control" id="balance_notes" name="balance_notes" rows="3" 
-                                  placeholder="Add notes about this balance update"></textarea>
+                        <label class="form-label">Update Notes</label>
+                        <textarea class="form-control" name="balance_notes" id="balance_notes" rows="3" placeholder="Reason for balance update..."></textarea>
                     </div>
                 </form>
             </div>
@@ -2298,119 +2034,160 @@ if (count($balance_trends) >= 2) {
             themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Tab functionality
         function openTab(evt, tabName) {
             const tabcontent = document.getElementsByClassName("tab-content");
             for (let i = 0; i < tabcontent.length; i++) {
                 tabcontent[i].classList.remove("active");
             }
-            
             const tablinks = document.getElementsByClassName("tab");
             for (let i = 0; i < tablinks.length; i++) {
                 tablinks[i].classList.remove("active");
             }
-            
             document.getElementById(tabName).classList.add("active");
             if (evt && evt.currentTarget) {
                 evt.currentTarget.classList.add("active");
             }
         }
 
-        // Auto-open edit tab if editing
-        <?php if ($edit_account): ?>
-            document.addEventListener('DOMContentLoaded', function() {
-                openTab(null, 'add-account');
-            });
-        <?php endif; ?>
-
-        // Report period toggle
-        document.getElementById('account_report_period').addEventListener('change', function() {
-            const customPeriod = document.getElementById('account_custom_period');
-            customPeriod.style.display = this.value === 'custom' ? 'block' : 'none';
-        });
-
         // Initialize Charts
         document.addEventListener('DOMContentLoaded', function() {
             // Account Types Chart
-            const typesCtx = document.getElementById('accountTypesChart').getContext('2d');
-            const typesChart = new Chart(typesCtx, {
-                type: 'doughnut',
-                data: {
-                    labels: <?php echo json_encode(array_column($account_types, 'account_type')); ?>,
-                    datasets: [{
-                        data: <?php echo json_encode(array_column($account_types, 'total_balance')); ?>,
-                        backgroundColor: [
-                            '#1976D2', '#28a745', '#ffc107', '#dc3545'
-                        ],
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            position: 'bottom'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    const label = context.label || '';
-                                    const value = context.raw || 0;
-                                    return `${label}: RWF ${value.toLocaleString()}`;
+            const accountTypes = <?php echo json_encode($account_types); ?>;
+            if (accountTypes.length > 0) {
+                const typesCtx = document.getElementById('accountTypesChart').getContext('2d');
+                new Chart(typesCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: accountTypes.map(t => t.account_type.charAt(0).toUpperCase() + t.account_type.slice(1)),
+                        datasets: [{
+                            data: accountTypes.map(t => parseFloat(t.total_balance)),
+                            backgroundColor: ['#1976D2', '#28a745', '#ffc107', '#dc3545'],
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom' },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `${context.label}: RWF ${context.raw.toLocaleString()}`;
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
 
             // Balance Trends Chart
-            const trendsCtx = document.getElementById('balanceTrendsChart').getContext('2d');
-            const trendsChart = new Chart(trendsCtx, {
-                type: 'line',
-                data: {
-                    labels: <?php echo json_encode(array_map(function($trend) {
-                        return date('M Y', strtotime($trend['month'] . '-01'));
-                    }, $balance_trends)); ?>,
-                    datasets: [{
-                        label: 'Total Balance',
-                        data: <?php echo json_encode(array_column($balance_trends, 'balance')); ?>,
-                        borderColor: '#1976D2',
-                        backgroundColor: 'rgba(25, 118, 210, 0.1)',
-                        fill: true,
-                        tension: 0.4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: false,
-                            ticks: {
-                                callback: function(value) {
-                                    return 'RWF ' + value.toLocaleString();
+            const balanceTrends = <?php echo json_encode($balance_trends); ?>;
+            if (balanceTrends.length > 0) {
+                const trendsCtx = document.getElementById('balanceTrendsChart').getContext('2d');
+                new Chart(trendsCtx, {
+                    type: 'line',
+                    data: {
+                        labels: balanceTrends.map(t => {
+                            const [year, month] = t.month.split('-');
+                            return new Date(year, month - 1).toLocaleDateString('en-US', {month: 'short', year: 'numeric'});
+                        }),
+                        datasets: [{
+                            label: 'Total Balance',
+                            data: balanceTrends.map(t => parseFloat(t.balance)),
+                            borderColor: '#1976D2',
+                            backgroundColor: 'rgba(25, 118, 210, 0.1)',
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                ticks: {
+                                    callback: function(value) {
+                                        return 'RWF ' + value.toLocaleString();
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            });
+                });
+            }
         });
 
         // View Account Details Function
         function viewAccountDetails(accountId) {
-            // Show loading state
             document.getElementById('viewAccountModalBody').innerHTML = `
-                <div style="text-align: center; padding: 2rem;">
-                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--finance-primary);"></i>
-                    <p>Loading account details...</p>
+                <div style="text-align: center; padding: 1rem;">
+                    <i class="fas fa-spinner fa-spin"></i> Loading...
                 </div>
             `;
-            document.getElementById('viewAccountModal').style.display = 'block';
+            document.getElementById('viewAccountModal').style.display = 'flex';
             
-            // Fetch account details via AJAX
             fetch(`get_account_details.php?account_id=${accountId}`)
                 .then(response => response.json())
                 .then(data => {
@@ -2427,12 +2204,10 @@ if (count($balance_trends) >= 2) {
                                         <div class="transaction-item">
                                             <div class="transaction-info">
                                                 <div class="transaction-description">${transaction.description}</div>
-                                                <div class="transaction-meta">
-                                                    ${transaction.transaction_date} • ${transaction.category_name}
-                                                </div>
+                                                <div class="transaction-meta">${transaction.transaction_date}</div>
                                             </div>
                                             <div class="amount ${transaction.transaction_type}">
-                                                RWF ${parseFloat(transaction.amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                                RWF ${parseFloat(transaction.amount).toLocaleString()}
                                             </div>
                                         </div>
                                     `).join('')}
@@ -2458,40 +2233,28 @@ if (count($balance_trends) >= 2) {
                                 </div>
                                 <div class="detail-group">
                                     <div class="detail-label">Account Type</div>
-                                    <div class="detail-value">
-                                        <span class="status-badge account-type-${account.account_type}">
-                                            ${account.account_type.charAt(0).toUpperCase() + account.account_type.slice(1)}
-                                        </span>
-                                    </div>
+                                    <div class="detail-value">${account.account_type}</div>
                                 </div>
                                 <div class="detail-group">
                                     <div class="detail-label">Current Balance</div>
-                                    <div class="detail-value amount">RWF ${parseFloat(account.current_balance).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                                    <div class="detail-value amount">RWF ${parseFloat(account.current_balance).toLocaleString()}</div>
                                 </div>
                                 <div class="detail-group">
                                     <div class="detail-label">Status</div>
-                                    <div class="detail-value">
-                                        <span class="status-badge status-${account.is_active ? 'active' : 'inactive'}">
-                                            ${account.is_active ? 'Active' : 'Inactive'}
-                                        </span>
-                                    </div>
+                                    <div class="detail-value">${account.is_active ? 'Active' : 'Inactive'}</div>
                                 </div>
                             </div>
                             ${transactionsHtml}
                         `;
                     } else {
                         document.getElementById('viewAccountModalBody').innerHTML = `
-                            <div class="alert alert-danger">
-                                <i class="fas fa-exclamation-circle"></i> Error loading account details: ${data.message}
-                            </div>
+                            <div class="alert alert-danger">Error: ${data.message}</div>
                         `;
                     }
                 })
                 .catch(error => {
                     document.getElementById('viewAccountModalBody').innerHTML = `
-                        <div class="alert alert-danger">
-                            <i class="fas fa-exclamation-circle"></i> Error loading account details: ${error}
-                        </div>
+                        <div class="alert alert-danger">Error loading account details</div>
                     `;
                 });
         }
@@ -2504,57 +2267,23 @@ if (count($balance_trends) >= 2) {
             document.getElementById('balance_account_id').value = accountId;
             document.getElementById('current_balance_value').value = currentBalance;
             document.getElementById('new_balance').value = currentBalance;
-            document.getElementById('updateBalanceModal').style.display = 'block';
+            document.getElementById('updateBalanceModal').style.display = 'flex';
         }
 
         function closeUpdateBalanceModal() {
             document.getElementById('updateBalanceModal').style.display = 'none';
-        }
-
-        // Export and print functions
-        function exportAccounts() {
-            alert('Export functionality would generate a CSV/Excel file of all accounts.');
-        }
-
-        function printAccounts() {
-            window.print();
-        }
-
-        function printAccountSummary() {
-            alert('Account summary report would be generated for printing.');
-        }
-
-        function exportAccountDetails() {
-            alert('Account details would be exported in the selected format.');
-        }
-
-        function generateCustomAccountReport() {
-            alert('Custom account report builder would open with advanced filtering options.');
-        }
-
-        function generateAccountReport() {
-            const period = document.getElementById('account_report_period').value;
-            const format = document.getElementById('account_report_format').value;
-            alert(`Generating ${format} report for ${period} period...`);
+            document.getElementById('updateBalanceForm').reset();
         }
 
         // Close modals when clicking outside
         window.onclick = function(event) {
-            const modals = ['viewAccountModal', 'updateBalanceModal'];
-            modals.forEach(modalId => {
-                const modal = document.getElementById(modalId);
-                if (event.target === modal) {
-                    if (modalId === 'viewAccountModal') closeViewAccountModal();
-                    if (modalId === 'updateBalanceModal') closeUpdateBalanceModal();
-                }
-            });
+            if (event.target === document.getElementById('viewAccountModal')) {
+                closeViewAccountModal();
+            }
+            if (event.target === document.getElementById('updateBalanceModal')) {
+                closeUpdateBalanceModal();
+            }
         }
-
-        // Auto-refresh account data
-        setInterval(() => {
-            // You could add auto-refresh logic for account balances
-            console.log('Auto-refresh check for account updates');
-        }, 300000); // 5 minutes
     </script>
 </body>
 </html>

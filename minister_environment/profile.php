@@ -1304,13 +1304,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                  
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Environment & Security</div>
@@ -1410,8 +1404,7 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Profile & Settings 👤</h1>
-                    <p>Manage your personal information and account preferences</p>
+                    <h1>Profile & Settings</h1>
                 </div>
             </div>
 
@@ -1475,14 +1468,14 @@ try {
                                 onclick="switchTab('security')">
                             <i class="fas fa-shield-alt"></i> Security
                         </button>
-                        <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
+                        <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
                                 onclick="switchTab('preferences')">
                             <i class="fas fa-cog"></i> Preferences
                         </button>
                         <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" 
                                 onclick="switchTab('sessions')">
                             <i class="fas fa-history"></i> Login History
-                        </button>
+                        </button> -->
                     </div>
 
                     <!-- Tab Content -->
@@ -1605,7 +1598,7 @@ try {
                                 </form>
                             </div>
 
-                            <div class="form-section">
+                            <!-- <div class="form-section">
                                 <h4>Two-Factor Authentication</h4>
                                 <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-green); border-radius: var(--border-radius); flex-wrap: wrap; gap: 1rem;">
                                     <div>
@@ -1621,7 +1614,7 @@ try {
                                         </button>
                                     </form>
                                 </div>
-                            </div>
+                            </div> -->
 
                             <div class="form-section">
                                 <h4>Account Security</h4>

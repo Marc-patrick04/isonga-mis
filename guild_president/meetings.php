@@ -599,7 +599,6 @@ try {
         <main class="main-content" id="mainContent">
             <div style="margin-bottom:1.5rem">
                 <h1 style="font-size:1.5rem">Meeting Management</h1>
-                <p>Schedule meetings, track attendance, and manage committee gatherings</p>
                 <div style="margin-top:1rem; display:flex; gap:0.75rem; flex-wrap:wrap">
                     <a href="?action=add" class="btn btn-primary"><i class="fas fa-calendar-plus"></i> Schedule Meeting</a>
                     <a href="reports.php?type=meetings" class="btn btn-outline"><i class="fas fa-download"></i> Meeting Reports</a>

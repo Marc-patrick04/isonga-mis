@@ -4,13 +4,13 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
 // Redirect class representatives to their dedicated dashboard
 if ($_SESSION['is_class_rep'] ?? 0) {
-    header('Location: class_rep_dashboard.php');
+    header('Location: class_rep_dashboard');
     exit();
 }
 
@@ -30,7 +30,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: dashboard.php');
+    header('Location: dashboard');
     exit();
 }
 
@@ -70,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
             $assignStmt->execute([$ticket_id, $student_id, $category_id]);
             
             $_SESSION['success_message'] = "Ticket submitted successfully! Your ticket ID is #$ticket_id";
-            header('Location: dashboard.php');
+            header('Location: dashboard');
             exit();
             
         } catch (PDOException $e) {
@@ -113,12 +113,26 @@ $categories = $categories_stmt->fetchAll(PDO::FETCH_ASSOC);
 $events_stmt = $pdo->prepare("
     SELECT * FROM events 
     WHERE event_date >= CURRENT_DATE 
-    AND status = 'active'
+    AND status = 'published'
     ORDER BY event_date ASC 
     LIMIT 3
 ");
 $events_stmt->execute();
 $upcoming_events = $events_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get unread messages count
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$student_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
 
 // Helper function
 function safe_display($data) {
@@ -130,136 +144,144 @@ function safe_display($data) {
 <html lang="en" data-theme="<?php echo $theme; ?>">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Dashboard - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
-            --booking-blue: #003b95;
-            --booking-blue-light: #006ce4;
-            --booking-green: #00a699;
-            --booking-orange: #ff5a5f;
-            --booking-yellow: #ffb400;
-            --booking-gray-50: #f7f7f7;
-            --booking-gray-100: #ebebeb;
-            --booking-gray-200: #d8d8d8;
-            --booking-gray-300: #b0b0b0;
-            --booking-gray-400: #717171;
-            --booking-gray-500: #2d2d2d;
-            --booking-white: #ffffff;
+            --primary-blue: #3B82F6;
+            --secondary-blue: #60A5FA;
+            --accent-blue: #1D4ED8;
+            --light-blue: #EFF6FF;
+            --white: #ffffff;
+            --light-gray: #f8f9fa;
+            --medium-gray: #e9ecef;
+            --dark-gray: #6c757d;
+            --text-dark: #2c3e50;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
+            --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.15);
             --border-radius: 8px;
             --border-radius-lg: 12px;
-            --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-            --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
-            --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.16);
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         [data-theme="dark"] {
-            --booking-gray-50: #1a1a1a;
-            --booking-gray-100: #2d2d2d;
-            --booking-gray-200: #404040;
-            --booking-gray-300: #666666;
-            --booking-gray-400: #999999;
-            --booking-gray-500: #ffffff;
-            --booking-white: #2d2d2d;
+            --primary-blue: #60A5FA;
+            --secondary-blue: #93C5FD;
+            --accent-blue: #3B82F6;
+            --light-blue: #1E3A8A;
+            --white: #1a1a1a;
+            --light-gray: #2d2d2d;
+            --medium-gray: #3d3d3d;
+            --dark-gray: #b0b0b0;
+            --text-dark: #e0e0e0;
+            --success: #4caf50;
+            --warning: #ffb74d;
+            --danger: #f44336;
+            --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
         }
 
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
 
         body {
-            background: var(--booking-gray-50);
-            color: var(--booking-gray-500);
+            font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
             line-height: 1.5;
+            color: var(--text-dark);
+            background: var(--light-gray);
             min-height: 100vh;
+            font-size: 0.875rem;
+            transition: var(--transition);
         }
 
         /* Header */
         .header {
-            background: var(--booking-white);
-            border-bottom: 1px solid var(--booking-gray-100);
-            padding: 0 2rem;
-            height: 72px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
+            background: var(--white);
+            box-shadow: var(--shadow-sm);
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
+            border-bottom: 1px solid var(--medium-gray);
         }
 
-/* Logo Styles */
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    text-decoration: none;
-}
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 1.5rem;
+        }
 
-.logo-image {
-    height: 36px; /* Adjust based on your logo's aspect ratio */
-    width: auto;
-    object-fit: contain;
-}
-
-.logo-text {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--booking-blue);
-    letter-spacing: -0.5px;
-}
-
-/* Optional: Different logo for dark theme */
-[data-theme="dark"] .logo-text {
-    color: white; /* Or keep it blue for consistency */
-}
-
-[data-theme="dark"] .logo-image {
-    filter: brightness(1.1); /* Slightly brighten logo for dark theme */
-}
-
-        .header-actions {
+        .logo-section {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 0.75rem;
+        }
+
+        .logo {
+            height: 40px;
+            width: auto;
+        }
+
+        .brand-text h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--primary-blue);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 0.75rem;
-            cursor: pointer;
-            padding: 0.5rem 0.75rem;
-            border-radius: var(--border-radius);
-            transition: var(--transition);
+            gap: 1rem;
         }
 
-        .user-menu:hover {
-            background: var(--booking-gray-50);
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 36px;
-            height: 36px;
-            background: linear-gradient(135deg, var(--booking-blue) 0%, var(--booking-blue-light) 100%);
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
+            background: var(--gradient-primary);
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 1rem;
         }
 
-        .user-info {
-            display: flex;
-            flex-direction: column;
+        .user-details {
+            text-align: right;
         }
 
         .user-name {
@@ -269,136 +291,204 @@ function safe_display($data) {
 
         .user-role {
             font-size: 0.75rem;
-            color: var(--booking-gray-400);
+            color: var(--dark-gray);
         }
 
-        .theme-toggle-btn {
-            background: none;
-            border: 1px solid var(--booking-gray-200);
+        .icon-btn {
             width: 40px;
             height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            cursor: pointer;
-            color: var(--booking-gray-400);
-            transition: var(--transition);
-        }
-
-        .theme-toggle-btn:hover {
-            border-color: var(--booking-blue);
-            color: var(--booking-blue);
-        }
-
-        /* Navigation */
-        .nav-container {
-            background: var(--booking-white);
-            border-bottom: 1px solid var(--booking-gray-100);
-        }
-
-        .main-nav {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 2rem;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 0;
-            list-style: none;
-        }
-
-        .nav-item {
             position: relative;
         }
 
-        .nav-link {
+        .icon-btn:hover {
+            background: var(--primary-blue);
+            color: white;
+            border-color: var(--primary-blue);
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            background: var(--danger);
+            color: white;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
-            gap: 0.5rem;
-            padding: 1rem 1.5rem;
-            text-decoration: none;
-            color: var(--booking-gray-500);
-            font-weight: 500;
-            font-size: 0.9rem;
-            border-bottom: 2px solid transparent;
-            transition: var(--transition);
-        }
-
-        .nav-link:hover {
-            color: var(--booking-blue);
-            border-bottom-color: var(--booking-blue-light);
-        }
-
-        .nav-link.active {
-            color: var(--booking-blue);
-            border-bottom-color: var(--booking-blue);
+            justify-content: center;
             font-weight: 600;
         }
 
-        .nav-link i {
+        .logout-btn {
+            background: var(--gradient-primary);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            text-decoration: none;
             font-size: 0.85rem;
-            width: 18px;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        .logout-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        /* Dashboard Container */
+        .dashboard-container {
+            display: flex;
+            min-height: calc(100vh - 73px);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: var(--sidebar-width);
+            background: var(--white);
+            border-right: 1px solid var(--medium-gray);
+            padding: 1.5rem 0;
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
+            overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--primary-blue);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
+        }
+
+        .sidebar-menu {
+            list-style: none;
+        }
+
+        .menu-item {
+            margin-bottom: 0.25rem;
+        }
+
+        .menu-item a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            color: var(--text-dark);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+            font-size: 0.85rem;
+        }
+
+        .menu-item a:hover, .menu-item a.active {
+            background: var(--light-blue);
+            border-left-color: var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .menu-item i {
+            width: 20px;
+        }
+
+        .menu-badge {
+            background: var(--danger);
+            color: white;
+            border-radius: 10px;
+            padding: 0.1rem 0.4rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-left: auto;
         }
 
         /* Main Content */
         .main-content {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 2rem;
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
         }
 
-        /* Welcome Banner */
-        .welcome-banner {
-            background: linear-gradient(135deg, var(--booking-blue) 0%, var(--booking-blue-light) 100%);
-            border-radius: var(--border-radius-lg);
-            padding: 2rem;
-            color: white;
-            margin-bottom: 2rem;
-            position: relative;
-            overflow: hidden;
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
-        .welcome-banner::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            right: 0;
-            bottom: 0;
-            left: 0;
-            background: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M11 18c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm48 25c3.866 0 7-3.134 7-7s-3.134-7-7-7-7 3.134-7 7 3.134 7 7 7zm-43-7c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm63 31c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM34 90c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zm56-76c1.657 0 3-1.343 3-3s-1.343-3-3-3-3 1.343-3 3 1.343 3 3 3zM12 86c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm28-65c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm23-11c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-6 60c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm29 22c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zM32 63c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm57-13c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm-9-21c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM60 91c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM35 41c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2zM12 60c1.105 0 2-.895 2-2s-.895-2-2-2-2 .895-2 2 .895 2 2 2z' fill='%23006ce4' fill-opacity='0.1' fill-rule='evenodd'/%3E%3C/svg%3E");
-            opacity: 0.1;
-        }
-
-        .welcome-content h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-
-        .welcome-content p {
-            opacity: 0.9;
+        .dashboard-header {
             margin-bottom: 1.5rem;
+        }
+
+        .welcome-section h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: var(--text-dark);
+        }
+
+        .welcome-section p {
+            color: var(--dark-gray);
+            font-size: 0.9rem;
         }
 
         .student-badge {
             display: inline-flex;
             align-items: center;
             gap: 0.5rem;
-            background: rgba(255, 255, 255, 0.2);
+            background: var(--light-blue);
             padding: 0.5rem 1rem;
             border-radius: 20px;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             margin-top: 0.5rem;
         }
 
         .class-rep-badge {
-            background: var(--booking-yellow);
-            color: var(--booking-gray-500);
+            background: var(--warning);
+            color: var(--text-dark);
             padding: 0.25rem 0.75rem;
             border-radius: 12px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             display: inline-flex;
             align-items: center;
@@ -409,57 +499,85 @@ function safe_display($data) {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 1.5rem;
-            margin-bottom: 2rem;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
         }
 
         .stat-card {
-            background: var(--booking-white);
-            border: 1px solid var(--booking-gray-100);
-            border-radius: var(--border-radius-lg);
-            padding: 1.5rem;
-            transition: var(--transition);
+            background: var(--white);
+            padding: 1rem;
+            border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
+            border-left: 4px solid var(--primary-blue);
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
         .stat-card:hover {
             transform: translateY(-2px);
             box-shadow: var(--shadow-md);
-            border-color: var(--booking-gray-200);
         }
 
-        .stat-header {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            margin-bottom: 1rem;
+        .stat-card.success {
+            border-left-color: var(--success);
+        }
+
+        .stat-card.warning {
+            border-left-color: var(--warning);
+        }
+
+        .stat-card.danger {
+            border-left-color: var(--danger);
         }
 
         .stat-icon {
-            width: 48px;
-            height: 48px;
-            border-radius: var(--border-radius);
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
+            flex-shrink: 0;
         }
 
-        .stat-icon.total { background: #e6f2ff; color: var(--booking-blue); }
-        .stat-icon.open { background: #e6ffe6; color: var(--booking-green); }
-        .stat-icon.progress { background: #fff8e6; color: var(--booking-orange); }
-        .stat-icon.resolved { background: #f0f0f0; color: var(--booking-gray-400); }
+        .stat-card .stat-icon {
+            background: var(--light-blue);
+            color: var(--primary-blue);
+        }
 
-        .stat-content h3 {
-            font-size: 1.75rem;
+        .stat-card.success .stat-icon {
+            background: #d4edda;
+            color: var(--success);
+        }
+
+        .stat-card.warning .stat-icon {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .stat-card.danger .stat-icon {
+            background: #f8d7da;
+            color: var(--danger);
+        }
+
+        .stat-content {
+            flex: 1;
+        }
+
+        .stat-number {
+            font-size: 1.4rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
+            color: var(--text-dark);
         }
 
-        .stat-content p {
-            font-size: 0.85rem;
-            color: var(--booking-gray-400);
+        .stat-label {
+            color: var(--dark-gray);
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
@@ -468,43 +586,48 @@ function safe_display($data) {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 1.5rem;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
         }
 
         .dashboard-card {
-            background: var(--booking-white);
-            border: 1px solid var(--booking-gray-100);
-            border-radius: var(--border-radius-lg);
-            overflow: hidden;
+            background: var(--white);
+            border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        .dashboard-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
         }
 
         .card-header {
-            padding: 1.5rem 1.5rem 0;
-            border-bottom: 1px solid var(--booking-gray-100);
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .card-title {
-            font-size: 1.1rem;
+            font-size: 1rem;
             font-weight: 600;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            color: var(--text-dark);
         }
 
         .card-title i {
-            color: var(--booking-blue);
+            color: var(--primary-blue);
         }
 
         .view-all-link {
-            font-size: 0.85rem;
-            color: var(--booking-blue-light);
+            font-size: 0.75rem;
+            color: var(--primary-blue);
             text-decoration: none;
             font-weight: 500;
-            transition: var(--transition);
         }
 
         .view-all-link:hover {
@@ -512,12 +635,13 @@ function safe_display($data) {
         }
 
         .card-body {
-            padding: 1.5rem;
+            padding: 1.25rem;
         }
 
         /* Quick Actions */
         .quick-actions-grid {
-            display: grid;
+            display: flex;
+            flex-direction: column;
             gap: 0.75rem;
         }
 
@@ -525,31 +649,28 @@ function safe_display($data) {
             display: flex;
             align-items: center;
             gap: 1rem;
-            padding: 1rem;
-            background: var(--booking-gray-50);
-            border: 1px solid var(--booking-gray-100);
+            padding: 0.75rem 1rem;
+            background: var(--light-gray);
             border-radius: var(--border-radius);
             text-decoration: none;
-            color: var(--booking-gray-500);
+            color: var(--text-dark);
             transition: var(--transition);
         }
 
         .action-btn:hover {
-            background: var(--booking-white);
-            border-color: var(--booking-blue-light);
+            background: var(--light-blue);
             transform: translateX(4px);
         }
 
         .action-btn i {
-            color: var(--booking-blue);
+            color: var(--primary-blue);
             width: 20px;
-            text-align: center;
         }
 
         .action-text {
             flex: 1;
             font-weight: 500;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         /* Tickets List */
@@ -563,28 +684,28 @@ function safe_display($data) {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 1rem;
-            background: var(--booking-gray-50);
+            padding: 0.75rem;
+            background: var(--light-gray);
             border-radius: var(--border-radius);
-            border-left: 4px solid;
+            border-left: 3px solid;
             transition: var(--transition);
         }
 
         .ticket-item:hover {
-            background: var(--booking-white);
+            background: var(--white);
             box-shadow: var(--shadow-sm);
         }
 
-        .ticket-item.open { border-left-color: var(--booking-green); }
-        .ticket-item.in_progress { border-left-color: var(--booking-orange); }
-        .ticket-item.resolved { border-left-color: var(--booking-gray-300); }
+        .ticket-item.open { border-left-color: var(--success); }
+        .ticket-item.in_progress { border-left-color: var(--warning); }
+        .ticket-item.resolved { border-left-color: var(--dark-gray); }
 
         .ticket-info {
             flex: 1;
         }
 
         .ticket-info h4 {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 500;
             margin-bottom: 0.25rem;
         }
@@ -592,21 +713,21 @@ function safe_display($data) {
         .ticket-meta {
             display: flex;
             gap: 1rem;
-            font-size: 0.75rem;
-            color: var(--booking-gray-400);
+            font-size: 0.7rem;
+            color: var(--dark-gray);
         }
 
         .ticket-status {
-            padding: 0.25rem 0.75rem;
+            padding: 0.25rem 0.5rem;
             border-radius: 20px;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             font-weight: 600;
             white-space: nowrap;
         }
 
-        .status-open { background: #e6ffe6; color: var(--booking-green); }
-        .status-in_progress { background: #fff8e6; color: var(--booking-orange); }
-        .status-resolved { background: #f0f0f0; color: var(--booking-gray-400); }
+        .status-open { background: #d4edda; color: #155724; }
+        .status-in_progress { background: #fff3cd; color: #856404; }
+        .status-resolved { background: #e2e3e5; color: #383d41; }
 
         /* Events List */
         .events-list {
@@ -618,14 +739,14 @@ function safe_display($data) {
         .event-item {
             display: flex;
             gap: 1rem;
-            padding: 1rem;
-            background: var(--booking-gray-50);
+            padding: 0.75rem;
+            background: var(--light-gray);
             border-radius: var(--border-radius);
             transition: var(--transition);
         }
 
         .event-item:hover {
-            background: var(--booking-white);
+            background: var(--white);
             box-shadow: var(--shadow-sm);
         }
 
@@ -634,24 +755,23 @@ function safe_display($data) {
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-width: 60px;
-            background: linear-gradient(135deg, var(--booking-blue) 0%, var(--booking-blue-light) 100%);
+            min-width: 50px;
+            background: var(--gradient-primary);
             color: white;
             border-radius: var(--border-radius);
-            padding: 0.75rem;
+            padding: 0.5rem;
         }
 
         .event-date .day {
-            font-size: 1.25rem;
+            font-size: 1rem;
             font-weight: 700;
             line-height: 1;
         }
 
         .event-date .month {
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             opacity: 0.9;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
         }
 
         .event-details {
@@ -659,17 +779,17 @@ function safe_display($data) {
         }
 
         .event-details h4 {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 500;
             margin-bottom: 0.25rem;
         }
 
         .event-details p {
-            font-size: 0.8rem;
-            color: var(--booking-gray-400);
-            margin-bottom: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--dark-gray);
+            margin-bottom: 0.25rem;
             display: -webkit-box;
-            -webkit-line-clamp: 2;
+            /* -webkit-line-clamp: 2; */
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -678,8 +798,8 @@ function safe_display($data) {
             display: flex;
             align-items: center;
             gap: 0.25rem;
-            font-size: 0.75rem;
-            color: var(--booking-blue-light);
+            font-size: 0.7rem;
+            color: var(--primary-blue);
             font-weight: 500;
         }
 
@@ -688,7 +808,7 @@ function safe_display($data) {
             position: fixed;
             bottom: 2rem;
             right: 2rem;
-            background: var(--booking-blue);
+            background: var(--gradient-primary);
             color: white;
             width: 56px;
             height: 56px;
@@ -698,15 +818,16 @@ function safe_display($data) {
             justify-content: center;
             font-size: 1.25rem;
             text-decoration: none;
-            box-shadow: 0 4px 12px rgba(0, 107, 228, 0.3);
+            box-shadow: var(--shadow-lg);
             transition: var(--transition);
             z-index: 90;
+            border: none;
+            cursor: pointer;
         }
 
         .primary-action-btn:hover {
-            background: var(--booking-blue-light);
             transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0, 107, 228, 0.4);
+            box-shadow: var(--shadow-lg);
         }
 
         /* Modal */
@@ -726,7 +847,7 @@ function safe_display($data) {
         }
 
         .modal-content {
-            background: var(--booking-white);
+            background: var(--white);
             border-radius: var(--border-radius-lg);
             width: 100%;
             max-width: 500px;
@@ -736,17 +857,17 @@ function safe_display($data) {
         }
 
         .modal-header {
-            padding: 1.5rem;
-            border-bottom: 1px solid var(--booking-gray-100);
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .modal-title {
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             font-weight: 600;
-            color: var(--booking-gray-500);
+            color: var(--text-dark);
         }
 
         .modal-close {
@@ -759,49 +880,48 @@ function safe_display($data) {
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            color: var(--booking-gray-400);
+            color: var(--dark-gray);
             transition: var(--transition);
         }
 
         .modal-close:hover {
-            background: var(--booking-gray-50);
-            color: var(--booking-gray-500);
+            background: var(--light-gray);
         }
 
         .modal-body {
-            padding: 1.5rem;
+            padding: 1.25rem;
             overflow-y: auto;
             max-height: calc(90vh - 120px);
         }
 
         /* Form Styles */
         .form-group {
-            margin-bottom: 1.25rem;
+            margin-bottom: 1rem;
         }
 
         .form-label {
             display: block;
             margin-bottom: 0.5rem;
             font-weight: 500;
-            font-size: 0.9rem;
-            color: var(--booking-gray-500);
+            font-size: 0.85rem;
+            color: var(--text-dark);
         }
 
         .form-control {
             width: 100%;
-            padding: 0.75rem 1rem;
-            border: 1px solid var(--booking-gray-200);
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            background: var(--booking-white);
-            color: var(--booking-gray-500);
-            font-size: 0.9rem;
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
             transition: var(--transition);
         }
 
         .form-control:focus {
             outline: none;
-            border-color: var(--booking-blue);
-            box-shadow: 0 0 0 3px rgba(0, 107, 228, 0.1);
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
         }
 
         textarea.form-control {
@@ -811,144 +931,182 @@ function safe_display($data) {
 
         .form-actions {
             display: flex;
-            gap: 1rem;
-            margin-top: 1.5rem;
+            gap: 0.75rem;
+            margin-top: 1.25rem;
         }
 
-        /* Buttons */
         .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
+            padding: 0.6rem 1.2rem;
             border-radius: var(--border-radius);
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             font-weight: 600;
             cursor: pointer;
             transition: var(--transition);
-            text-decoration: none;
+            border: none;
             display: inline-flex;
             align-items: center;
-            justify-content: center;
             gap: 0.5rem;
         }
 
         .btn-primary {
-            background: var(--booking-blue);
+            background: var(--gradient-primary);
             color: white;
-            border: 1px solid var(--booking-blue);
         }
 
         .btn-primary:hover {
-            background: var(--booking-blue-light);
-            border-color: var(--booking-blue-light);
             transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(0, 107, 228, 0.2);
+            box-shadow: var(--shadow-sm);
         }
 
         .btn-secondary {
-            background: var(--booking-white);
-            color: var(--booking-gray-500);
-            border: 1px solid var(--booking-gray-200);
+            background: var(--white);
+            color: var(--text-dark);
+            border: 1px solid var(--medium-gray);
         }
 
         .btn-secondary:hover {
-            background: var(--booking-gray-50);
-            border-color: var(--booking-gray-300);
+            background: var(--light-gray);
         }
 
         /* Alerts */
         .alert {
-            padding: 1rem 1.25rem;
+            padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid;
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             gap: 0.75rem;
-            border: 1px solid;
-            background: var(--booking-white);
+            font-size: 0.8rem;
         }
 
         .alert-success {
-            border-color: var(--booking-green);
-            background: #f0fffc;
-            color: var(--booking-green);
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
         }
 
         .alert-error {
-            border-color: var(--booking-orange);
-            background: #fff5f5;
-            color: var(--booking-orange);
-        }
-
-        .alert i {
-            font-size: 1rem;
-            margin-top: 0.125rem;
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
         }
 
         /* Empty States */
         .empty-state {
             text-align: center;
             padding: 2rem;
-            color: var(--booking-gray-400);
+            color: var(--dark-gray);
         }
 
         .empty-state i {
             font-size: 2rem;
-            margin-bottom: 1rem;
-            opacity: 0.3;
+            margin-bottom: 0.5rem;
+            opacity: 0.5;
         }
 
         .empty-state p {
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
-        /* Mobile Responsive */
+        /* Overlay */
+        .overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            backdrop-filter: blur(2px);
+            z-index: 999;
+        }
+
+        .overlay.active {
+            display: block;
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Responsive */
+        @media (max-width: 992px) {
+            .sidebar {
+                transform: translateX(-100%);
+                position: fixed;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                padding-top: 1rem;
+            }
+
+            .sidebar.mobile-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                margin-left: 0 !important;
+            }
+
+            .main-content.sidebar-collapsed {
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--primary-blue);
+                color: white;
+            }
+        }
+
         @media (max-width: 768px) {
-            .header {
+            .nav-container {
                 padding: 0 1rem;
+                gap: 0.5rem;
             }
-            
-            .main-nav {
-                padding: 0 1rem;
+
+            .brand-text h1 {
+                font-size: 1rem;
             }
-            
-            .nav-links {
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                padding-bottom: 0.5rem;
+
+            .user-details {
+                display: none;
             }
-            
-            .nav-link {
-                padding: 1rem;
-                font-size: 0.85rem;
-            }
-            
+
             .main-content {
                 padding: 1rem;
             }
-            
-            .welcome-banner {
-                padding: 1.5rem;
-            }
-            
-            .welcome-content h1 {
-                font-size: 1.5rem;
-            }
-            
+
             .stats-grid {
                 grid-template-columns: repeat(2, 1fr);
-                gap: 1rem;
             }
-            
+
             .dashboard-grid {
                 grid-template-columns: 1fr;
-                gap: 1rem;
             }
-            
-            .primary-action-btn {
-                bottom: 1rem;
-                right: 1rem;
-                width: 48px;
-                height: 48px;
+
+            .stat-number {
+                font-size: 1.1rem;
             }
         }
 
@@ -956,11 +1114,40 @@ function safe_display($data) {
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .user-name, .user-role {
-                display: none;
+
+            .main-content {
+                padding: 0.75rem;
             }
-            
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .stat-card {
+                padding: 0.75rem;
+            }
+
+            .stat-icon {
+                width: 36px;
+                height: 36px;
+                font-size: 0.9rem;
+            }
+
+            .stat-number {
+                font-size: 1rem;
+            }
+
+            .primary-action-btn {
+                bottom: 1rem;
+                right: 1rem;
+                width: 48px;
+                height: 48px;
+            }
+
             .form-actions {
                 flex-direction: column;
             }
@@ -968,283 +1155,323 @@ function safe_display($data) {
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
-<a href="dashboard.php" class="logo">
-    <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo-image">
-    <div class="logo-text">Isonga</div>
-</a>
-        
-<!-- Add this to the header-actions div in dashboard.php -->
-<div class="header-actions">
-    <form method="POST" style="margin: 0;">
-        <button type="submit" name="toggle_theme" class="theme-toggle-btn" title="Toggle Theme">
-            <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-        </button>
-    </form>
-    
-    <!-- Logout Button - Add this -->
-    <a href="../auth/logout.php" class="logout-btn" title="Logout">
-        <i class="fas fa-sign-out-alt"></i>
-    </a>
-    
-    <div class="user-menu">
-        <div class="user-avatar">
-            <?php echo strtoupper(substr($student_name, 0, 1)); ?>
+        <div class="nav-container">
+            <div class="logo-section">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <img src="../assets/images/logo.png" alt="Isonga Logo" class="logo">
+                <div class="brand-text">
+                    <h1>Isonga RPSU</h1>
+                </div>
+            </div>
+            <div class="user-menu">
+                <form method="POST" style="margin: 0;">
+                    <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
+                        <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
+                    </button>
+                </form>
+                <a href="messages" class="icon-btn" title="Messages" style="position: relative;">
+                    <i class="fas fa-envelope"></i>
+                    <?php if ($unread_messages > 0): ?>
+                        <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                    <?php endif; ?>
+                </a>
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <?php echo strtoupper(substr($student_name, 0, 1)); ?>
+                    </div>
+                    <div class="user-details">
+                        <div class="user-name"><?php echo safe_display(explode(' ', $student_name)[0]); ?></div>
+                        <div class="user-role">Student</div>
+                    </div>
+                </div>
+                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
         </div>
-        <div class="user-info">
-            <span class="user-name"><?php echo safe_display(explode(' ', $student_name)[0]); ?></span>
-            <span class="user-role">Student</span>
-        </div>
-    </div>
-</div>
     </header>
 
-    <!-- Navigation -->
-    <nav class="nav-container">
-        <div class="main-nav">
-            <ul class="nav-links">
-                <li class="nav-item">
-                    <a href="#" class="nav-link active">
-                        <i class="fas fa-home"></i>
-                        Dashboard
+    <!-- Dashboard Container -->
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <ul class="sidebar-menu">
+                <li class="menu-item">
+                    <a href="dashboard" class="active">
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a href="tickets.php" class="nav-link">
+                <li class="menu-item">
+                    <a href="tickets">
                         <i class="fas fa-ticket-alt"></i>
-                        My Tickets
+                        <span>My Tickets</span>
+                        <?php if (($ticket_stats['open'] ?? 0) > 0): ?>
+                            <span class="menu-badge"><?php echo $ticket_stats['open']; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a href="financial_aid.php" class="nav-link">
+                <li class="menu-item">
+                    <a href="financial_aid">
                         <i class="fas fa-hand-holding-usd"></i>
-                        Financial Aid
+                        <span>Financial Aid</span>
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a href="profile.php" class="nav-link">
-                        <i class="fas fa-user"></i>
-                        Profile
-                    </a>
-                </li>
-                <li class="nav-item">
-                    <a href="announcements.php" class="nav-link">
+                <li class="menu-item">
+                    <a href="announcements">
                         <i class="fas fa-bullhorn"></i>
-                        Announcements
+                        <span>Announcements</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="events">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Events</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="news">
+                        <i class="fas fa-newspaper"></i>
+                        <span>News</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="gallery">
+                        <i class="fas fa-images"></i>
+                        <span>Gallery</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages">
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
-                <li class="nav-item">
-                    <a href="class_rep_dashboard.php" class="nav-link">
+                <li class="menu-item">
+                    <a href="class_rep_dashboard">
                         <i class="fas fa-users"></i>
-                        Class Rep
+                        <span>Class Rep Dashboard</span>
                     </a>
                 </li>
                 <?php endif; ?>
             </ul>
-        </div>
-    </nav>
+        </nav>
 
-    <!-- Main Content -->
-    <main class="main-content">
-        <!-- Welcome Banner -->
-        <div class="welcome-banner">
-            <div class="welcome-content">
-                <h1>Welcome back, <?php echo safe_display($student_name); ?>!</h1>
-                <p><?php echo safe_display($program); ?> • Year <?php echo safe_display($academic_year); ?></p>
-                <div class="student-badge">
-                    <i class="fas fa-id-card"></i>
-                    <?php echo safe_display($reg_number); ?>
-                    <?php if ($is_class_rep): ?>
-                    <span class="class-rep-badge">
-                        <i class="fas fa-user-shield"></i>
-                        Class Representative
-                    </span>
-                    <?php endif; ?>
+        <!-- Main Content -->
+        <main class="main-content" id="mainContent">
+            <!-- Welcome Banner -->
+            <div class="dashboard-header">
+                <div class="welcome-section">
+                    <h1>Welcome back, <?php echo safe_display(explode(' ', $student_name)[0]); ?>!</h1>
+                    <p><?php echo safe_display($program); ?> • Year <?php echo safe_display($academic_year); ?></p>
+                    <div class="student-badge">
+                        <i class="fas fa-id-card"></i>
+                        <?php echo safe_display($reg_number); ?>
+                        <?php if ($is_class_rep): ?>
+                        <span class="class-rep-badge">
+                            <i class="fas fa-user-shield"></i>
+                            Class Representative
+                        </span>
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Alerts -->
-        <?php if (isset($_SESSION['success_message'])): ?>
-            <div class="alert alert-success">
-                <i class="fas fa-check-circle"></i>
-                <?php echo $_SESSION['success_message']; ?>
-            </div>
-            <?php unset($_SESSION['success_message']); ?>
-        <?php endif; ?>
-        <?php if (isset($error_message)): ?>
-            <div class="alert alert-error">
-                <i class="fas fa-exclamation-triangle"></i>
-                <?php echo $error_message; ?>
-            </div>
-        <?php endif; ?>
+            <!-- Alerts -->
+            <?php if (isset($_SESSION['success_message'])): ?>
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i>
+                    <?php echo $_SESSION['success_message']; ?>
+                </div>
+                <?php unset($_SESSION['success_message']); ?>
+            <?php endif; ?>
+            <?php if (isset($error_message)): ?>
+                <div class="alert alert-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <?php echo $error_message; ?>
+                </div>
+            <?php endif; ?>
 
-        <!-- Stats Grid -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon total">
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
                         <i class="fas fa-ticket-alt"></i>
                     </div>
                     <div class="stat-content">
-                        <h3><?php echo $ticket_stats['total'] ?? 0; ?></h3>
-                        <p>Total Tickets</p>
+                        <div class="stat-number"><?php echo $ticket_stats['total'] ?? 0; ?></div>
+                        <div class="stat-label">Total Tickets</div>
                     </div>
                 </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon open">
+                <div class="stat-card success">
+                    <div class="stat-icon">
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-content">
-                        <h3><?php echo $ticket_stats['open'] ?? 0; ?></h3>
-                        <p>Open Tickets</p>
+                        <div class="stat-number"><?php echo $ticket_stats['open'] ?? 0; ?></div>
+                        <div class="stat-label">Open Tickets</div>
                     </div>
                 </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon progress">
+                <div class="stat-card warning">
+                    <div class="stat-icon">
                         <i class="fas fa-spinner"></i>
                     </div>
                     <div class="stat-content">
-                        <h3><?php echo $ticket_stats['in_progress'] ?? 0; ?></h3>
-                        <p>In Progress</p>
+                        <div class="stat-number"><?php echo $ticket_stats['in_progress'] ?? 0; ?></div>
+                        <div class="stat-label">In Progress</div>
                     </div>
                 </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-header">
-                    <div class="stat-icon resolved">
+                <div class="stat-card danger">
+                    <div class="stat-icon">
                         <i class="fas fa-check-circle"></i>
                     </div>
                     <div class="stat-content">
-                        <h3><?php echo $ticket_stats['resolved'] ?? 0; ?></h3>
-                        <p>Resolved</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Dashboard Grid -->
-        <div class="dashboard-grid">
-            <!-- Quick Actions -->
-            <div class="dashboard-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-bolt"></i>
-                        Quick Actions
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <div class="quick-actions-grid">
-                        <a href="tickets.php" class="action-btn">
-                            <i class="fas fa-ticket-alt"></i>
-                            <span class="action-text">View All Tickets</span>
-                            <i class="fas fa-chevron-right"></i>
-                        </a>
-                        <a href="profile.php" class="action-btn">
-                            <i class="fas fa-user"></i>
-                            <span class="action-text">Update Profile</span>
-                            <i class="fas fa-chevron-right"></i>
-                        </a>
-                        <a href="calendar.php" class="action-btn">
-                            <i class="fas fa-calendar-alt"></i>
-                            <span class="action-text">Academic Calendar</span>
-                            <i class="fas fa-chevron-right"></i>
-                        </a>
-                        <a href="announcements.php" class="action-btn">
-                            <i class="fas fa-bullhorn"></i>
-                            <span class="action-text">Campus News</span>
-                            <i class="fas fa-chevron-right"></i>
-                        </a>
+                        <div class="stat-number"><?php echo $ticket_stats['resolved'] ?? 0; ?></div>
+                        <div class="stat-label">Resolved</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Recent Tickets -->
-            <div class="dashboard-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-history"></i>
-                        Recent Tickets
-                    </h3>
-                    <a href="tickets.php" class="view-all-link">View all →</a>
-                </div>
-                <div class="card-body">
-                    <div class="tickets-list">
-                        <?php if (empty($recent_tickets)): ?>
-                            <div class="empty-state">
+            <!-- Dashboard Grid -->
+            <div class="dashboard-grid">
+                <!-- Quick Actions -->
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-bolt"></i>
+                            Quick Actions
+                        </h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="quick-actions-grid">
+                            <a href="tickets" class="action-btn">
                                 <i class="fas fa-ticket-alt"></i>
-                                <p>No tickets submitted yet</p>
-                            </div>
-                        <?php else: ?>
-                            <?php foreach ($recent_tickets as $ticket): ?>
-                                <div class="ticket-item <?php echo $ticket['ticket_status']; ?>">
-                                    <div class="ticket-info">
-                                        <h4><?php echo safe_display($ticket['subject']); ?></h4>
-                                        <div class="ticket-meta">
-                                            <span><?php echo safe_display($ticket['category_name']); ?></span>
-                                            <span><?php echo date('M j', strtotime($ticket['created_at'])); ?></span>
-                                        </div>
-                                    </div>
-                                    <div class="ticket-status status-<?php echo str_replace('_', '-', $ticket['ticket_status']); ?>">
-                                        <?php echo ucfirst(str_replace('_', ' ', $ticket['ticket_status'])); ?>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
+                                <span class="action-text">View All Tickets</span>
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                            <a href="profile" class="action-btn">
+                                <i class="fas fa-user"></i>
+                                <span class="action-text">Update Profile</span>
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                            <a href="calendar" class="action-btn">
+                                <i class="fas fa-calendar-alt"></i>
+                                <span class="action-text">Academic Calendar</span>
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                            <a href="announcements" class="action-btn">
+                                <i class="fas fa-bullhorn"></i>
+                                <span class="action-text">Campus News</span>
+                                <i class="fas fa-chevron-right"></i>
+                            </a>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Upcoming Events -->
-            <div class="dashboard-card">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-calendar-alt"></i>
-                        Upcoming Events
-                    </h3>
-                    <a href="calendar.php" class="view-all-link">View all →</a>
-                </div>
-                <div class="card-body">
-                    <div class="events-list">
-                        <?php if (empty($upcoming_events)): ?>
-                            <div class="empty-state">
-                                <i class="fas fa-calendar"></i>
-                                <p>No upcoming events</p>
-                            </div>
-                        <?php else: ?>
-                            <?php foreach ($upcoming_events as $event): ?>
-                                <div class="event-item">
-                                    <div class="event-date">
-                                        <span class="day"><?php echo date('j', strtotime($event['event_date'])); ?></span>
-                                        <span class="month"><?php echo date('M', strtotime($event['event_date'])); ?></span>
-                                    </div>
-                                    <div class="event-details">
-                                        <h4><?php echo safe_display($event['title']); ?></h4>
-                                        <p><?php echo safe_display($event['description']); ?></p>
-                                        <div class="event-time">
-                                            <i class="far fa-clock"></i>
-                                            <?php echo date('g:i A', strtotime($event['start_time'])); ?>
+                <!-- Recent Tickets -->
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-history"></i>
+                            Recent Tickets
+                        </h3>
+                        <a href="tickets" class="view-all-link">View all →</a>
+                    </div>
+                    <div class="card-body">
+                        <div class="tickets-list">
+                            <?php if (empty($recent_tickets)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-ticket-alt"></i>
+                                    <p>No tickets submitted yet</p>
+                                </div>
+                            <?php else: ?>
+                                <?php foreach ($recent_tickets as $ticket): ?>
+                                    <div class="ticket-item <?php echo $ticket['ticket_status']; ?>">
+                                        <div class="ticket-info">
+                                            <h4><?php echo safe_display($ticket['subject']); ?></h4>
+                                            <div class="ticket-meta">
+                                                <span><?php echo safe_display($ticket['category_name']); ?></span>
+                                                <span><?php echo date('M j', strtotime($ticket['created_at'])); ?></span>
+                                            </div>
+                                        </div>
+                                        <div class="ticket-status status-<?php echo str_replace('_', '-', $ticket['ticket_status']); ?>">
+                                            <?php echo ucfirst(str_replace('_', ' ', $ticket['ticket_status'])); ?>
                                         </div>
                                     </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upcoming Events -->
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h3 class="card-title">
+                            <i class="fas fa-calendar-alt"></i>
+                            Upcoming Events
+                        </h3>
+                        <a href="events" class="view-all-link">View all →</a>
+                    </div>
+                    <div class="card-body">
+                        <div class="events-list">
+                            <?php if (empty($upcoming_events)): ?>
+                                <div class="empty-state">
+                                    <i class="fas fa-calendar"></i>
+                                    <p>No upcoming events</p>
                                 </div>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
+                            <?php else: ?>
+                                <?php foreach ($upcoming_events as $event): ?>
+                                    <div class="event-item">
+                                        <div class="event-date">
+                                            <span class="day"><?php echo date('j', strtotime($event['event_date'])); ?></span>
+                                            <span class="month"><?php echo date('M', strtotime($event['event_date'])); ?></span>
+                                        </div>
+                                        <div class="event-details">
+                                            <h4><?php echo safe_display($event['title']); ?></h4>
+                                            <p><?php echo safe_display($event['excerpt'] ?: $event['description']); ?></p>
+                                            <div class="event-time">
+                                                <i class="far fa-clock"></i>
+                                                <?php echo date('g:i A', strtotime($event['start_time'])); ?>
+                                                <span>•</span>
+                                                <i class="fas fa-map-marker-alt"></i>
+                                                <?php echo safe_display($event['location']); ?>
+                                            </div>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
-    </main>
+        </main>
+    </div>
 
     <!-- Primary Action Button -->
-    <a href="#" class="primary-action-btn" onclick="openTicketModal(event)">
+    <button class="primary-action-btn" onclick="openTicketModal(event)">
         <i class="fas fa-plus"></i>
-    </a>
+    </button>
 
     <!-- Ticket Modal -->
     <div id="ticketModal" class="modal-overlay">
@@ -1258,7 +1485,7 @@ function safe_display($data) {
             <div class="modal-body">
                 <form method="POST" id="ticketForm">
                     <div class="form-group">
-                        <label class="form-label">Category</label>
+                        <label class="form-label">Category *</label>
                         <select name="category_id" class="form-control" required>
                             <option value="">Select category</option>
                             <?php foreach ($categories as $category): ?>
@@ -1268,12 +1495,12 @@ function safe_display($data) {
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label">Subject</label>
+                        <label class="form-label">Subject *</label>
                         <input type="text" name="subject" class="form-control" placeholder="Brief description of your issue" required>
                     </div>
                     
                     <div class="form-group">
-                        <label class="form-label">Description</label>
+                        <label class="form-label">Description *</label>
                         <textarea name="description" class="form-control" placeholder="Provide detailed information about your issue..." rows="4" required></textarea>
                     </div>
                     
@@ -1293,7 +1520,6 @@ function safe_display($data) {
                             <option value="email" selected>Email</option>
                             <option value="sms">SMS</option>
                             <option value="phone">Phone Call</option>
-                            <option value="whatsapp">WhatsApp</option>
                         </select>
                     </div>
                     
@@ -1310,6 +1536,61 @@ function safe_display($data) {
     </div>
 
     <script>
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+        
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+        }
+        
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+        
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        // Close mobile nav on resize to desktop
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                if (mobileOverlay) mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            }
+        });
+
         // Modal functions
         function openTicketModal(e) {
             if (e) e.preventDefault();
@@ -1351,42 +1632,23 @@ function safe_display($data) {
             window.history.replaceState(null, null, window.location.href);
         }
 
-        // Add smooth scroll animation
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
-                }
-            });
+        // Add loading animations
+        const cards = document.querySelectorAll('.stat-card, .dashboard-card');
+        cards.forEach((card, index) => {
+            card.style.animation = `fadeInUp 0.4s ease forwards`;
+            card.style.animationDelay = `${index * 0.05}s`;
         });
 
-        // Add loading animation to cards on scroll
-        const observerOptions = {
-            threshold: 0.1,
-            rootMargin: '0px 0px -50px 0px'
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    entry.target.style.opacity = '1';
-                    entry.target.style.transform = 'translateY(0)';
-                }
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
             });
-        }, observerOptions);
-
-        // Observe cards
-        document.querySelectorAll('.stat-card, .dashboard-card').forEach(card => {
-            card.style.opacity = '0';
-            card.style.transform = 'translateY(20px)';
-            card.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
-            observer.observe(card);
-        });
+        }, 5000);
     </script>
 </body>
 </html>

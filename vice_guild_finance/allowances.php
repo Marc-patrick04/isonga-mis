@@ -294,7 +294,7 @@ function markAsPaid() {
             (transaction_type, category_id, amount, description, transaction_date, 
              reference_number, payee_payer, payment_method, status, requested_by, 
              approved_by_finance, approved_by_president, approved_at)
-            VALUES ('expense', ?, ?, ?, CURDATE(), ?, ?, 'cash', 'completed', ?, ?, ?, NOW())
+            VALUES ('expense', ?, ?, ?, CURRENT_DATE, ?, ?, 'cash', 'completed', ?, ?, ?, NOW())
         ");
         
         $description = $allowance_type === 'communication' 
@@ -312,14 +312,14 @@ function markAsPaid() {
         if ($allowance_type === 'communication') {
             $update_stmt = $pdo->prepare("
                 UPDATE committee_communication_allowances 
-                SET status = 'paid', payment_date = CURDATE(), paid_by = ?, paid_at = NOW(),
+                SET status = 'paid', payment_date = CURRENT_DATE, paid_by = ?, paid_at = NOW(),
                     category_id = ?, transaction_id = ?
                 WHERE id = ?
             ");
         } else {
             $update_stmt = $pdo->prepare("
                 UPDATE mission_allowances 
-                SET status = 'paid', payment_date = CURDATE(), paid_by = ?, paid_at = NOW(),
+                SET status = 'paid', payment_date = CURRENT_DATE, paid_by = ?, paid_at = NOW(),
                     category_id = ?, transaction_id = ?
                 WHERE id = ?
             ");
@@ -347,15 +347,46 @@ function markAsPaid() {
 }
 
 // Get budget categories for allowances
+// Get budget categories for allowances
 try {
     $stmt = $pdo->query("
         SELECT id, category_name 
         FROM budget_categories 
-        WHERE category_type = 'expense' 
-        AND (category_name LIKE '%communication%' OR category_name LIKE '%mission%' OR category_name LIKE '%allowance%' OR category_name LIKE '%committee%')
+        WHERE category_type = 'expense' AND is_active = true
         ORDER BY category_name
     ");
     $allowance_categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // If still no categories, insert default ones
+    if (empty($allowance_categories)) {
+        $insertStmt = $pdo->prepare("
+            INSERT INTO budget_categories (category_name, category_type, description, is_active) 
+            VALUES (?, 'expense', ?, true)
+        ");
+        
+        $defaultCategories = [
+            'Committee Communication Allowance' => 'Monthly communication allowance for committee members',
+            'Mission Allowance' => 'Allowance for official missions and travel',
+            'Committee Transport Allowance' => 'Transport allowance for committee members',
+            'Committee Meal Allowance' => 'Meal allowance for committee members',
+            'Staff Communication Allowance' => 'Monthly communication allowance for staff',
+            'Training Allowance' => 'Allowance for training and workshops',
+            'Event Allowance' => 'Allowance for event-related expenses'
+        ];
+        
+        foreach ($defaultCategories as $name => $desc) {
+            $insertStmt->execute([$name, $desc]);
+        }
+        
+        // Fetch again
+        $stmt = $pdo->query("
+            SELECT id, category_name 
+            FROM budget_categories 
+            WHERE category_type = 'expense' AND is_active = true
+            ORDER BY category_name
+        ");
+        $allowance_categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
 } catch (PDOException $e) {
     $allowance_categories = [];
     error_log("Allowance categories error: " . $e->getMessage());
@@ -1256,9 +1287,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1270,13 +1299,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Vice Guild Finance</div>
@@ -1349,6 +1372,12 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
+                    <a href="accounts.php">
+                        <i class="fas fa-piggy-bank"></i>
+                        <span>Bank Accounts</span>
+                    </a>
+                </li>
+                <li class="menu-item">
                     <a href="bank_reconciliation.php">
                         <i class="fas fa-university"></i>
                         <span>Bank Reconciliation</span>
@@ -1389,12 +1418,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Allowances Management 💰</h1>
-                    <p>Manage committee communication and mission allowances for <?php echo $current_academic_year; ?></p>
-                </div>
-            </div>
+           
 
             <!-- Flash Messages -->
             <?php if (isset($_SESSION['success'])): ?>
@@ -1957,22 +1981,7 @@ try {
     </div>
 
     <script>
-        // ── Dark Mode ──
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // ── Sidebar Collapse/Expand ──
         const sidebar = document.getElementById('sidebar');

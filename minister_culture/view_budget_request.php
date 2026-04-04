@@ -111,6 +111,25 @@ try {
             display: flex;
             align-items: center;
             gap: 0.75rem;
+            position: relative;
+        }
+
+        .mobile-back-btn {
+            display: none;
+            background: var(--light-gray);
+            border: none;
+            color: var(--text-dark);
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: var(--transition);
+        }
+
+        .mobile-back-btn:hover {
+            background: var(--primary-purple);
+            color: white;
         }
 
         .logo {
@@ -414,6 +433,39 @@ try {
                 align-items: flex-start;
                 gap: 1rem;
             }
+
+            .nav-container {
+                padding: 0 1rem;
+                gap: 0.5rem;
+            }
+
+            .back-btn {
+                display: none;
+            }
+
+            .mobile-back-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .logo {
+                height: 32px;
+            }
+
+            .brand-text h1 {
+                font-size: 0.9rem;
+            }
+
+            .page-title h1 {
+                font-size: 1.2rem;
+            }
         }
     </style>
 </head>
@@ -422,6 +474,9 @@ try {
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
+                <button class="mobile-back-btn" onclick="window.location.href='action-funding.php'" title="Back to Requests">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
                 <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Minister of Culture & Civic Education</h1>

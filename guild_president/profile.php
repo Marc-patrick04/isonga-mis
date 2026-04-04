@@ -1170,7 +1170,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle"><i class="fas fa-moon"></i></button>
+                  
                     <button class="icon-btn" id="sidebarToggleBtn"><i class="fas fa-chevron-left"></i></button>
                     <a href="messages.php" class="icon-btn" style="position:relative">
                         <i class="fas fa-envelope"></i>
@@ -1219,7 +1219,6 @@ try {
                 <div class="page-header">
                     <div class="page-title">
                         <h1>Profile & Settings</h1>
-                        <p>Manage your personal information and account preferences</p>
                     </div>
                 </div>
 
@@ -1265,8 +1264,8 @@ try {
                         <div class="profile-tabs">
                             <button class="profile-tab <?php echo $active_tab === 'profile' ? 'active' : ''; ?>" onclick="switchTab('profile')"><i class="fas fa-user"></i> Personal Info</button>
                             <button class="profile-tab <?php echo $active_tab === 'security' ? 'active' : ''; ?>" onclick="switchTab('security')"><i class="fas fa-shield-alt"></i> Security</button>
-                            <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" onclick="switchTab('preferences')"><i class="fas fa-cog"></i> Preferences</button>
-                            <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" onclick="switchTab('sessions')"><i class="fas fa-history"></i> Login History</button>
+                            <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" onclick="switchTab('preferences')"><i class="fas fa-cog"></i> Preferences</button>
+                            <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" onclick="switchTab('sessions')"><i class="fas fa-history"></i> Login History</button> -->
                         </div>
 
                         <div class="tab-content">
@@ -1324,13 +1323,7 @@ try {
                                         <div class="modal-actions"><button type="submit" class="btn btn-primary"><i class="fas fa-key"></i> Change Password</button></div>
                                     </form>
                                 </div>
-                                <div class="form-section">
-                                    <h4>Two-Factor Authentication</h4>
-                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-gray); border-radius: var(--border-radius);">
-                                        <div><div style="font-weight: 600;">Two-Factor Authentication</div><div style="font-size: 0.8rem; color: var(--dark-gray);"><?php echo $user['two_factor_enabled'] ? 'Enabled' : 'Disabled'; ?></div></div>
-                                        <form method="POST" style="margin:0;"><input type="hidden" name="action" value="<?php echo $user['two_factor_enabled'] ? 'disable_2fa' : 'enable_2fa'; ?>"><button type="submit" class="btn <?php echo $user['two_factor_enabled'] ? 'btn-danger' : 'btn-success'; ?>"><?php echo $user['two_factor_enabled'] ? 'Disable' : 'Enable'; ?> 2FA</button></form>
-                                    </div>
-                                </div>
+                               
                                 <div class="form-section">
                                     <h4>Account Security</h4>
                                     <div style="font-size: 0.85rem;"><p><i class="fas fa-check-circle" style="color: var(--success);"></i> Last password change: <?php echo $user['last_password_change'] ? date('F j, Y g:i A', strtotime($user['last_password_change'])) : 'Never'; ?></p><p><i class="fas fa-check-circle" style="color: var(--success);"></i> Account created: <?php echo date('F j, Y', strtotime($user['created_at'])); ?></p><p><i class="fas fa-check-circle" style="color: var(--success);"></i> Last login: <?php echo $user['last_login'] ? date('F j, Y g:i A', strtotime($user['last_login'])) : 'Never'; ?></p></div>
@@ -1459,17 +1452,7 @@ try {
             }
         });
 
-        // Theme Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') { body.classList.add('dark-mode'); themeToggle.innerHTML = '<i class="fas fa-sun"></i>'; }
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+        
 
         // Tab Switching
         function switchTab(tabName) {

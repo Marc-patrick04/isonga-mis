@@ -1619,9 +1619,7 @@ function logAction($pdo, $user_id, $action) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1633,13 +1631,7 @@ function logAction($pdo, $user_id, $action) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Environment & Security</div>
@@ -1739,8 +1731,7 @@ function logAction($pdo, $user_id, $action) {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Campus Security Management 🔒</h1>
-                    <p>Monitor and manage security incidents, implement prevention measures, and ensure campus safety</p>
+                    <h1>Campus Security Management </h1>
                 </div>
             </div>
 
@@ -1889,7 +1880,6 @@ function logAction($pdo, $user_id, $action) {
                             <div class="empty-state">
                                 <i class="fas fa-shield-alt"></i>
                                 <h3>No Security Incidents Found</h3>
-                                <p>No security incidents match your current filters.</p>
                                 <button class="btn btn-primary" onclick="openReportIncidentModal()">
                                     <i class="fas fa-plus"></i> Report First Incident
                                 </button>
@@ -2267,22 +2257,7 @@ function logAction($pdo, $user_id, $action) {
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

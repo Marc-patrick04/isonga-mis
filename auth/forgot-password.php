@@ -648,7 +648,7 @@
                 <button class="btn btn-primary" onclick="submitResetRequest()">
                     <i class="fas fa-paper-plane"></i> Submit Reset Request
                 </button>
-                <a href="login.php" class="btn btn-secondary">
+                <a href="login" class="btn btn-secondary">
                     <i class="fas fa-arrow-left"></i> Back to Login
                 </a>
             </div>
@@ -712,7 +712,7 @@
         function closeModalAndRedirect() {
             closeModal();
             setTimeout(() => {
-                window.location.href = '../index.php';
+                window.location.href = '../index';
             }, 300);
         }
 

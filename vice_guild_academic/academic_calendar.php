@@ -1515,9 +1515,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                  
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                     </a>
@@ -1607,12 +1605,7 @@ try {
                         <span>Action Funding</span>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="performance_tracking.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Performance Tracking</span>
-                    </a>
-                </li>
+               
                 <li class="menu-item">
                     <a href="innovation_projects.php">
                         <i class="fas fa-lightbulb"></i>
@@ -1644,14 +1637,8 @@ try {
         <main class="main-content">
             <!-- Page Header -->
             <div class="page-header">
-                <div class="page-title">
-                    <h1>Academic Calendar</h1>
-                    <p>Manage and view all academic events, club activities, and important dates</p>
-                </div>
+                
                 <div class="page-actions">
-                    <a href="dashboard.php" class="btn btn-outline">
-                        <i class="fas fa-arrow-left"></i> Back to Dashboard
-                    </a>
                     <a href="?action=new" class="btn btn-primary">
                         <i class="fas fa-plus"></i> New Event
                     </a>
@@ -1971,43 +1958,7 @@ try {
                             </div>
                         </div>
 
-                        <!-- Upcoming Events -->
-                        <div class="sidebar-card">
-                            <div class="sidebar-header">
-                                <h3 class="sidebar-title">Upcoming Events</h3>
-                            </div>
-                            <div class="sidebar-body">
-                                <div class="upcoming-events">
-                                    <?php if (empty($upcoming_events)): ?>
-                                        <div style="text-align: center; padding: 1rem; color: var(--dark-gray);">
-                                            <i class="fas fa-calendar" style="font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.5;"></i>
-                                            <p>No upcoming events</p>
-                                        </div>
-                                    <?php else: ?>
-                                        <?php foreach ($upcoming_events as $event): ?>
-                                            <div class="upcoming-event" onclick="viewEvent(<?php echo $event['id']; ?>, '<?php echo $event['event_source']; ?>')">
-                                                <div class="event-date">
-                                                    <div class="event-day"><?php echo date('j', strtotime($event['event_date'])); ?></div>
-                                                    <div class="event-month"><?php echo date('M', strtotime($event['event_date'])); ?></div>
-                                                </div>
-                                                <div class="event-details">
-                                                    <h4><?php echo htmlspecialchars($event['title']); ?></h4>
-                                                    <div class="event-meta">
-                                                        <?php if ($event['start_time']): ?>
-                                                            <?php echo date('g:i A', strtotime($event['start_time'])); ?>
-                                                        <?php endif; ?>
-                                                        <?php if ($event['club_name']): ?>
-                                                            • <?php echo htmlspecialchars($event['club_name']); ?>
-                                                        <?php endif; ?>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
-                        </div>
-
+                        
                         <!-- Quick Actions -->
                         <div class="sidebar-card">
                             <div class="sidebar-header">
@@ -2065,22 +2016,7 @@ try {
             });
         })();
 
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+       
 
         // Calendar Navigation
         function changeView(newView) {

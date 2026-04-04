@@ -154,14 +154,35 @@ try {
     error_log("Reports query error: " . $e->getMessage());
 }
 
+// Helper function to convert month string to date
+function convertToDate($value, $type = 'date') {
+    if (empty($value)) {
+        return null;
+    }
+    
+    if ($type === 'month') {
+        // Convert YYYY-MM to first day of month
+        if (preg_match('/^\d{4}-\d{2}$/', $value)) {
+            return $value . '-01';
+        }
+        return null;
+    }
+    
+    return $value;
+}
+
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action']) && $_POST['action'] === 'create_report') {
         $template_id = $_POST['template_id'] ?? null;
         $title = trim($_POST['title'] ?? '');
         $report_type = $_POST['report_type'] ?? 'activity';
-        $report_period = $_POST['report_period'] ?? null;
-        $activity_date = $_POST['activity_date'] ?? null;
+        $report_period_raw = $_POST['report_period'] ?? null;
+        $activity_date_raw = $_POST['activity_date'] ?? null;
+        
+        // Convert dates properly for PostgreSQL
+        $report_period = !empty($report_period_raw) ? convertToDate($report_period_raw, 'month') : null;
+        $activity_date = !empty($activity_date_raw) ? $activity_date_raw : null;
         
         // Get template to validate fields
         $selected_template = null;
@@ -1506,9 +1527,7 @@ if (isset($_SESSION['error_message'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1520,15 +1539,9 @@ if (isset($_SESSION['error_message'])) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
-                        <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
+                        <div class="user-name"><?php echo htmlspecialchars($user['full_name'] ?? $_SESSION['full_name'] ?? 'User'); ?></div>
                         <div class="user-role">Minister of Culture & Civic Education</div>
                     </div>
                 </div>
@@ -1624,13 +1637,7 @@ if (isset($_SESSION['error_message'])) {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            <div class="dashboard-header">
-                <div class="welcome-section">
-                    <h1>Cultural Reports & Analytics 📊</h1>
-                    <p>Create, manage, and export cultural reports using professional templates</p>
-                </div>
-            </div>
-
+            
             <!-- Alert Messages -->
             <?php if (isset($success_message)): ?>
                 <div class="alert alert-success">
@@ -1743,8 +1750,9 @@ if (isset($_SESSION['error_message'])) {
                                 </div>
 
                                 <div class="form-group">
-                                    <label class="form-label">Report Period</label>
+                                    <label class="form-label">Report Period (Month)</label>
                                     <input type="month" class="form-control" name="report_period">
+                                    <div class="form-text">Select the month this report covers (e.g., January 2026)</div>
                                 </div>
 
                                 <div class="form-group">
@@ -1871,23 +1879,6 @@ if (isset($_SESSION['error_message'])) {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
@@ -1925,7 +1916,7 @@ if (isset($_SESSION['error_message'])) {
                 mobileOverlay.classList.toggle('active', isOpen);
                 mobileMenuToggle.innerHTML = isOpen
                     ? '<i class="fas fa-times"></i>'
-                    : '<i class="fas fa-bars</i>';
+                    : '<i class="fas fa-bars"></i>';
                 document.body.style.overflow = isOpen ? 'hidden' : '';
             });
         }

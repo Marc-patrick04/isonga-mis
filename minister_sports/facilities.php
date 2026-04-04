@@ -1544,10 +1544,7 @@ try {
         <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
-                <div class="page-title">
-                    <h1><i class="fas fa-building"></i> Sports Facilities Management</h1>
-                    <p>Manage all sports facilities, availability, and bookings</p>
-                </div>
+               
                 <div class="page-actions">
                     <button class="btn btn-primary" onclick="openModal('addFacilityModal')">
                         <i class="fas fa-plus"></i> Add New Facility

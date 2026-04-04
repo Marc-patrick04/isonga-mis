@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep (PostgreSQL uses true for boolean)
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? false)) {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
@@ -82,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_report'])) {
             $report_id = $pdo->lastInsertId();
             
             $_SESSION['success_message'] = "Report submitted successfully! Your report ID is #$report_id";
-            header('Location: rep_reports.php');
+            header('Location: rep_reports');
             exit();
             
         } catch (PDOException $e) {
@@ -284,12 +284,12 @@ function getStatusBadge($status) {
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
-                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports.php" class="active"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                <li><a href="class_tickets"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
+                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports" class="active"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -628,7 +628,7 @@ function getStatusBadge($status) {
                 modal.style.display = 'flex';
                 
                 // Fetch report details via AJAX
-                const response = await fetch('get_rep_report_details.php?id=' + reportId);
+                const response = await fetch('get_rep_report_details?id=' + reportId);
                 const html = await response.text();
                 
                 reportDetails.innerHTML = html;

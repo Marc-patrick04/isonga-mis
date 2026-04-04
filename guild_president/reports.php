@@ -1448,7 +1448,6 @@ function getReviewedCount($stats) {
                 <div class="page-header">
                     <div class="page-title">
                         <h1>Committee Reports</h1>
-                        <p>Review and manage all committee reports from various departments</p>
                     </div>
                 </div>
 

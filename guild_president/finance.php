@@ -1206,8 +1206,7 @@ function getStatusClass($status) {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Financial Overview 💰</h1>
-                    <p>Monitor and approve all financial transactions, budget requests, and student aid applications</p>
+                    <h1>Financial Overview </h1>
                 </div>
             </div>
 
@@ -1239,7 +1238,7 @@ function getStatusClass($status) {
                 <div class="left-column">
                     <!-- Student Financial Aid Requests -->
                     <div class="card">
-                        <div class="card-header"><h3>🎓 Student Financial Aid Requests</h3><?php if (($financial_stats['pending_student_aid'] ?? 0) > 0): ?><span class="status-badge status-pending-president"><?php echo $financial_stats['pending_student_aid']; ?> Pending</span><?php endif; ?></div>
+                        <div class="card-header"><h3> Student Financial Aid Requests</h3><?php if (($financial_stats['pending_student_aid'] ?? 0) > 0): ?><span class="status-badge status-pending-president"><?php echo $financial_stats['pending_student_aid']; ?> Pending</span><?php endif; ?></div>
                         <div class="card-body">
                             <?php if (empty($pending_student_aid_requests)): ?>
                                 <div class="empty-state"><i class="fas fa-check-circle"></i><p>No student aid requests pending your approval</p></div>
@@ -1269,7 +1268,7 @@ function getStatusClass($status) {
 
                     <!-- Pending Transaction Approvals -->
                     <div class="card">
-                        <div class="card-header"><h3>💰 Pending Transaction Approvals</h3></div>
+                        <div class="card-header"><h3> Pending Transaction Approvals</h3></div>
                         <div class="card-body">
                             <?php if (empty($pending_approvals)): ?>
                                 <div class="empty-state"><i class="fas fa-check-circle"></i><p>No pending transaction approvals</p></div>
@@ -1299,7 +1298,7 @@ function getStatusClass($status) {
 
                     <!-- Budget Requests -->
                     <div class="card">
-                        <div class="card-header"><h3>📋 Budget Requests for Approval</h3></div>
+                        <div class="card-header"><h3> Budget Requests for Approval</h3></div>
                         <div class="card-body">
                             <?php if (empty($pending_budget_requests)): ?>
                                 <div class="empty-state"><i class="fas fa-file-invoice-dollar"></i><p>No budget requests pending your approval</p></div>
@@ -1332,7 +1331,7 @@ function getStatusClass($status) {
                 <div class="right-column">
                     <!-- Recent Transactions -->
                     <div class="card">
-                        <div class="card-header"><h3>📊 Recent Transactions</h3></div>
+                        <div class="card-header"><h3> Recent Transactions</h3></div>
                         <div class="card-body">
                             <?php if (empty($recent_transactions)): ?>
                                 <div class="empty-state"><i class="fas fa-exchange-alt"></i><p>No recent transactions</p></div>
@@ -1359,7 +1358,7 @@ function getStatusClass($status) {
 
                     <!-- Rental Income -->
                     <div class="card">
-                        <div class="card-header"><h3>🏠 Rental Properties Income</h3></div>
+                        <div class="card-header"><h3> Rental Properties Income</h3></div>
                         <div class="card-body">
                             <?php if (empty($rental_income)): ?>
                                 <div class="empty-state"><i class="fas fa-home"></i><p>No rental properties found</p></div>

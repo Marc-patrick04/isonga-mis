@@ -10,6 +10,16 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_health') {
 
 $user_id = $_SESSION['user_id'];
 
+// Helper function to convert empty strings to NULL for numeric fields
+function nullIfEmpty($value) {
+    return ($value === '' || $value === null) ? null : $value;
+}
+
+// Helper function to convert empty string to 0 for numeric fields that should default to 0
+function zeroIfEmpty($value) {
+    return ($value === '' || $value === null) ? 0 : (float)$value;
+}
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -25,18 +35,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
             case 'add_campaign':
-                $title = $_POST['title'];
-                $description = $_POST['description'];
-                $campaign_type = $_POST['campaign_type'];
-                $target_audience = $_POST['target_audience'];
-                $start_date = $_POST['start_date'];
+                $title = trim($_POST['title'] ?? '');
+                $description = trim($_POST['description'] ?? '');
+                $campaign_type = $_POST['campaign_type'] ?? '';
+                $target_audience = trim($_POST['target_audience'] ?? '');
+                $start_date = $_POST['start_date'] ?? null;
                 $end_date = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
-                $location = $_POST['location'];
-                $budget = $_POST['budget'] ?? 0;
-                $allocated_budget = $_POST['allocated_budget'] ?? 0;
-                $expected_participants = $_POST['expected_participants'] ?? 0;
-                $objectives = $_POST['objectives'];
-                $partner_organizations = json_encode($_POST['partners'] ?? []);
+                $location = trim($_POST['location'] ?? '');
+                
+                // Handle numeric fields - convert empty strings to appropriate values
+                $budget = zeroIfEmpty($_POST['budget'] ?? 0);
+                $allocated_budget = zeroIfEmpty($_POST['allocated_budget'] ?? 0);
+                $expected_participants = zeroIfEmpty($_POST['expected_participants'] ?? 0);
+                $objectives = trim($_POST['objectives'] ?? '');
+                
+                // Handle partner organizations - ensure it's valid JSON
+                $partners = isset($_POST['partners']) && is_array($_POST['partners']) ? $_POST['partners'] : [];
+                $partner_organizations = !empty($partners) ? json_encode($partners) : json_encode([]);
+                
+                // Validate required fields
+                if (empty($title) || empty($description) || empty($campaign_type) || empty($target_audience) || empty($start_date) || empty($location) || empty($objectives)) {
+                    $_SESSION['error_message'] = "Please fill in all required fields.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -55,27 +77,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Health campaign created successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error creating campaign: " . $e->getMessage();
+                    error_log("Campaign creation error: " . $e->getMessage());
                 }
                 break;
                 
             case 'edit_campaign':
-                $campaign_id = $_POST['campaign_id'];
-                $title = $_POST['title'];
-                $description = $_POST['description'];
-                $campaign_type = $_POST['campaign_type'];
-                $target_audience = $_POST['target_audience'];
-                $start_date = $_POST['start_date'];
+                $campaign_id = nullIfEmpty($_POST['campaign_id'] ?? null);
+                $title = trim($_POST['title'] ?? '');
+                $description = trim($_POST['description'] ?? '');
+                $campaign_type = $_POST['campaign_type'] ?? '';
+                $target_audience = trim($_POST['target_audience'] ?? '');
+                $start_date = $_POST['start_date'] ?? null;
                 $end_date = !empty($_POST['end_date']) ? $_POST['end_date'] : null;
-                $location = $_POST['location'];
-                $budget = $_POST['budget'] ?? 0;
-                $allocated_budget = $_POST['allocated_budget'] ?? 0;
-                $expected_participants = $_POST['expected_participants'] ?? 0;
-                $objectives = $_POST['objectives'];
-                $status = $_POST['status'];
-                $outcomes = $_POST['outcomes'] ?? '';
-                $media_coverage = $_POST['media_coverage'] ?? '';
-                $actual_participants = $_POST['actual_participants'] ?? 0;
-                $partner_organizations = json_encode($_POST['partners'] ?? []);
+                $location = trim($_POST['location'] ?? '');
+                $budget = zeroIfEmpty($_POST['budget'] ?? 0);
+                $allocated_budget = zeroIfEmpty($_POST['allocated_budget'] ?? 0);
+                $expected_participants = zeroIfEmpty($_POST['expected_participants'] ?? 0);
+                $objectives = trim($_POST['objectives'] ?? '');
+                $status = $_POST['status'] ?? 'planned';
+                $outcomes = trim($_POST['outcomes'] ?? '');
+                $media_coverage = trim($_POST['media_coverage'] ?? '');
+                $actual_participants = zeroIfEmpty($_POST['actual_participants'] ?? 0);
+                $partners = isset($_POST['partners']) && is_array($_POST['partners']) ? $_POST['partners'] : [];
+                $partner_organizations = !empty($partners) ? json_encode($partners) : json_encode([]);
+                
+                if (empty($campaign_id)) {
+                    $_SESSION['error_message'] = "Invalid campaign ID.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -97,11 +127,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Campaign updated successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error updating campaign: " . $e->getMessage();
+                    error_log("Campaign update error: " . $e->getMessage());
                 }
                 break;
                 
             case 'delete_campaign':
-                $campaign_id = $_POST['campaign_id'];
+                $campaign_id = nullIfEmpty($_POST['campaign_id'] ?? null);
+                
+                if (empty($campaign_id)) {
+                    $_SESSION['error_message'] = "Invalid campaign ID.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("DELETE FROM health_campaigns WHERE id = ?");
@@ -110,16 +147,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Campaign deleted successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error deleting campaign: " . $e->getMessage();
+                    error_log("Campaign delete error: " . $e->getMessage());
                 }
                 break;
                 
             case 'add_task':
-                $campaign_id = $_POST['campaign_id'];
-                $title = $_POST['title'];
-                $description = $_POST['description'];
-                $assigned_to = !empty($_POST['assigned_to']) ? $_POST['assigned_to'] : null;
-                $due_date = $_POST['due_date'];
-                $priority = $_POST['priority'];
+                $campaign_id = nullIfEmpty($_POST['campaign_id'] ?? null);
+                $title = trim($_POST['title'] ?? '');
+                $description = trim($_POST['description'] ?? '');
+                $assigned_to = nullIfEmpty($_POST['assigned_to'] ?? null);
+                $due_date = $_POST['due_date'] ?? null;
+                $priority = $_POST['priority'] ?? 'medium';
+                
+                if (empty($campaign_id) || empty($title) || empty($due_date)) {
+                    $_SESSION['error_message'] = "Campaign ID, task title, and due date are required.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -132,13 +176,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Task added successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error adding task: " . $e->getMessage();
+                    error_log("Task addition error: " . $e->getMessage());
                 }
                 break;
                 
             case 'update_task_status':
-                $task_id = $_POST['task_id'];
-                $status = $_POST['status'];
-                $completion_notes = $_POST['completion_notes'] ?? '';
+                $task_id = nullIfEmpty($_POST['task_id'] ?? null);
+                $status = $_POST['status'] ?? 'pending';
+                $completion_notes = trim($_POST['completion_notes'] ?? '');
+                
+                if (empty($task_id)) {
+                    $_SESSION['error_message'] = "Invalid task ID.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -153,16 +204,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Task status updated successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error updating task: " . $e->getMessage();
+                    error_log("Task update error: " . $e->getMessage());
                 }
                 break;
                 
             case 'add_resource':
-                $campaign_id = $_POST['campaign_id'];
-                $resource_type = $_POST['resource_type'];
-                $title = $_POST['title'];
-                $description = $_POST['description'];
-                $quantity = $_POST['quantity'] ?? 1;
-                $cost = $_POST['cost'] ?? 0;
+                $campaign_id = nullIfEmpty($_POST['campaign_id'] ?? null);
+                $resource_type = $_POST['resource_type'] ?? 'other';
+                $title = trim($_POST['title'] ?? '');
+                $description = trim($_POST['description'] ?? '');
+                $quantity = zeroIfEmpty($_POST['quantity'] ?? 1);
+                $cost = zeroIfEmpty($_POST['cost'] ?? 0);
+                
+                if (empty($campaign_id) || empty($title)) {
+                    $_SESSION['error_message'] = "Campaign ID and resource title are required.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -175,16 +233,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Resource added successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error adding resource: " . $e->getMessage();
+                    error_log("Resource addition error: " . $e->getMessage());
                 }
                 break;
                 
             case 'register_participant':
-                $campaign_id = $_POST['campaign_id'];
-                $reg_number = $_POST['reg_number'];
-                $name = $_POST['name'];
-                $email = $_POST['email'] ?? '';
-                $phone = $_POST['phone'] ?? '';
-                $department_id = !empty($_POST['department_id']) ? $_POST['department_id'] : null;
+                $campaign_id = nullIfEmpty($_POST['campaign_id'] ?? null);
+                $reg_number = trim($_POST['reg_number'] ?? '');
+                $name = trim($_POST['name'] ?? '');
+                $email = !empty($_POST['email']) ? trim($_POST['email']) : null;
+                $phone = !empty($_POST['phone']) ? trim($_POST['phone']) : null;
+                $department_id = nullIfEmpty($_POST['department_id'] ?? null);
+                
+                if (empty($campaign_id) || empty($reg_number) || empty($name)) {
+                    $_SESSION['error_message'] = "Campaign ID, registration number, and name are required.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     // Check if already registered
@@ -213,14 +278,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error registering participant: " . $e->getMessage();
+                    error_log("Participant registration error: " . $e->getMessage());
                 }
                 break;
                 
             case 'update_participant_attendance':
-                $participant_id = $_POST['participant_id'];
-                $attendance_status = $_POST['attendance_status'];
-                $feedback_rating = !empty($_POST['feedback_rating']) ? $_POST['feedback_rating'] : null;
-                $feedback_comment = $_POST['feedback_comment'] ?? '';
+                $participant_id = nullIfEmpty($_POST['participant_id'] ?? null);
+                $attendance_status = $_POST['attendance_status'] ?? 'registered';
+                $feedback_rating = nullIfEmpty($_POST['feedback_rating'] ?? null);
+                $feedback_comment = trim($_POST['feedback_comment'] ?? '');
+                
+                if (empty($participant_id)) {
+                    $_SESSION['error_message'] = "Invalid participant ID.";
+                    header("Location: campaigns.php");
+                    exit();
+                }
                 
                 try {
                     $stmt = $pdo->prepare("
@@ -233,6 +305,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Attendance updated successfully!";
                 } catch (PDOException $e) {
                     $_SESSION['error_message'] = "Error updating attendance: " . $e->getMessage();
+                    error_log("Attendance update error: " . $e->getMessage());
                 }
                 break;
         }
@@ -312,17 +385,17 @@ try {
     
     // Get committee members for task assignment
     $stmt = $pdo->prepare("
-        SELECT u.id, u.full_name, u.role, cm.role as committee_role
+        SELECT u.id, u.full_name, u.role
         FROM users u
-        LEFT JOIN committee_members cm ON u.id = cm.user_id
         WHERE u.status = 'active'
         AND u.role IN ('minister_health', 'vice_guild_academic', 'general_secretary', 'minister_gender', 'minister_environment')
+        ORDER BY u.full_name
     ");
     $stmt->execute();
     $committee_members = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
     // Get departments for participant registration
-    $stmt = $pdo->query("SELECT * FROM departments WHERE is_active = true ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name FROM departments WHERE is_active = true ORDER BY name");
     $departments = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
 } catch (PDOException $e) {
@@ -368,7 +441,7 @@ if ($view_id) {
                         WHEN ct.priority = 'medium' THEN 3
                         ELSE 4
                     END,
-                    ct.due_date ASC
+                    ct.due_date ASC NULLS LAST
             ");
             $stmt->execute([$view_id]);
             $campaign_tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -406,6 +479,19 @@ if ($view_id) {
 // Common campaign types and partner organizations
 $campaign_types = ['awareness', 'vaccination', 'screening', 'workshop', 'seminar', 'other'];
 $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', 'Red Cross', 'Local Hospital', 'Community Health Center', 'NGO Partners'];
+
+// Get full name from session if not in user array
+$full_name = htmlspecialchars($user['full_name'] ?? $_SESSION['full_name'] ?? 'User');
+
+// Success/Error messages from session
+if (isset($_SESSION['success_message'])) {
+    $success_message = $_SESSION['success_message'];
+    unset($_SESSION['success_message']);
+}
+if (isset($_SESSION['error_message'])) {
+    $error_message = $_SESSION['error_message'];
+    unset($_SESSION['error_message']);
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -575,6 +661,7 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            position: relative;
         }
 
         .icon-btn:hover {
@@ -1526,23 +1613,13 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
                     <div class="user-details">
-                        <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
+                        <div class="user-name"><?php echo $full_name; ?></div>
                         <div class="user-role">Minister of Health</div>
                     </div>
                 </div>
@@ -1628,10 +1705,7 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
         <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
-                <div>
-                    <h1 class="page-title">Health Campaigns Management</h1>
-                    <p class="page-description">Organize and manage health awareness campaigns, workshops, and vaccination programs</p>
-                </div>
+               
                 <div class="page-actions">
                     <button class="btn btn-outline" onclick="window.print()">
                         <i class="fas fa-print"></i> Print Report
@@ -1643,18 +1717,16 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
             </div>
 
             <!-- Success/Error Messages -->
-            <?php if (isset($_SESSION['success_message'])): ?>
+            <?php if (isset($success_message)): ?>
                 <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($_SESSION['success_message']); ?>
+                    <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($success_message); ?>
                 </div>
-                <?php unset($_SESSION['success_message']); ?>
             <?php endif; ?>
 
-            <?php if (isset($_SESSION['error_message'])): ?>
+            <?php if (isset($error_message)): ?>
                 <div class="alert alert-danger">
-                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($_SESSION['error_message']); ?>
+                    <i class="fas fa-exclamation-circle"></i> <?php echo htmlspecialchars($error_message); ?>
                 </div>
-                <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
 
             <?php if ($view_campaign): ?>
@@ -1708,15 +1780,15 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
                             <div class="detail-item">
                                 <span class="detail-label">Budget:</span>
                                 <span class="detail-value">
-                                    RWF <?php echo number_format($view_campaign['allocated_budget'], 0); ?> 
-                                    (of RWF <?php echo number_format($view_campaign['budget'], 0); ?>)
+                                    RWF <?php echo number_format($view_campaign['allocated_budget'] ?? 0, 0); ?> 
+                                    (of RWF <?php echo number_format($view_campaign['budget'] ?? 0, 0); ?>)
                                 </span>
                             </div>
                             <div class="detail-item">
                                 <span class="detail-label">Participants:</span>
                                 <span class="detail-value">
-                                    <?php echo $view_campaign['actual_participants']; ?> 
-                                    (of <?php echo $view_campaign['expected_participants']; ?> expected)
+                                    <?php echo $view_campaign['actual_participants'] ?? 0; ?> 
+                                    (of <?php echo $view_campaign['expected_participants'] ?? 0; ?> expected)
                                 </span>
                             </div>
                         </div>
@@ -1827,7 +1899,7 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
                                                             <?php echo ucfirst($resource['status']); ?>
                                                         </span>
                                                     </td>
-                                                </table>
+                                                </tr>
                                             <?php endforeach; ?>
                                         </tbody>
                                     </table>
@@ -2063,7 +2135,7 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
                                         </div>
                                         <div class="detail-item">
                                             <span class="detail-label">Budget:</span>
-                                            <span class="detail-value">RWF <?php echo number_format($campaign['allocated_budget'], 0); ?></span>
+                                            <span class="detail-value">RWF <?php echo number_format($campaign['allocated_budget'] ?? 0, 0); ?></span>
                                         </div>
                                         <div class="detail-item">
                                             <span class="detail-label">Participants:</span>
@@ -2154,17 +2226,17 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
                         
                         <div class="form-group">
                             <label class="form-label">Estimated Budget (RWF)</label>
-                            <input type="number" name="budget" class="form-input" placeholder="0" step="1">
+                            <input type="number" name="budget" class="form-input" placeholder="0" step="1" value="0">
                         </div>
                         
                         <div class="form-group">
                             <label class="form-label">Allocated Budget (RWF)</label>
-                            <input type="number" name="allocated_budget" class="form-input" placeholder="0" step="1">
+                            <input type="number" name="allocated_budget" class="form-input" placeholder="0" step="1" value="0">
                         </div>
                         
                         <div class="form-group">
                             <label class="form-label">Expected Participants</label>
-                            <input type="number" name="expected_participants" class="form-input" placeholder="0">
+                            <input type="number" name="expected_participants" class="form-input" placeholder="0" value="0">
                         </div>
                     </div>
                     
@@ -2295,7 +2367,7 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
                         
                         <div class="form-group">
                             <label class="form-label">Cost (RWF)</label>
-                            <input type="number" name="cost" class="form-input" placeholder="0" step="1">
+                            <input type="number" name="cost" class="form-input" placeholder="0" step="1" value="0">
                         </div>
                     </div>
                     
@@ -2367,23 +2439,6 @@ $partner_organizations = ['Ministry of Health', 'RBC', 'RHA', 'WHO', 'UNICEF', '
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');

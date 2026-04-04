@@ -1196,9 +1196,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1210,13 +1208,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Health</div>
@@ -1322,8 +1314,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Health Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 🏥</h1>
-                    <p>Manage student health, welfare, and social affairs for the academic year</p>
+                    <h1>Welcome, Health Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
+                  
                 </div>
             </div>
 
@@ -1394,29 +1386,7 @@ try {
                         <div class="stat-label">Restaurant Complaints</div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-check"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo count($upcoming_events); ?></div>
-                        <div class="stat-label">Upcoming Events</div>
-                    </div>
-                </div>
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-chart-line"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number">
-                            <?php 
-                            $health_percentage = $total_students > 0 ? round(($health_tickets / $total_students) * 100) : 0;
-                            echo $health_percentage; 
-                            ?>%
-                        </div>
-                        <div class="stat-label">Health Issue Rate</div>
-                    </div>
-                </div>
+                               
             </div>
 
             <!-- Content Grid -->
@@ -1474,76 +1444,9 @@ try {
                         </div>
                     </div>
 
-                    <!-- Upcoming Health Events -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Health Events</h3>
-                            <div class="card-header-actions">
-                                <a href="campaigns.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-container">
-                                <?php if (empty($upcoming_events)): ?>
-                                    <div class="empty-state">
-                                        <i class="fas fa-calendar-times"></i>
-                                        <p>No upcoming health events</p>
-                                    </div>
-                                <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Event</th>
-                                                <th>Date & Time</th>
-                                                <th>Location</th>
-                                                <th>Category</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($upcoming_events as $event): ?>
-                                                <tr>
-                                                    <td><strong><?php echo htmlspecialchars($event['title']); ?></strong></td>
-                                                    <td>
-                                                        <?php echo date('M j, Y', strtotime($event['event_date'])); ?><br>
-                                                        <small><?php echo date('g:i A', strtotime($event['start_time'])); ?></small>
-                                                    </td>
-                                                    <td><?php echo htmlspecialchars($event['location']); ?></td>
-                                                    <td><?php echo htmlspecialchars($event['category_name']); ?></td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
+                    
 
-                    <!-- Health Issues by Department -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Health Issues by Department</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($health_by_department)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-chart-pie"></i>
-                                    <p>No health issues data by department</p>
-                                </div>
-                            <?php else: ?>
-                                <div class="department-stats">
-                                    <?php foreach ($health_by_department as $dept): ?>
-                                        <div class="department-stat">
-                                            <div class="department-name"><?php echo htmlspecialchars($dept['department_name']); ?></div>
-                                            <div class="department-count"><?php echo $dept['health_issues']; ?></div>
-                                            <div style="font-size: 0.6rem; color: var(--dark-gray); margin-top: 0.25rem;">issues</div>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Quick Actions -->
                     <div class="quick-actions">
@@ -1569,38 +1472,7 @@ try {
                 <!-- Right Column -->
                 <div class="right-column">
                     <!-- Quick Overview -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Health & Welfare Overview</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="quick-overview">
-                                <div class="overview-item">
-                                    <span class="overview-label">Unread Messages</span>
-                                    <span class="overview-value"><?php echo $unread_messages; ?></span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Pending Hostel Requests</span>
-                                    <span class="overview-value"><?php echo $pending_hostel; ?></span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Health Campaigns</span>
-                                    <span class="overview-value"><?php echo $health_campaigns; ?> events</span>
-                                </div>
-                                <div class="overview-item">
-                                    <span class="overview-label">Hostel Occupancy</span>
-                                    <span class="overview-value"><?php echo $hostel_occupancy; ?>%</span>
-                                </div>
-                            </div>
-                            <div class="progress-bar">
-                                <div class="progress-fill" style="width: <?php echo $hostel_occupancy; ?>%"></div>
-                            </div>
-                            <div class="progress-text">
-                                <span>Hostel Capacity</span>
-                                <span><?php echo $hostel_students; ?>/<?php echo $total_students; ?> students</span>
-                            </div>
-                        </div>
-                    </div>
+                    
 
                     <!-- Pending Actions Alert -->
                     <?php if ($health_tickets > 0 || $pending_hostel > 0 || $restaurant_complaints > 0): ?>
@@ -1618,68 +1490,13 @@ try {
                             </span>
                         </div>
                     <?php endif; ?>
-
-                    <!-- Recent Health Incidents -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Health Incidents</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_incidents)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-heartbeat"></i>
-                                    <p>No recent health incidents</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($recent_incidents as $incident): ?>
-                                    <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--medium-gray);">
-                                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
-                                            <div>
-                                                <strong style="font-size: 0.8rem;"><?php echo htmlspecialchars($incident['subject']); ?></strong>
-                                                <div style="font-size: 0.7rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                    <?php echo date('M j, Y', strtotime($incident['created_at'])); ?>
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <span class="status-badge status-<?php echo str_replace('_', '', $incident['status']); ?>">
-                                                    <?php echo ucfirst(str_replace('_', ' ', $incident['status'])); ?>
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div style="font-size: 0.75rem; color: var(--text-dark);">
-                                            <?php 
-                                            $description = htmlspecialchars($incident['description']);
-                                            echo strlen($description) > 100 ? substr($description, 0, 100) . '...' : $description;
-                                            ?>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
                 </div>
             </div>
         </main>
     </div>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
+        
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');

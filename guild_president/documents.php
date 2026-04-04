@@ -1336,7 +1336,6 @@ try {
                 <div class="page-header">
                     <div class="page-title">
                         <h1>Document Management</h1>
-                        <p>Generate certificates, manage templates, and handle official documents</p>
                     </div>
                 </div>
 
@@ -1492,32 +1491,7 @@ try {
                             </div>
                         </div>
 
-                        <!-- Quick Tips -->
-                        <div class="card">
-                            <div class="card-header">
-                                <h3><i class="fas fa-lightbulb"></i> Quick Tips</h3>
-                            </div>
-                            <div class="card-body">
-                                <ul style="list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem;">
-                                    <li style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                                        <i class="fas fa-check-circle" style="color: var(--success); margin-top: 0.2rem;"></i>
-                                        <span style="font-size: 0.8rem;">All official documents require your digital signature</span>
-                                    </li>
-                                    <li style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                                        <i class="fas fa-check-circle" style="color: var(--success); margin-top: 0.2rem;"></i>
-                                        <span style="font-size: 0.8rem;">Certificates are automatically stored in the documents repository</span>
-                                    </li>
-                                    <li style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                                        <i class="fas fa-check-circle" style="color: var(--success); margin-top: 0.2rem;"></i>
-                                        <span style="font-size: 0.8rem;">Mission papers must be approved before travel</span>
-                                    </li>
-                                    <li style="display: flex; gap: 0.75rem; align-items: flex-start;">
-                                        <i class="fas fa-check-circle" style="color: var(--success); margin-top: 0.2rem;"></i>
-                                        <span style="font-size: 0.8rem;">All receipts are tracked for financial audit purposes</span>
-                                    </li>
-                                </ul>
-                            </div>
-                        </div>
+                        
                     </div>
                 </div>
             </div>

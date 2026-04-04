@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep (PostgreSQL uses true for boolean)
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? false)) {
-    header('Location: student_login.php');
+    header('Location: student_login');
     exit();
 }
 
@@ -23,7 +23,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: rep_meetings.php');
+    header('Location: rep_meetings');
     exit();
 }
 
@@ -334,12 +334,12 @@ function getAttendanceBadge($status) {
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
-                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="rep_meetings.php" class="active"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                <li><a href="class_tickets"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
+                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings" class="active"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -662,7 +662,7 @@ function getAttendanceBadge($status) {
             agendaModal.style.display = 'flex';
             
             try {
-                const response = await fetch(`get_meeting_agenda.php?id=${meetingId}`);
+                const response = await fetch(`get_meeting_agenda?id=${meetingId}`);
                 const data = await response.json();
                 
                 if (data.success) {
@@ -700,7 +700,7 @@ function getAttendanceBadge($status) {
             minutesModal.style.display = 'flex';
             
             try {
-                const response = await fetch(`get_meeting_minutes.php?id=${meetingId}`);
+                const response = await fetch(`get_meeting_minutes?id=${meetingId}`);
                 const data = await response.json();
                 
                 if (data.success) {

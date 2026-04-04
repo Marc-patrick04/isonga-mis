@@ -1488,10 +1488,7 @@ try {
         <main class="main-content" id="mainContent">
             <!-- Page Header -->
             <div class="page-header">
-                <div class="page-title">
-                    <h1><i class="fas fa-ticket-alt"></i> Support Tickets Management</h1>
-                    <p>Manage and resolve student support tickets related to sports</p>
-                </div>
+                
                 <div class="page-actions">
                     <button class="btn btn-primary" onclick="window.location.href='dashboard.php'">
                         <i class="fas fa-tachometer-alt"></i> Dashboard

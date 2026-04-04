@@ -749,9 +749,7 @@ $system_expected_balance = $rpsu_account['current_balance'] ?? 0;
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -763,13 +761,7 @@ $system_expected_balance = $rpsu_account['current_balance'] ?? 0;
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Vice Guild Finance</div>
@@ -834,6 +826,12 @@ $system_expected_balance = $rpsu_account['current_balance'] ?? 0;
                         <i class="fas fa-money-check"></i><span>Allowances</span>
                     </a>
                 </li>
+                 <li class="menu-item">
+                    <a href="accounts.php" >
+                        <i class="fas fa-piggy-bank"></i>
+                        <span>Bank Accounts</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="bank_reconciliation.php" class="active">
                         <i class="fas fa-university"></i><span>Bank Reconciliation</span>
@@ -871,8 +869,7 @@ $system_expected_balance = $rpsu_account['current_balance'] ?? 0;
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Bank Reconciliation 🏦</h1>
-                    <p>Reconcile bank statements with system records for <?php echo $current_academic_year; ?> academic year</p>
+                    <h1>Bank Reconciliation</h1>
                 </div>
             </div>
 
@@ -928,29 +925,7 @@ $system_expected_balance = $rpsu_account['current_balance'] ?? 0;
                 </div>
             </div>
 
-            <!-- Reconciliation Steps -->
-            <div class="reconciliation-steps">
-                <div class="step-card">
-                    <div class="step-number">1</div>
-                    <div class="step-title">Get Bank Statement</div>
-                    <div class="step-description">Obtain the latest bank statement online or via a bank visit.</div>
-                </div>
-                <div class="step-card">
-                    <div class="step-number">2</div>
-                    <div class="step-title">Compare Balances</div>
-                    <div class="step-description">Compare the bank statement balance with the system's recorded balance.</div>
-                </div>
-                <div class="step-card">
-                    <div class="step-number">3</div>
-                    <div class="step-title">Identify Differences</div>
-                    <div class="step-description">Identify any discrepancies between bank records and system records.</div>
-                </div>
-                <div class="step-card">
-                    <div class="step-number">4</div>
-                    <div class="step-title">Reconcile & Update</div>
-                    <div class="step-description">Resolve differences and update system records to match bank statements.</div>
-                </div>
-            </div>
+            
 
             <!-- Quick Actions -->
             <div class="card">
@@ -1279,23 +1254,7 @@ $system_expected_balance = $rpsu_account['current_balance'] ?? 0;
     </div>
 
     <script>
-        // ── Dark Mode ──
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
+        
         // ── Sidebar Collapse ──
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');

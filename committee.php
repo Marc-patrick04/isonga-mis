@@ -1237,18 +1237,18 @@ $page_title = "Executive Committee - RPSU Musanze College";
             <!-- Desktop Navigation -->
             <div class="desktop-nav">
                 <nav class="nav-links" aria-label="Main Navigation">
-                    <a href="index.php">Home</a>
-                    <a href="announcements.php">Announcements</a>
-                    <a href="news.php">News</a>
-                    <a href="events.php">Events</a>
-                    <a href="committee.php" class="active">Committee</a>
-                    <a href="gallery.php">Gallery</a>
+                    <a href="index">Home</a>
+                    <a href="announcements">Announcements</a>
+                    <a href="news">News</a>
+                    <a href="events">Events</a>
+                    <a href="committee" class="active">Committee</a>
+                    <a href="gallery">Gallery</a>
                 </nav>
                 <div class="login-buttons">
-                    <a href="auth/student_login.php" class="login-btn btn-student">
+                    <a href="auth/student_login" class="login-btn btn-student">
                         <i class="fas fa-user-graduate"></i> Student
                     </a>
-                    <a href="auth/login.php" class="login-btn btn-committee">
+                    <a href="auth/login" class="login-btn btn-committee">
                         <i class="fas fa-users"></i> Committee
                     </a>
                 </div>
@@ -1264,19 +1264,19 @@ $page_title = "Executive Committee - RPSU Musanze College";
         <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
             <div class="mobile-nav">
                 <nav class="nav-links" aria-label="Mobile Navigation">
-                    <a href="index.php">Home</a>
-                    <a href="announcements.php">Announcements</a>
-                    <a href="news.php">News</a>
-                    <a href="events.php">Events</a>
-                    <a href="committee.php" class="active">Committee</a>
-                    <a href="gallery.php">Gallery</a>
+                    <a href="index">Home</a>
+                    <a href="announcements">Announcements</a>
+                    <a href="news">News</a>
+                    <a href="events">Events</a>
+                    <a href="committee" class="active">Committee</a>
+                    <a href="gallery">Gallery</a>
                 </nav>
             </div>
             <div class="mobile-login-buttons">
-                <a href="auth/student_login.php" class="login-btn btn-student">
+                <a href="auth/student_login" class="login-btn btn-student">
                     <i class="fas fa-user-graduate"></i> Student Portal
                 </a>
-                <a href="auth/login.php" class="login-btn btn-committee">
+                <a href="auth/login" class="login-btn btn-committee">
                     <i class="fas fa-users"></i> Committee Portal
                 </a>
             </div>
@@ -1437,10 +1437,10 @@ $page_title = "Executive Committee - RPSU Musanze College";
             <div class="footer-links-group">
                 <h4 class="footer-heading">Quick Links</h4>
                 <ul class="footer-links">
-                    <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
-                    <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
-                    <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
-                    <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                    <li><a href="announcements"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                    <li><a href="news"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                    <li><a href="events"><i class="fas fa-chevron-right"></i> Events</a></li>
+                    <li><a href="committee"><i class="fas fa-chevron-right"></i> Committee</a></li>
                 </ul>
             </div>
             
@@ -1450,7 +1450,7 @@ $page_title = "Executive Committee - RPSU Musanze College";
                     <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                     <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
                     <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
-                    <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                    <li><a href="gallery"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                 </ul>
             </div>
             

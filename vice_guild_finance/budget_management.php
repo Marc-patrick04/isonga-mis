@@ -125,7 +125,7 @@ if ($action === 'add_budget' && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = "Budget already exists for this category and period!";
             $message_type = "error";
         } else {
-            $stmt = $pdo->prepare("INSERT INTO monthly_budgets (academic_year, month_year, category_id, allocated_amount, allocated_by, allocation_date, notes) VALUES (?, ?, ?, ?, ?, CURDATE(), ?)");
+            $stmt = $pdo->prepare("INSERT INTO monthly_budgets (academic_year, month_year, category_id, allocated_amount, allocated_by, allocation_date, notes) VALUES (?, ?, ?, ?, ?, CURRENT_DATE, ?)");
             $stmt->execute([$academic_year, $month_year, $category_id, $allocated_amount, $user_id, $notes]);
             $message = "Budget allocation added successfully!";
             $message_type = "success";
@@ -1229,21 +1229,13 @@ $parent_categories = array_filter($categories, function($cat) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Vice Guild Finance</div>
@@ -1306,6 +1298,12 @@ $parent_categories = array_filter($categories, function($cat) {
                         <span>Allowances</span>
                     </a>
                 </li>
+                 <li class="menu-item">
+                    <a href="accounts.php" >
+                        <i class="fas fa-piggy-bank"></i>
+                        <span>Bank Accounts</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="bank_reconciliation.php">
                         <i class="fas fa-university"></i>
@@ -1349,8 +1347,8 @@ $parent_categories = array_filter($categories, function($cat) {
         <main class="main-content">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Budget Management 💰</h1>
-                    <p>Manage budget categories and allocations for <?php echo $current_academic_year; ?> academic year</p>
+                    <h1>Budget Management</h1>
+                   
                 </div>
             </div>
 
@@ -1387,19 +1385,7 @@ $parent_categories = array_filter($categories, function($cat) {
                         </div>
                     </div>
                 </div>
-                <div class="stat-card <?php echo $utilization_percentage <= 80 ? 'success' : ($utilization_percentage <= 95 ? 'warning' : 'danger'); ?>">
-                    <div class="stat-icon">
-                        <i class="fas fa-percentage"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $utilization_percentage; ?>%</div>
-                        <div class="stat-label">Budget Utilization</div>
-                        <div class="stat-trend <?php echo $utilization_percentage <= 80 ? 'trend-positive' : 'trend-negative'; ?>">
-                            <i class="fas fa-<?php echo $utilization_percentage <= 80 ? 'check' : 'exclamation'; ?>-circle"></i>
-                            <?php echo $utilization_percentage <= 80 ? 'Good' : 'Monitor'; ?>
-                        </div>
-                    </div>
-                </div>
+                
                 <div class="stat-card">
                     <div class="stat-icon">
                         <i class="fas fa-layer-group"></i>
@@ -1569,14 +1555,7 @@ $parent_categories = array_filter($categories, function($cat) {
             <div id="allocation-tab" class="tab-content">
                 <div class="content-grid">
                     <!-- Budget by Type -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Budget by Category Type</h3>
-                        </div>
-                        <div class="card-body">
-                            <div id="budgetTypeChart" style="height: 300px;"></div>
-                        </div>
-                    </div>
+                   
 
                     <!-- Quick Allocation -->
                     <div class="card">
@@ -1772,23 +1751,7 @@ $parent_categories = array_filter($categories, function($cat) {
             });
         })();
 
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
-
+       
         // Tab functionality
         function openTab(tabName) {
             const tabs = document.querySelectorAll('.tab-content');

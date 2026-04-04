@@ -1077,9 +1077,7 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                  
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1091,13 +1089,7 @@ try {
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                   
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Environment & Security</div>
@@ -1209,8 +1201,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Environment Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>! 🌱</h1>
-                    <p>Oversee campus environment, security, and sustainability initiatives for <?php echo date('Y'); ?> academic year</p>
+                    <h1>Welcome, Environment Minister <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
+                   
                 </div>
             </div>
 
@@ -1278,131 +1270,9 @@ try {
             <div class="content-grid">
                 <!-- Left Column -->
                 <div class="left-column">
-                    <!-- Active Environmental Initiatives -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Active Environmental Initiatives</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                                <a href="clubs.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-container">
-                                <?php if (empty($active_initiatives)): ?>
-                                    <div class="empty-state">
-                                        <i class="fas fa-leaf"></i>
-                                        <p>No active environmental initiatives</p>
-                                    </div>
-                                <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Initiative Name</th>
-                                                <th>Category</th>
-                                                <th>Department</th>
-                                                <th>Members</th>
-                                                <th>Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($active_initiatives as $initiative): ?>
-                                                <tr>
-                                                    <td><?php echo htmlspecialchars($initiative['name']); ?></td>
-                                                    <td><?php echo htmlspecialchars(ucfirst($initiative['category'])); ?></td>
-                                                    <td><?php echo htmlspecialchars($initiative['department'] ?? 'N/A'); ?></td>
-                                                    <td><?php echo $initiative['members_count']; ?></td>
-                                                    <td>
-                                                        <span class="status-badge status-<?php echo $initiative['status']; ?>">
-                                                            <?php echo ucfirst($initiative['status']); ?>
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
+                    
 
-                    <!-- Upcoming Environmental Events -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Environmental Events</h3>
-                            <div class="card-header-actions">
-                                <a href="events.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-container">
-                                <?php if (empty($upcoming_events_list)): ?>
-                                    <div class="empty-state">
-                                        <i class="fas fa-leaf"></i>
-                                        <p>No upcoming environmental events</p>
-                                    </div>
-                                <?php else: ?>
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Event</th>
-                                                <th>Category</th>
-                                                <th>Date & Time</th>
-                                                <th>Location</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($upcoming_events_list as $event): ?>
-                                                <tr>
-                                                    <td><?php echo htmlspecialchars($event['title']); ?></td>
-                                                    <td><?php echo htmlspecialchars($event['category_name']); ?></td>
-                                                    <td>
-                                                        <?php echo date('M j, Y', strtotime($event['event_date'])); ?><br>
-                                                        <small><?php echo date('g:i A', strtotime($event['start_time'])); ?></small>
-                                                    </td>
-                                                    <td><?php echo htmlspecialchars($event['location']); ?></td>
-                                                </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Recent Environmental Projects -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Environmental Projects</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_projects)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-project-diagram"></i>
-                                    <p>No recent environmental projects</p>
-                                </div>
-                            <?php else: ?>
-                                <div class="initiative-stats">
-                                    <?php foreach ($recent_projects as $project): ?>
-                                        <div class="initiative-stat">
-                                            <div class="initiative-name"><?php echo htmlspecialchars($project['title']); ?></div>
-                                            <div class="initiative-count"><?php echo htmlspecialchars(ucfirst($project['status'])); ?></div>
-                                            <div style="font-size: 0.6rem; color: var(--dark-gray); margin-top: 0.25rem;">
-                                                <?php echo date('M j', strtotime($project['submitted_at'])); ?>
-                                            </div>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
+                    
                     <!-- Quick Actions -->
                     <div class="quick-actions">
                         <a href="projects.php?action=add" class="action-btn">
@@ -1426,77 +1296,9 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Recent Activities -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent System Activities</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($recent_activities)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-history"></i>
-                                    <p>No recent activities</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($recent_activities as $activity): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar">
-                                                <?php echo strtoupper(substr($activity['full_name'], 0, 1)); ?>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($activity['full_name']); ?></strong> logged in
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, Y g:i A', strtotime($activity['login_time'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
-                    <!-- Project Status Overview -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Project Status Overview</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($project_status)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-chart-pie"></i>
-                                    <p>No project data available</p>
-                                </div>
-                            <?php else: ?>
-                                <?php foreach ($project_status as $project): ?>
-                                    <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--medium-gray);">
-                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                                            <div>
-                                                <strong style="font-size: 0.8rem;"><?php echo htmlspecialchars(ucfirst($project['status'])); ?></strong>
-                                            </div>
-                                            <div style="text-align: right;">
-                                                <div style="font-size: 0.8rem; font-weight: 600;">
-                                                    <?php echo $project['project_count']; ?> projects
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="attendance-progress">
-                                            <div class="progress-bar">
-                                                <div class="progress-fill" style="width: <?php echo min(100, ($project['project_count'] / max(1, $total_projects)) * 100); ?>%"></div>
-                                            </div>
-                                            <div class="progress-text">
-                                                <span>Percentage</span>
-                                                <span><?php echo min(100, round(($project['project_count'] / max(1, $total_projects)) * 100)); ?>%</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Quick Overview -->
                     <div class="card">
@@ -1565,22 +1367,7 @@ try {
     </style>
 
     <script>
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        });
+      
 
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');

@@ -1322,15 +1322,7 @@ try {
                         <div class="stat-label">Meetings This Month</div>
                     </div>
                 </div>
-                <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-day"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($upcoming_meetings); ?></div>
-                        <div class="stat-label">Upcoming Meetings</div>
-                    </div>
-                </div>
+                
                 <div class="stat-card danger">
                     <div class="stat-icon">
                         <i class="fas fa-file-signature"></i>

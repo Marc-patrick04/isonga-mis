@@ -20,6 +20,21 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
+// Get unread messages count
+$unread_messages = 0;
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_count 
+        FROM conversation_messages cm
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id
+        WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
+    $stmt->execute([$user_id]);
+    $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_count'] ?? 0;
+} catch (PDOException $e) {
+    $unread_messages = 0;
+}
+
 // Handle form actions
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 $message = '';
@@ -32,270 +47,322 @@ $filter_category = $_GET['category'] ?? '';
 $filter_month = $_GET['month'] ?? '';
 $search = $_GET['search'] ?? '';
 
-// Add new transaction
-if ($action === 'add_transaction' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $transaction_type = $_POST['transaction_type'];
-    $category_id = $_POST['category_id'];
-    $amount = $_POST['amount'];
-    $description = trim($_POST['description']);
-    $transaction_date = $_POST['transaction_date'];
-    $reference_number = trim($_POST['reference_number']);
-    $payee_payer = trim($_POST['payee_payer']);
-    $payment_method = $_POST['payment_method'];
-    $supporting_docs = ''; // Handle file upload in real implementation
-    
-    try {
-        $stmt = $pdo->prepare("
-            INSERT INTO financial_transactions 
-            (transaction_type, category_id, amount, description, transaction_date, reference_number, payee_payer, payment_method, supporting_docs_path, requested_by, status) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')
-        ");
-        $stmt->execute([$transaction_type, $category_id, $amount, $description, $transaction_date, $reference_number, $payee_payer, $payment_method, $supporting_docs, $user_id]);
-        
-        $message = "Transaction added successfully!";
-        $message_type = "success";
-    } catch (PDOException $e) {
-        $message = "Error adding transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
-// Edit transaction
-if ($action === 'edit_transaction' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $transaction_id = $_POST['transaction_id'];
-    $category_id = $_POST['category_id'];
-    $amount = $_POST['amount'];
-    $description = trim($_POST['description']);
-    $transaction_date = $_POST['transaction_date'];
-    $reference_number = trim($_POST['reference_number']);
-    $payee_payer = trim($_POST['payee_payer']);
-    $payment_method = $_POST['payment_method'];
-    
-    try {
-        $stmt = $pdo->prepare("
-            UPDATE financial_transactions 
-            SET category_id = ?, amount = ?, description = ?, transaction_date = ?, reference_number = ?, payee_payer = ?, payment_method = ?
-            WHERE id = ?
-        ");
-        $stmt->execute([$category_id, $amount, $description, $transaction_date, $reference_number, $payee_payer, $payment_method, $transaction_id]);
-        
-        $message = "Transaction updated successfully!";
-        $message_type = "success";
-    } catch (PDOException $e) {
-        $message = "Error updating transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
-// Submit for approval
-if ($action === 'submit_approval' && isset($_GET['id'])) {
-    $transaction_id = $_GET['id'];
-    
-    try {
-        $stmt = $pdo->prepare("UPDATE financial_transactions SET status = 'pending_approval' WHERE id = ?");
-        $stmt->execute([$transaction_id]);
-        
-        $message = "Transaction submitted for approval!";
-        $message_type = "success";
-    } catch (PDOException $e) {
-        $message = "Error submitting transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
-// Approve transaction (Finance level)
-if ($action === 'approve_finance' && isset($_GET['id'])) {
-    $transaction_id = $_GET['id'];
-    
-    try {
-        $stmt = $pdo->prepare("UPDATE financial_transactions SET status = 'approved_by_finance', approved_by_finance = ?, approved_at = NOW() WHERE id = ?");
-        $stmt->execute([$user_id, $transaction_id]);
-        
-        $message = "Transaction approved! Waiting for president approval.";
-        $message_type = "success";
-    } catch (PDOException $e) {
-        $message = "Error approving transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
-// Reject transaction
-if ($action === 'reject_transaction' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $transaction_id = $_POST['transaction_id'];
-    $rejection_reason = trim($_POST['rejection_reason']);
-    
-    try {
-        $stmt = $pdo->prepare("UPDATE financial_transactions SET status = 'rejected', rejection_reason = ? WHERE id = ?");
-        $stmt->execute([$rejection_reason, $transaction_id]);
-        
-        $message = "Transaction rejected!";
-        $message_type = "success";
-    } catch (PDOException $e) {
-        $message = "Error rejecting transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
-// Delete transaction
-if ($action === 'delete_transaction' && isset($_GET['id'])) {
-    $transaction_id = $_GET['id'];
-    
-    try {
-        $stmt = $pdo->prepare("DELETE FROM financial_transactions WHERE id = ? AND status = 'draft'");
-        $stmt->execute([$transaction_id]);
-        
-        if ($stmt->rowCount() > 0) {
-            $message = "Transaction deleted successfully!";
-            $message_type = "success";
-        } else {
-            $message = "Cannot delete transaction - only draft transactions can be deleted.";
-            $message_type = "error";
-        }
-    } catch (PDOException $e) {
-        $message = "Error deleting transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
-// Complete transaction (mark as paid)
-if ($action === 'complete_transaction' && isset($_GET['id'])) {
-    $transaction_id = $_GET['id'];
-    
-    try {
-        $stmt = $pdo->prepare("UPDATE financial_transactions SET status = 'completed' WHERE id = ? AND status = 'approved_by_president'");
-        $stmt->execute([$transaction_id]);
-        
-        if ($stmt->rowCount() > 0) {
-            $message = "Transaction marked as completed!";
-            $message_type = "success";
-        } else {
-            $message = "Transaction must be approved by president first.";
-            $message_type = "error";
-        }
-    } catch (PDOException $e) {
-        $message = "Error completing transaction: " . $e->getMessage();
-        $message_type = "error";
-    }
-}
-
 // Get all budget categories
 try {
-    $stmt = $pdo->query("SELECT * FROM budget_categories WHERE is_active = 1 ORDER BY category_type, category_name");
+    $stmt = $pdo->query("SELECT * FROM budget_categories WHERE is_active = true ORDER BY category_type, category_name");
     $categories = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $categories = [];
     error_log("Categories error: " . $e->getMessage());
 }
 
-// Build query for transactions with filters
+// Build UNION query to combine all financial transactions from multiple sources
 $query = "
+    -- Manual financial transactions
     SELECT 
-        ft.*,
+        ft.id,
+        ft.transaction_type,
+        ft.category_id,
         bc.category_name,
-        bc.category_type,
+        ft.amount,
+        ft.description,
+        ft.transaction_date,
+        ft.reference_number,
+        ft.payee_payer,
+        ft.payment_method,
+        ft.status,
+        ft.requested_by,
         u_req.full_name as requested_by_name,
-        u_finance.full_name as approved_by_finance_name,
-        u_president.full_name as approved_by_president_name
+        ft.created_at,
+        'manual' as source,
+        NULL::text as source_id
     FROM financial_transactions ft
     LEFT JOIN budget_categories bc ON ft.category_id = bc.id
     LEFT JOIN users u_req ON ft.requested_by = u_req.id
-    LEFT JOIN users u_finance ON ft.approved_by_finance = u_finance.id
-    LEFT JOIN users u_president ON ft.approved_by_president = u_president.id
-    WHERE 1=1
+    WHERE ft.id IS NOT NULL
+    
+    UNION ALL
+    
+    -- Committee Budget Requests (approved_by_president or funded)
+    SELECT 
+        cbr.id,
+        'expense' as transaction_type,
+        NULL as category_id,
+        'Committee Budget Request' as category_name,
+        cbr.approved_amount as amount,
+        CONCAT('Committee Budget: ', cbr.request_title) as description,
+        COALESCE(cbr.president_approval_date, cbr.finance_approval_date, cbr.request_date, cbr.created_at) as transaction_date,
+        CONCAT('CBR-', cbr.id) as reference_number,
+        u.full_name as payee_payer,
+        'bank_transfer' as payment_method,
+        CASE 
+            WHEN cbr.status = 'funded' THEN 'completed'
+            WHEN cbr.status = 'approved_by_president' THEN 'approved_by_president'
+            ELSE cbr.status
+        END as status,
+        cbr.requested_by,
+        u.full_name as requested_by_name,
+        cbr.created_at,
+        'committee_request' as source,
+        CAST(cbr.id AS text) as source_id
+    FROM committee_budget_requests cbr
+    LEFT JOIN users u ON cbr.requested_by = u.id
+    WHERE cbr.status IN ('approved_by_president', 'funded')
+    
+    UNION ALL
+    
+    -- Student Financial Aid (approved or disbursed)
+    SELECT 
+        sfa.id,
+        'expense' as transaction_type,
+        NULL as category_id,
+        'Student Financial Aid' as category_name,
+        sfa.amount_approved as amount,
+        CONCAT('Student Aid: ', sfa.request_title) as description,
+        COALESCE(sfa.disbursement_date, sfa.review_date, sfa.created_at) as transaction_date,
+        CONCAT('SFA-', sfa.id) as reference_number,
+        u.full_name as payee_payer,
+        'bank_transfer' as payment_method,
+        CASE 
+            WHEN sfa.status = 'disbursed' THEN 'completed'
+            WHEN sfa.status = 'approved' THEN 'approved_by_president'
+            ELSE sfa.status
+        END as status,
+        sfa.student_id as requested_by,
+        u.full_name as requested_by_name,
+        sfa.created_at,
+        'student_aid' as source,
+        CAST(sfa.id AS text) as source_id
+    FROM student_financial_aid sfa
+    LEFT JOIN users u ON sfa.student_id = u.id
+    WHERE sfa.status IN ('approved', 'disbursed')
+    
+    UNION ALL
+    
+    -- Communication Allowances (paid)
+    SELECT 
+        cca.id,
+        'expense' as transaction_type,
+        cca.category_id,
+        bc.category_name,
+        cca.amount,
+        CONCAT('Communication Allowance: ', COALESCE(cm.name, 'Member'), ' - ', cca.month_year) as description,
+        COALESCE(cca.payment_date, cca.created_at) as transaction_date,
+        CONCAT('COMM-', cca.id) as reference_number,
+        COALESCE(cm.name, 'Committee Member') as payee_payer,
+        'cash' as payment_method,
+        CASE 
+            WHEN cca.status = 'paid' THEN 'completed'
+            ELSE cca.status
+        END as status,
+        cca.created_by as requested_by,
+        u.full_name as requested_by_name,
+        cca.created_at,
+        'allowance' as source,
+        CAST(cca.id AS text) as source_id
+    FROM committee_communication_allowances cca
+    LEFT JOIN committee_members cm ON cca.committee_member_id = cm.id
+    LEFT JOIN budget_categories bc ON cca.category_id = bc.id
+    LEFT JOIN users u ON cca.created_by = u.id
+    WHERE cca.status = 'paid'
+    
+    UNION ALL
+    
+    -- Mission Allowances (paid)
+    SELECT 
+        ma.id,
+        'expense' as transaction_type,
+        ma.category_id,
+        bc.category_name,
+        ma.amount,
+        CONCAT('Mission Allowance: ', COALESCE(cm.name, 'Member'), ' - ', ma.destination) as description,
+        COALESCE(ma.payment_date, ma.mission_date, ma.created_at) as transaction_date,
+        CONCAT('MISS-', ma.id) as reference_number,
+        COALESCE(cm.name, 'Committee Member') as payee_payer,
+        COALESCE(ma.transport_mode, 'public') as payment_method,
+        CASE 
+            WHEN ma.status = 'paid' THEN 'completed'
+            ELSE ma.status
+        END as status,
+        ma.created_by as requested_by,
+        u.full_name as requested_by_name,
+        ma.created_at,
+        'allowance' as source,
+        CAST(ma.id AS text) as source_id
+    FROM mission_allowances ma
+    LEFT JOIN committee_members cm ON ma.committee_member_id = cm.id
+    LEFT JOIN budget_categories bc ON ma.category_id = bc.id
+    LEFT JOIN users u ON ma.created_by = u.id
+    WHERE ma.status = 'paid'
+    
+    UNION ALL
+    
+    -- Rental Payments (verified)
+    SELECT 
+        rpm.id,
+        'income' as transaction_type,
+        NULL as category_id,
+        'Rental Income' as category_name,
+        rpm.amount,
+        CONCAT('Rental Payment: ', COALESCE(rp.property_name, 'Property')) as description,
+        rpm.payment_date as transaction_date,
+        rpm.receipt_number as reference_number,
+        rpm.paid_by as payee_payer,
+        'bank_transfer' as payment_method,
+        'completed' as status,
+        rpm.received_by as requested_by,
+        u.full_name as requested_by_name,
+        rpm.created_at,
+        'rental' as source,
+        CAST(rpm.id AS text) as source_id
+    FROM rental_payments rpm
+    LEFT JOIN rental_properties rp ON rpm.property_id = rp.id
+    LEFT JOIN users u ON rpm.received_by = u.id
+    WHERE rpm.status = 'verified'
 ";
 
 $params = [];
 
 // Apply filters
+$where_clauses = [];
+
 if ($filter_type) {
-    $query .= " AND ft.transaction_type = ?";
+    $where_clauses[] = "transaction_type = ?";
     $params[] = $filter_type;
 }
 
 if ($filter_status) {
-    $query .= " AND ft.status = ?";
+    $where_clauses[] = "status = ?";
     $params[] = $filter_status;
 }
 
 if ($filter_category) {
-    $query .= " AND ft.category_id = ?";
+    $where_clauses[] = "category_id = ?";
     $params[] = $filter_category;
 }
 
 if ($filter_month) {
-    $query .= " AND DATE_FORMAT(ft.transaction_date, '%Y-%m') = ?";
+    $where_clauses[] = "TO_CHAR(transaction_date, 'YYYY-MM') = ?";
     $params[] = $filter_month;
 }
 
 if ($search) {
-    $query .= " AND (ft.description LIKE ? OR ft.reference_number LIKE ? OR ft.payee_payer LIKE ?)";
+    $where_clauses[] = "(description ILIKE ? OR reference_number ILIKE ? OR payee_payer ILIKE ?)";
     $search_term = "%$search%";
     $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
 }
 
-$query .= " ORDER BY ft.created_at DESC";
-
-try {
-    $stmt = $pdo->prepare($query);
-    $stmt->execute($params);
-    $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-} catch (PDOException $e) {
-    $transactions = [];
-    error_log("Transactions error: " . $e->getMessage());
+// Wrap the UNION query and apply filters
+if (!empty($where_clauses)) {
+    $full_query = "SELECT * FROM (" . $query . ") AS all_transactions WHERE " . implode(" AND ", $where_clauses);
+} else {
+    $full_query = $query;
 }
 
-// Get transaction statistics
+$full_query .= " ORDER BY transaction_date DESC, created_at DESC";
+
 try {
-    // Total transactions count
-    $stmt = $pdo->query("SELECT COUNT(*) as total_count FROM financial_transactions");
-    $total_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_count'] ?? 0;
-
-    // Pending approvals count
-    $stmt = $pdo->query("SELECT COUNT(*) as pending_count FROM financial_transactions WHERE status = 'approved_by_finance'");
-    $pending_approvals = $stmt->fetch(PDO::FETCH_ASSOC)['pending_count'] ?? 0;
-
-    // Total income this month
-    $stmt = $pdo->query("
-        SELECT SUM(amount) as monthly_income 
-        FROM financial_transactions 
-        WHERE transaction_type = 'income' 
-        AND status = 'completed'
-        AND MONTH(transaction_date) = MONTH(CURDATE())
-        AND YEAR(transaction_date) = YEAR(CURDATE())
-    ");
-    $monthly_income = $stmt->fetch(PDO::FETCH_ASSOC)['monthly_income'] ?? 0;
-
-    // Total expenses this month
-    $stmt = $pdo->query("
-        SELECT SUM(amount) as monthly_expenses 
-        FROM financial_transactions 
-        WHERE transaction_type = 'expense' 
-        AND status = 'completed'
-        AND MONTH(transaction_date) = MONTH(CURDATE())
-        AND YEAR(transaction_date) = YEAR(CURDATE())
-    ");
-    $monthly_expenses = $stmt->fetch(PDO::FETCH_ASSOC)['monthly_expenses'] ?? 0;
-
-    // Recent transactions for chart
-    $stmt = $pdo->query("
-        SELECT 
-            DATE_FORMAT(transaction_date, '%Y-%m') as month,
-            SUM(CASE WHEN transaction_type = 'income' AND status = 'completed' THEN amount ELSE 0 END) as income,
-            SUM(CASE WHEN transaction_type = 'expense' AND status = 'completed' THEN amount ELSE 0 END) as expenses
-        FROM financial_transactions 
-        WHERE transaction_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
-        ORDER BY month DESC
-        LIMIT 6
-    ");
-    $monthly_trends = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+    $stmt = $pdo->prepare($full_query);
+    $stmt->execute($params);
+    $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Debug: Log the count of transactions from each source
+    $source_counts = [];
+    foreach ($transactions as $t) {
+        $source = $t['source'];
+        $source_counts[$source] = ($source_counts[$source] ?? 0) + 1;
+    }
+    error_log("Transaction sources: " . print_r($source_counts, true));
+    
 } catch (PDOException $e) {
-    $total_count = $pending_approvals = $monthly_income = $monthly_expenses = 0;
-    $monthly_trends = [];
-    error_log("Transaction stats error: " . $e->getMessage());
+    $transactions = [];
+    error_log("Transactions UNION query error: " . $e->getMessage());
+}
+
+// Get transaction statistics from the combined results
+$total_count = count($transactions);
+$pending_approvals = 0;
+$monthly_income = 0;
+$monthly_expenses = 0;
+$current_month = date('m');
+$current_year = date('Y');
+
+foreach ($transactions as $t) {
+    // Count pending approvals
+    if ($t['status'] === 'approved_by_finance' || $t['status'] === 'pending_approval' || $t['status'] === 'approved') {
+        $pending_approvals++;
+    }
+    
+    $t_date = strtotime($t['transaction_date']);
+    $t_month = date('m', $t_date);
+    $t_year = date('Y', $t_date);
+    
+    if ($t_year == $current_year && $t_month == $current_month) {
+        if ($t['transaction_type'] === 'income' && ($t['status'] === 'completed' || $t['status'] === 'verified')) {
+            $monthly_income += floatval($t['amount']);
+        } elseif ($t['transaction_type'] === 'expense' && ($t['status'] === 'completed' || $t['status'] === 'paid')) {
+            $monthly_expenses += floatval($t['amount']);
+        }
+    }
+}
+
+// Recent transactions for chart (last 6 months)
+$monthly_trends = [];
+for ($i = 5; $i >= 0; $i--) {
+    $month = date('Y-m', strtotime("-$i months"));
+    $income = 0;
+    $expenses = 0;
+    
+    foreach ($transactions as $t) {
+        $t_date = strtotime($t['transaction_date']);
+        $t_month = date('Y-m', $t_date);
+        if ($t_month == $month) {
+            if ($t['transaction_type'] === 'income' && ($t['status'] === 'completed' || $t['status'] === 'verified')) {
+                $income += floatval($t['amount']);
+            } elseif ($t['transaction_type'] === 'expense' && ($t['status'] === 'completed' || $t['status'] === 'paid')) {
+                $expenses += floatval($t['amount']);
+            }
+        }
+    }
+    
+    $monthly_trends[] = [
+        'month' => $month,
+        'income' => $income,
+        'expenses' => $expenses
+    ];
+}
+
+// Get counts from source tables for debugging
+$committee_count = 0;
+$student_aid_count = 0;
+try {
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM committee_budget_requests WHERE status IN ('approved_by_president', 'funded')");
+    $committee_count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+    
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM student_financial_aid WHERE status IN ('approved', 'disbursed')");
+    $student_aid_count = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
+    
+    error_log("Committee requests (approved/funded): " . $committee_count);
+    error_log("Student aid (approved/disbursed): " . $student_aid_count);
+} catch (PDOException $e) {
+    error_log("Count query error: " . $e->getMessage());
+}
+
+// Badge counts for sidebar
+$pending_approvals_badge = $pending_approvals;
+$pending_budget_requests = 0;
+$pending_aid_requests = 0;
+try {
+    $r = $pdo->query("SELECT COUNT(*) as c FROM committee_budget_requests WHERE status IN ('submitted','under_review')");
+    $pending_budget_requests = $r->fetch(PDO::FETCH_ASSOC)['c'] ?? 0;
+    $r = $pdo->query("SELECT COUNT(*) as c FROM student_financial_aid WHERE status IN ('submitted','under_review')");
+    $pending_aid_requests = $r->fetch(PDO::FETCH_ASSOC)['c'] ?? 0;
+} catch (PDOException $e) { /* silent */ }
+
+function safe_display($data) {
+    return $data ? htmlspecialchars($data) : '';
 }
 ?>
 
@@ -303,14 +370,14 @@ try {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Transactions - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* Reuse all the CSS from dashboard.php */
+        /* ... keep all your existing CSS styles ... */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -335,6 +402,8 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
 
         .dark-mode {
@@ -354,7 +423,6 @@ try {
             --finance-secondary: #64B5F6;
             --finance-accent: #1976D2;
             --finance-light: #0D1B2A;
-            --gradient-primary: linear-gradient(135deg, var(--finance-primary) 0%, var(--finance-accent) 100%);
         }
 
         * {
@@ -377,14 +445,11 @@ try {
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
-            padding: 1rem 0;
+            padding: 0.75rem 0;
             position: sticky;
             top: 0;
             z-index: 100;
             border-bottom: 1px solid var(--medium-gray);
-            height: 80px;
-            display: flex;
-            align-items: center;
         }
 
         .nav-container {
@@ -394,7 +459,6 @@ try {
             justify-content: space-between;
             align-items: center;
             padding: 0 1.5rem;
-            width: 100%;
         }
 
         .logo-section {
@@ -403,38 +467,44 @@ try {
             gap: 0.75rem;
         }
 
-        .logos {
-            display: flex;
-            gap: 0.75rem;
-            align-items: center;
-        }
-
         .logo {
             height: 40px;
             width: auto;
         }
 
         .brand-text h1 {
-            font-size: 1.3rem;
+            font-size: 1.25rem;
             font-weight: 700;
             color: var(--finance-primary);
+        }
+
+        .mobile-menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--text-dark);
+            padding: 0.5rem;
+            border-radius: var(--border-radius);
+            line-height: 1;
         }
 
         .user-menu {
             display: flex;
             align-items: center;
-            gap: 1.5rem;
+            gap: 1rem;
         }
 
         .user-info {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
         }
 
         .user-avatar {
-            width: 50px;
-            height: 50px;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -442,16 +512,7 @@ try {
             justify-content: center;
             color: white;
             font-weight: 600;
-            font-size: 1.1rem;
-            border: 3px solid var(--medium-gray);
-            overflow: hidden;
-            position: relative;
-            transition: var(--transition);
-        }
-
-        .user-avatar:hover {
-            border-color: var(--finance-primary);
-            transform: scale(1.05);
+            font-size: 1rem;
         }
 
         .user-avatar img {
@@ -466,41 +527,33 @@ try {
 
         .user-name {
             font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
         }
 
         .user-role {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: var(--dark-gray);
         }
 
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-        }
-
         .icon-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--medium-gray);
+            background: var(--white);
             border-radius: 50%;
-            display: flex;
+            cursor: pointer;
+            color: var(--text-dark);
+            transition: var(--transition);
+            display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
             position: relative;
-            font-size: 1.1rem;
         }
 
         .icon-btn:hover {
             background: var(--finance-primary);
             color: white;
-            transform: translateY(-2px);
+            border-color: var(--finance-primary);
         }
 
         .notification-badge {
@@ -510,57 +563,85 @@ try {
             background: var(--danger);
             color: white;
             border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            font-size: 0.7rem;
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
-            border: 2px solid var(--white);
         }
 
         .logout-btn {
             background: var(--gradient-primary);
             color: white;
-            padding: 0.6rem 1.2rem;
-            border-radius: 20px;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
-            transition: var(--transition);
             font-size: 0.85rem;
-            border: none;
-            cursor: pointer;
+            font-weight: 500;
+            transition: var(--transition);
         }
 
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
         }
 
         /* Dashboard Container */
         .dashboard-container {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            min-height: calc(100vh - 80px);
-        }
-
-        /* Main Content */
-        .main-content {
-            padding: 1.5rem;
-            overflow-y: auto;
-            height: calc(100vh - 80px);
+            display: flex;
+            min-height: calc(100vh - 73px);
         }
 
         /* Sidebar */
         .sidebar {
+            width: var(--sidebar-width);
             background: var(--white);
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
-            position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            transition: var(--transition);
+            position: fixed;
+            height: calc(100vh - 73px);
             overflow-y: auto;
+            z-index: 99;
+        }
+
+        .sidebar.collapsed {
+            width: var(--sidebar-collapsed-width);
+        }
+
+        .sidebar.collapsed .menu-item span,
+        .sidebar.collapsed .menu-badge {
+            display: none;
+        }
+
+        .sidebar.collapsed .menu-item a {
+            justify-content: center;
+            padding: 0.75rem;
+        }
+
+        .sidebar.collapsed .menu-item i {
+            margin: 0;
+            font-size: 1.25rem;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -12px;
+            top: 20px;
+            width: 24px;
+            height: 24px;
+            background: var(--finance-primary);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            z-index: 100;
         }
 
         .sidebar-menu {
@@ -590,9 +671,7 @@ try {
         }
 
         .menu-item i {
-            width: 16px;
-            text-align: center;
-            font-size: 0.9rem;
+            width: 20px;
         }
 
         .menu-badge {
@@ -603,6 +682,19 @@ try {
             font-size: 0.7rem;
             font-weight: 600;
             margin-left: auto;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            margin-left: var(--sidebar-width);
+            transition: var(--transition);
+        }
+
+        .main-content.sidebar-collapsed {
+            margin-left: var(--sidebar-collapsed-width);
         }
 
         .dashboard-header {
@@ -624,14 +716,14 @@ try {
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 1rem;
             margin-bottom: 1.5rem;
         }
 
         .stat-card {
             background: var(--white);
-            padding: 1.5rem;
+            padding: 1rem;
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             border-left: 4px solid var(--finance-primary);
@@ -659,17 +751,14 @@ try {
         }
 
         .stat-icon {
-            width: 50px;
-            height: 50px;
+            width: 45px;
+            height: 45px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             flex-shrink: 0;
-        }
-
-        .stat-card .stat-icon {
             background: var(--finance-light);
             color: var(--finance-primary);
         }
@@ -681,7 +770,7 @@ try {
 
         .stat-card.warning .stat-icon {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .stat-card.danger .stat-icon {
@@ -694,7 +783,7 @@ try {
         }
 
         .stat-number {
-            font-size: 1.75rem;
+            font-size: 1.3rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
             color: var(--text-dark);
@@ -702,34 +791,139 @@ try {
 
         .stat-label {
             color: var(--dark-gray);
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 500;
         }
 
-        .stat-trend {
+        /* Chart Card */
+        .chart-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-header {
             display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .chart-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        /* Source Badge */
+        .source-badge {
+            padding: 0.2rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            display: inline-flex;
             align-items: center;
             gap: 0.25rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            margin-top: 0.25rem;
         }
 
-        .trend-positive {
-            color: var(--success);
+        .source-manual { background: #e2e3e5; color: #383d41; }
+        .source-committee_request { background: #cce7ff; color: #004085; }
+        .source-student_aid { background: #d4edda; color: #155724; }
+        .source-allowance { background: #fff3cd; color: #856404; }
+        .source-rental { background: #d1ecf1; color: #0c5460; }
+
+        /* Filters */
+        .filters-card {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
         }
 
-        .trend-negative {
-            color: var(--danger);
-        }
-
-        /* Content Grid */
-        .content-grid {
+        .filter-grid {
             display: grid;
-            grid-template-columns: 1fr;
-            gap: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            align-items: end;
         }
 
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-dark);
+        }
+
+        .form-control, .form-select {
+            padding: 0.6rem 0.75rem;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            background: var(--white);
+            color: var(--text-dark);
+            font-size: 0.85rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--finance-primary);
+            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
+        }
+
+        .filter-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-secondary {
+            background: var(--white);
+            color: var(--text-dark);
+            border: 1px solid var(--medium-gray);
+        }
+
+        .btn-secondary:hover {
+            background: var(--light-gray);
+        }
+
+        /* Card */
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -777,6 +971,10 @@ try {
         }
 
         /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
         .table {
             width: 100%;
             border-collapse: collapse;
@@ -796,6 +994,10 @@ try {
             font-size: 0.75rem;
         }
 
+        .table tbody tr:hover {
+            background: var(--finance-light);
+        }
+
         .amount {
             font-weight: 600;
             font-family: 'Courier New', monospace;
@@ -809,173 +1011,89 @@ try {
             color: var(--danger);
         }
 
+        /* Status Badges */
         .status-badge {
-            padding: 0.25rem 0.5rem;
+            padding: 0.25rem 0.6rem;
             border-radius: 20px;
             font-size: 0.7rem;
             font-weight: 600;
             text-transform: uppercase;
         }
 
-        .status-draft {
-            background: #e2e3e5;
-            color: var(--dark-gray);
-        }
+        .status-draft { background: #e2e3e5; color: #383d41; }
+        .status-pending_approval { background: #fff3cd; color: #856404; }
+        .status-approved_by_finance { background: #cce7ff; color: #004085; }
+        .status-approved_by_president { background: #d4edda; color: #155724; }
+        .status-approved { background: #d4edda; color: #155724; }
+        .status-completed { background: #d4edda; color: #155724; }
+        .status-funded { background: #d4edda; color: #155724; }
+        .status-disbursed { background: #d4edda; color: #155724; }
+        .status-paid { background: #d4edda; color: #155724; }
+        .status-verified { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
+        .status-income { background: #d4edda; color: #155724; }
+        .status-expense { background: #f8d7da; color: #721c24; }
 
-        .status-pending_approval {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-approved_by_finance {
-            background: #cce7ff;
-            color: var(--primary-blue);
-        }
-
-        .status-approved_by_president {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-rejected {
-            background: #f8d7da;
-            color: var(--danger);
-        }
-
-        .status-completed {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 600;
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .form-control {
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
             width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--finance-primary);
-            box-shadow: 0 0 0 3px rgba(25, 118, 210, 0.1);
-        }
-
-        .form-select {
-            width: 100%;
-            padding: 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            background: var(--white);
-            color: var(--text-dark);
-            font-size: 0.8rem;
-        }
-
-        .btn {
-            padding: 0.75rem 1.5rem;
-            border: none;
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: var(--transition);
-            text-decoration: none;
-            display: inline-flex;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
             align-items: center;
-            gap: 0.5rem;
+            justify-content: center;
+            backdrop-filter: blur(2px);
         }
 
-        .btn-primary {
-            background: var(--finance-primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--finance-accent);
-            transform: translateY(-1px);
-        }
-
-        .btn-success {
-            background: var(--success);
-            color: white;
-        }
-
-        .btn-warning {
-            background: var(--warning);
-            color: var(--text-dark);
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-sm {
-            padding: 0.5rem 1rem;
-            font-size: 0.75rem;
-        }
-
-        /* Tabs */
-        .tabs {
+        .modal-overlay.active {
             display: flex;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 1.5rem;
         }
 
-        .tab {
-            padding: 0.75rem 1.5rem;
+        .modal-content {
+            background: var(--white);
+            border-radius: var(--border-radius-lg);
+            width: 100%;
+            max-width: 550px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .modal-header {
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
             background: none;
             border: none;
-            border-bottom: 3px solid transparent;
-            color: var(--dark-gray);
+            font-size: 1.2rem;
             cursor: pointer;
-            transition: var(--transition);
-            font-weight: 500;
+            color: var(--dark-gray);
         }
 
-        .tab.active {
-            color: var(--finance-primary);
-            border-bottom-color: var(--finance-primary);
+        .modal-body {
+            padding: 1.25rem;
         }
 
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Filters */
-        .filters {
-            background: var(--white);
-            padding: 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1.5rem;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .filter-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            align-items: end;
+        .modal-footer {
+            padding: 1rem 1.25rem;
+            border-top: 1px solid var(--medium-gray);
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
         }
 
         /* Alerts */
@@ -984,6 +1102,10 @@ try {
             border-radius: var(--border-radius);
             margin-bottom: 1rem;
             border-left: 4px solid;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.8rem;
         }
 
         .alert-success {
@@ -998,164 +1120,73 @@ try {
             border-left-color: var(--danger);
         }
 
-        /* Modal */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .modal.active {
-            display: flex;
-        }
-
-        .modal-content {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
-            width: 90%;
-            max-width: 600px;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .modal-body {
-            padding: 1.5rem;
-        }
-
-        .modal-footer {
-            padding: 1rem 1.5rem;
-            border-top: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: flex-end;
-            gap: 0.5rem;
-        }
-
-        .close {
-            background: none;
-            border: none;
-            font-size: 1.25rem;
-            cursor: pointer;
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
             color: var(--dark-gray);
         }
 
-        /* Charts */
-        .chart-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
+        .empty-state i {
+            font-size: 2.5rem;
+            margin-bottom: 0.75rem;
+            opacity: 0.5;
         }
 
-        .chart-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .chart-title {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--text-dark);
-        }
-
-        .chart-container {
-            position: relative;
-            height: 300px;
-        }
-
-        /* ── Mobile Nav Overlay ── */
-        .mobile-nav-overlay {
+        /* Overlay */
+        .overlay {
             display: none;
             position: fixed;
             inset: 0;
             background: rgba(0,0,0,0.45);
-            z-index: 199;
             backdrop-filter: blur(2px);
-        }
-        .mobile-nav-overlay.active { display: block; }
-
-        /* ── Hamburger Button ── */
-        .hamburger-btn {
-            display: none;
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: var(--light-gray);
-            border-radius: 50%;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-dark);
-            cursor: pointer;
-            transition: var(--transition);
-            font-size: 1.1rem;
-            flex-shrink: 0;
-        }
-        .hamburger-btn:hover {
-            background: var(--finance-primary);
-            color: white;
+            z-index: 999;
         }
 
-        /* ── Sidebar Drawer ── */
-        .sidebar { transition: transform 0.3s ease; }
-
-        /* ── Tablet ── */
-        @media (max-width: 1024px) {
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
-            }
+        .overlay.active {
+            display: block;
         }
 
-        /* ── Drawer threshold ── */
-        @media (max-width: 900px) {
-            .dashboard-container {
-                grid-template-columns: 1fr;
-            }
-
+        /* Responsive */
+        @media (max-width: 992px) {
             .sidebar {
+                transform: translateX(-100%);
                 position: fixed;
                 top: 0;
-                left: 0;
-                width: 260px;
                 height: 100vh;
-                z-index: 200;
-                transform: translateX(-100%);
+                z-index: 1000;
                 padding-top: 1rem;
-                box-shadow: var(--shadow-lg);
             }
 
-            .sidebar.open {
+            .sidebar.mobile-open {
                 transform: translateX(0);
             }
 
-            .hamburger-btn {
-                display: flex;
+            .sidebar-toggle {
+                display: none;
             }
 
             .main-content {
-                height: auto;
-                min-height: calc(100vh - 80px);
+                margin-left: 0 !important;
+            }
+
+            .mobile-menu-toggle {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 44px;
+                height: 44px;
+                border-radius: 50%;
+                background: var(--light-gray);
+                transition: var(--transition);
+            }
+
+            .mobile-menu-toggle:hover {
+                background: var(--finance-primary);
+                color: white;
             }
         }
 
-        /* ── Mobile ── */
         @media (max-width: 768px) {
             .nav-container {
                 padding: 0 1rem;
@@ -1178,67 +1209,19 @@ try {
                 grid-template-columns: repeat(2, 1fr);
             }
 
-            /* Tabs scroll horizontally */
-            .tabs {
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                scrollbar-width: none;
-                flex-wrap: nowrap;
-            }
-            .tabs::-webkit-scrollbar { display: none; }
-
-            .tab {
-                white-space: nowrap;
-                flex-shrink: 0;
-                padding: 0.75rem 1rem;
-            }
-
-            /* Filter row collapses to single column */
-            .filter-row {
+            .filter-grid {
                 grid-template-columns: 1fr;
             }
 
-            /* Tables scroll horizontally */
-            .card-body .table {
-                display: block;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                white-space: nowrap;
+            .filter-actions {
+                flex-direction: column;
             }
 
-            /* Card headers flex-wrap */
-            .card-header {
-                flex-wrap: wrap;
-                gap: 0.75rem;
-            }
-
-            .card-header-actions {
-                flex-wrap: wrap;
-            }
-
-            /* Chart shrinks */
             .chart-container {
                 height: 220px;
             }
-
-            /* Modal adjustments */
-            .modal-content {
-                width: 95%;
-                max-height: 95vh;
-            }
-
-            .modal-footer {
-                flex-direction: column-reverse;
-                gap: 0.5rem;
-            }
-
-            .modal-footer .btn {
-                width: 100%;
-                justify-content: center;
-            }
         }
 
-        /* ── Small phones ── */
         @media (max-width: 480px) {
             .stats-grid {
                 grid-template-columns: 1fr;
@@ -1248,74 +1231,49 @@ try {
                 padding: 0.75rem;
             }
 
-            .header {
-                height: 68px;
-            }
-
-            .logos .logo {
+            .logo {
                 height: 32px;
             }
 
             .brand-text h1 {
                 font-size: 0.9rem;
             }
-
-            .stat-card {
-                padding: 1rem;
-            }
-
-            .stat-number {
-                font-size: 1.3rem;
-            }
-
-            .card-body {
-                padding: 1rem;
-            }
-
-            .modal-body {
-                padding: 1rem;
-            }
-
-            .chart-container {
-                height: 180px;
-            }
         }
     </style>
 </head>
 <body>
+    <!-- Overlay for mobile -->
+    <div class="overlay" id="mobileOverlay"></div>
+
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <button class="hamburger-btn" id="hamburgerBtn" title="Toggle Menu" aria-label="Open navigation menu">
+                <button class="mobile-menu-toggle" id="mobileMenuToggle">
                     <i class="fas fa-bars"></i>
                 </button>
-                <div class="logos">
-                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
-                </div>
+                <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 <div class="brand-text">
                     <h1>Isonga - Transactions</h1>
                 </div>
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
+                   
+                    <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
+                        <i class="fas fa-chevron-left"></i>
                     </button>
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="notification-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
                     </a>
                 </div>
                 <div class="user-info">
-                    <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
+                    
                     <div class="user-details">
-                        <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
+                        <div class="user-name"><?php echo safe_display($_SESSION['full_name']); ?></div>
                         <div class="user-role">Vice Guild Finance</div>
                     </div>
                 </div>
@@ -1326,13 +1284,13 @@ try {
         </div>
     </header>
 
-    <!-- Mobile Nav Overlay -->
-    <div class="mobile-nav-overlay" id="mobileNavOverlay"></div>
-
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <nav class="sidebar">
+        <nav class="sidebar" id="sidebar">
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
                     <a href="dashboard.php">
@@ -1350,8 +1308,8 @@ try {
                     <a href="transactions.php" class="active">
                         <i class="fas fa-exchange-alt"></i>
                         <span>Transactions</span>
-                        <?php if ($pending_approvals > 0): ?>
-                            <span class="menu-badge"><?php echo $pending_approvals; ?></span>
+                        <?php if ($pending_approvals_badge > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_approvals_badge; ?></span>
                         <?php endif; ?>
                     </a>
                 </li>
@@ -1359,12 +1317,18 @@ try {
                     <a href="committee_requests.php">
                         <i class="fas fa-clipboard-list"></i>
                         <span>Committee Requests</span>
+                        <?php if ($pending_budget_requests > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_budget_requests; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
                     <a href="student_aid.php">
                         <i class="fas fa-hand-holding-heart"></i>
                         <span>Student Financial Aid</span>
+                        <?php if ($pending_aid_requests > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_aid_requests; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1377,6 +1341,12 @@ try {
                     <a href="allowances.php">
                         <i class="fas fa-money-check"></i>
                         <span>Allowances</span>
+                    </a>
+                </li>
+                 <li class="menu-item">
+                    <a href="accounts.php" >
+                        <i class="fas fa-piggy-bank"></i>
+                        <span>Bank Accounts</span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1419,74 +1389,56 @@ try {
         </nav>
 
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Financial Transactions 💰</h1>
-                    <p>Manage all income and expense transactions with approval workflow</p>
+                    <h1>Financial Transactions</h1>
+                   
                 </div>
             </div>
 
             <!-- Display Messages -->
             <?php if ($message): ?>
                 <div class="alert alert-<?php echo $message_type === 'success' ? 'success' : 'error'; ?>">
-                    <?php echo htmlspecialchars($message); ?>
+                    <i class="fas fa-<?php echo $message_type === 'success' ? 'check-circle' : 'exclamation-circle'; ?>"></i>
+                    <?php echo safe_display($message); ?>
                 </div>
             <?php endif; ?>
 
             <!-- Transaction Overview Stats -->
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-exchange-alt"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-exchange-alt"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $total_count; ?></div>
                         <div class="stat-label">Total Transactions</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-chart-line"></i> All Time
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-arrow-up"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-arrow-up"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($monthly_income, 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($monthly_income, 0); ?></div>
                         <div class="stat-label">Monthly Income</div>
-                        <div class="stat-trend trend-positive">
-                            <i class="fas fa-trending-up"></i> This Month
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card danger">
-                    <div class="stat-icon">
-                        <i class="fas fa-arrow-down"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-arrow-down"></i></div>
                     <div class="stat-content">
-                        <div class="stat-number">RWF <?php echo number_format($monthly_expenses, 2); ?></div>
+                        <div class="stat-number">RWF <?php echo number_format($monthly_expenses, 0); ?></div>
                         <div class="stat-label">Monthly Expenses</div>
-                        <div class="stat-trend trend-negative">
-                            <i class="fas fa-trending-down"></i> This Month
-                        </div>
                     </div>
                 </div>
                 <div class="stat-card warning">
-                    <div class="stat-icon">
-                        <i class="fas fa-clock"></i>
-                    </div>
+                    <div class="stat-icon"><i class="fas fa-clock"></i></div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $pending_approvals; ?></div>
                         <div class="stat-label">Pending Approvals</div>
-                        <div class="stat-trend trend-negative">
-                            <i class="fas fa-exclamation-circle"></i> Needs Attention
-                        </div>
                     </div>
                 </div>
             </div>
 
             <!-- Monthly Trends Chart -->
+            <?php if (!empty($monthly_trends)): ?>
             <div class="chart-card">
                 <div class="chart-header">
                     <h3 class="chart-title">Monthly Income vs Expenses</h3>
@@ -1495,11 +1447,12 @@ try {
                     <canvas id="monthlyTrendsChart"></canvas>
                 </div>
             </div>
+            <?php endif; ?>
 
             <!-- Filters -->
-            <div class="filters">
-                <form method="GET" action="">
-                    <div class="filter-row">
+            <div class="filters-card">
+                <form method="GET" action="transactions.php">
+                    <div class="filter-grid">
                         <div class="form-group">
                             <label class="form-label">Transaction Type</label>
                             <select class="form-select" name="type">
@@ -1516,7 +1469,12 @@ try {
                                 <option value="pending_approval" <?php echo $filter_status === 'pending_approval' ? 'selected' : ''; ?>>Pending Approval</option>
                                 <option value="approved_by_finance" <?php echo $filter_status === 'approved_by_finance' ? 'selected' : ''; ?>>Approved by Finance</option>
                                 <option value="approved_by_president" <?php echo $filter_status === 'approved_by_president' ? 'selected' : ''; ?>>Approved by President</option>
+                                <option value="approved" <?php echo $filter_status === 'approved' ? 'selected' : ''; ?>>Approved</option>
                                 <option value="completed" <?php echo $filter_status === 'completed' ? 'selected' : ''; ?>>Completed</option>
+                                <option value="funded" <?php echo $filter_status === 'funded' ? 'selected' : ''; ?>>Funded</option>
+                                <option value="disbursed" <?php echo $filter_status === 'disbursed' ? 'selected' : ''; ?>>Disbursed</option>
+                                <option value="paid" <?php echo $filter_status === 'paid' ? 'selected' : ''; ?>>Paid</option>
+                                <option value="verified" <?php echo $filter_status === 'verified' ? 'selected' : ''; ?>>Verified</option>
                                 <option value="rejected" <?php echo $filter_status === 'rejected' ? 'selected' : ''; ?>>Rejected</option>
                             </select>
                         </div>
@@ -1526,7 +1484,7 @@ try {
                                 <option value="">All Categories</option>
                                 <?php foreach ($categories as $category): ?>
                                     <option value="<?php echo $category['id']; ?>" <?php echo $filter_category == $category['id'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($category['category_name']); ?>
+                                        <?php echo safe_display($category['category_name']); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -1537,14 +1495,14 @@ try {
                         </div>
                         <div class="form-group">
                             <label class="form-label">Search</label>
-                            <input type="text" class="form-control" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Description, Reference, Payee...">
+                            <input type="text" class="form-control" name="search" value="<?php echo safe_display($search); ?>" placeholder="Description, Reference, Payee...">
                         </div>
-                        <div class="form-group">
-                            <button type="submit" class="btn btn-primary" style="margin-bottom: 0;">
-                                <i class="fas fa-filter"></i> Apply Filters
+                        <div class="filter-actions">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-filter"></i> Apply
                             </button>
-                            <a href="transactions.php" class="btn" style="margin-bottom: 0;">
-                                <i class="fas fa-times"></i> Clear
+                            <a href="transactions.php" class="btn btn-secondary">
+                                <i class="fas fa-times"></i> Reset
                             </a>
                         </div>
                     </div>
@@ -1556,116 +1514,95 @@ try {
                 <div class="card-header">
                     <h3>All Transactions</h3>
                     <div class="card-header-actions">
-                        <button class="card-header-btn" onclick="openModal('addTransactionModal')" title="Add New Transaction">
+                        <button class="card-header-btn" onclick="openAddTransactionModal()" title="Add New Transaction">
                             <i class="fas fa-plus"></i>
                         </button>
                     </div>
                 </div>
                 <div class="card-body">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Type</th>
-                                <th>Description</th>
-                                <th>Category</th>
-                                <th>Payee/Payer</th>
-                                <th>Amount</th>
-                                <th>Status</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (empty($transactions)): ?>
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
                                 <tr>
-                                    <td colspan="8" style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                        No transactions found
-                                    </td>
+                                    <th>Date</th>
+                                    <th>Source</th>
+                                    <th>Type</th>
+                                    <th>Description</th>
+                                    <th>Payee/Payer</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
                                 </tr>
-                            <?php else: ?>
-                                <?php foreach ($transactions as $transaction): ?>
+                            </thead>
+                            <tbody>
+                                <?php if (empty($transactions)): ?>
                                     <tr>
-                                        <td><?php echo date('M j, Y', strtotime($transaction['transaction_date'])); ?></td>
-                                        <td>
-                                            <span class="status-badge status-<?php echo $transaction['transaction_type'] === 'income' ? 'active' : 'inactive'; ?>">
-                                                <?php echo ucfirst($transaction['transaction_type']); ?>
-                                            </span>
-                                        </td>
-                                        <td style="max-width: 200px;">
-                                            <div style="font-weight: 600;"><?php echo htmlspecialchars($transaction['description']); ?></div>
-                                            <?php if ($transaction['reference_number']): ?>
-                                                <small style="color: var(--dark-gray);">Ref: <?php echo htmlspecialchars($transaction['reference_number']); ?></small>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?php echo htmlspecialchars($transaction['category_name']); ?></td>
-                                        <td><?php echo htmlspecialchars($transaction['payee_payer']); ?></td>
-                                        <td>
-                                            <span class="amount <?php echo $transaction['transaction_type']; ?>">
-                                                RWF <?php echo number_format($transaction['amount'], 2); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge status-<?php echo $transaction['status']; ?>">
-                                                <?php echo ucfirst(str_replace('_', ' ', $transaction['status'])); ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
-                                                <!-- View/Edit for draft transactions -->
-                                                <?php if ($transaction['status'] === 'draft'): ?>
-                                                    <button class="btn btn-warning btn-sm" onclick="editTransaction(<?php echo $transaction['id']; ?>, <?php echo htmlspecialchars(json_encode($transaction)); ?>)">
-                                                        <i class="fas fa-edit"></i>
-                                                    </button>
-                                                    <a href="?action=submit_approval&id=<?php echo $transaction['id']; ?>" class="btn btn-success btn-sm" onclick="return confirm('Submit this transaction for approval?')">
-                                                        <i class="fas fa-paper-plane"></i>
-                                                    </a>
-                                                    <a href="?action=delete_transaction&id=<?php echo $transaction['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this transaction?')">
-                                                        <i class="fas fa-trash"></i>
-                                                    </a>
+                                        <td colspan="7">
+                                            <div class="empty-state">
+                                                <i class="fas fa-exchange-alt"></i>
+                                                <p>No transactions found</p>
+                                                <?php if ($committee_count > 0 || $student_aid_count > 0): ?>
+                                                    <p style="margin-top: 0.5rem; font-size: 0.75rem;">
+                                                        Note: <?php echo $committee_count; ?> committee requests and <?php echo $student_aid_count; ?> student aid requests exist but may need to be marked as "funded" or "disbursed" to appear here.
+                                                    </p>
                                                 <?php endif; ?>
-
-                                                <!-- Finance approval for pending transactions -->
-                                                <?php if ($transaction['status'] === 'pending_approval'): ?>
-                                                    <a href="?action=approve_finance&id=<?php echo $transaction['id']; ?>" class="btn btn-success btn-sm" onclick="return confirm('Approve this transaction?')">
-                                                        <i class="fas fa-check"></i> Approve
-                                                    </a>
-                                                    <button class="btn btn-danger btn-sm" onclick="openRejectModal(<?php echo $transaction['id']; ?>)">
-                                                        <i class="fas fa-times"></i> Reject
-                                                    </button>
-                                                <?php endif; ?>
-
-                                                <!-- Complete for president-approved transactions -->
-                                                <?php if ($transaction['status'] === 'approved_by_president'): ?>
-                                                    <a href="?action=complete_transaction&id=<?php echo $transaction['id']; ?>" class="btn btn-success btn-sm" onclick="return confirm('Mark this transaction as completed/paid?')">
-                                                        <i class="fas fa-check-double"></i> Complete
-                                                    </a>
-                                                <?php endif; ?>
-
-                                                <!-- View details for all transactions -->
-                                                <button class="btn btn-primary btn-sm" onclick="viewTransactionDetails(<?php echo htmlspecialchars(json_encode($transaction)); ?>)">
-                                                    <i class="fas fa-eye"></i>
-                                                </button>
                                             </div>
                                         </td>
                                     </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                                <?php else: ?>
+                                    <?php foreach ($transactions as $transaction): ?>
+                                        <tr>
+                                            <td><?php echo date('M j, Y', strtotime($transaction['transaction_date'])); ?></td>
+                                            <td>
+                                                <span class="source-badge source-<?php echo $transaction['source']; ?>">
+                                                    <i class="fas 
+                                                        <?php echo $transaction['source'] === 'manual' ? 'fa-pen' : 
+                                                              ($transaction['source'] === 'committee_request' ? 'fa-clipboard-list' : 
+                                                              ($transaction['source'] === 'student_aid' ? 'fa-hand-holding-heart' : 
+                                                              ($transaction['source'] === 'allowance' ? 'fa-money-check' : 'fa-home'))); ?>">
+                                                    </i>
+                                                    <?php echo ucfirst(str_replace('_', ' ', $transaction['source'])); ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <span class="status-badge status-<?php echo $transaction['transaction_type']; ?>">
+                                                    <?php echo ucfirst($transaction['transaction_type']); ?>
+                                                </span>
+                                            </td>
+                                            <td style="max-width: 250px;">
+                                                <div style="font-weight: 500;"><?php echo safe_display($transaction['description']); ?></div>
+                                                <?php if ($transaction['reference_number']): ?>
+                                                    <small style="color: var(--dark-gray);">Ref: <?php echo safe_display($transaction['reference_number']); ?></small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td><?php echo safe_display($transaction['payee_payer']); ?></td>
+                                            <td class="amount <?php echo $transaction['transaction_type']; ?>">
+                                                RWF <?php echo number_format($transaction['amount'], 0); ?>
+                                            </td>
+                                            <td>
+                                                <span class="status-badge status-<?php echo $transaction['status']; ?>">
+                                                    <?php echo ucfirst(str_replace('_', ' ', $transaction['status'])); ?>
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </main>
     </div>
 
     <!-- Add Transaction Modal -->
-    <div id="addTransactionModal" class="modal">
+    <div id="addTransactionModal" class="modal-overlay">
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Add New Transaction</h3>
-                <button class="close" onclick="closeModal('addTransactionModal')">&times;</button>
+                <button class="modal-close" onclick="closeAddTransactionModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <form method="POST" action="" id="transactionForm">
+                <form method="POST" id="transactionForm">
                     <input type="hidden" name="action" value="add_transaction">
                     <input type="hidden" name="transaction_id" id="editTransactionId">
                     
@@ -1683,7 +1620,7 @@ try {
                             <option value="">Select Category</option>
                             <?php foreach ($categories as $category): ?>
                                 <option value="<?php echo $category['id']; ?>" data-type="<?php echo $category['category_type']; ?>">
-                                    <?php echo htmlspecialchars($category['category_name']); ?> (<?php echo ucfirst($category['category_type']); ?>)
+                                    <?php echo safe_display($category['category_name']); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -1691,7 +1628,7 @@ try {
 
                     <div class="form-group">
                         <label class="form-label">Amount (RWF) *</label>
-                        <input type="number" class="form-control" name="amount" id="transactionAmount" step="0.01" min="0" required>
+                        <input type="number" class="form-control" name="amount" id="transactionAmount" step="1000" min="0" required>
                     </div>
 
                     <div class="form-group">
@@ -1718,324 +1655,198 @@ try {
                         <label class="form-label">Payment Method *</label>
                         <select class="form-select" name="payment_method" id="transactionMethod" required>
                             <option value="cash">Cash</option>
-                            <option value="bank_transfer">Bank Transfer</option>
+                            <option value="transfer">Bank Transfer</option>
                             <option value="cheque">Cheque</option>
-                            <option value="mobile_money">Mobile Money</option>
+                            <option value="mobile">Mobile Money</option>
                         </select>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn" onclick="closeModal('addTransactionModal')">Cancel</button>
+                <button type="button" class="btn btn-secondary" onclick="closeAddTransactionModal()">Cancel</button>
                 <button type="submit" form="transactionForm" class="btn btn-primary">Save Transaction</button>
             </div>
         </div>
     </div>
 
-    <!-- Reject Transaction Modal -->
-    <div id="rejectTransactionModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Reject Transaction</h3>
-                <button class="close" onclick="closeModal('rejectTransactionModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form method="POST" action="" id="rejectForm">
-                    <input type="hidden" name="action" value="reject_transaction">
-                    <input type="hidden" name="transaction_id" id="rejectTransactionId">
-                    
-                    <div class="form-group">
-                        <label class="form-label">Rejection Reason *</label>
-                        <textarea class="form-control" name="rejection_reason" rows="4" required placeholder="Please provide a reason for rejecting this transaction..."></textarea>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn" onclick="closeModal('rejectTransactionModal')">Cancel</button>
-                <button type="submit" form="rejectForm" class="btn btn-danger">Reject Transaction</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Transaction Details Modal -->
-    <div id="transactionDetailsModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Transaction Details</h3>
-                <button class="close" onclick="closeModal('transactionDetailsModal')">&times;</button>
-            </div>
-            <div class="modal-body" id="transactionDetailsContent">
-                <!-- Details will be loaded here by JavaScript -->
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn" onclick="closeModal('transactionDetailsModal')">Close</button>
-            </div>
-        </div>
-    </div>
-
     <script>
-        // ── Mobile Nav (hamburger sidebar) ──
-        (function() {
-            const hamburgerBtn = document.getElementById('hamburgerBtn');
-            const navSidebar = document.querySelector('.sidebar');
-            const overlay = document.getElementById('mobileNavOverlay');
+       
 
-            function openNav() {
-                navSidebar.classList.add('open');
-                overlay.classList.add('active');
-                hamburgerBtn.innerHTML = '<i class="fas fa-times"></i>';
-                document.body.style.overflow = 'hidden';
-            }
+        // Sidebar Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
 
-            function closeNav() {
-                navSidebar.classList.remove('open');
-                overlay.classList.remove('active');
-                hamburgerBtn.innerHTML = '<i class="fas fa-bars"></i>';
+        const savedSidebarState = localStorage.getItem('sidebarCollapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+            mainContent.classList.add('sidebar-collapsed');
+            if (sidebarToggle) sidebarToggle.innerHTML = '<i class="fas fa-chevron-right"></i>';
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+        }
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('sidebar-collapsed');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed);
+            const icon = isCollapsed ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-left"></i>';
+            if (sidebarToggle) sidebarToggle.innerHTML = icon;
+            if (sidebarToggleBtn) sidebarToggleBtn.innerHTML = icon;
+        }
+
+        if (sidebarToggle) sidebarToggle.addEventListener('click', toggleSidebar);
+        if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+
+        // Mobile Menu Toggle
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        const mobileOverlay = document.getElementById('mobileOverlay');
+
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', () => {
+                const isOpen = sidebar.classList.toggle('mobile-open');
+                mobileOverlay.classList.toggle('active', isOpen);
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = isOpen ? 'hidden' : '';
+            });
+        }
+
+        if (mobileOverlay) {
+            mobileOverlay.addEventListener('click', () => {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
+                document.body.style.overflow = '';
+            });
+        }
+
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 992) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                if (mobileMenuToggle) mobileMenuToggle.innerHTML = '<i class="fas fa-bars"></i>';
                 document.body.style.overflow = '';
             }
-
-            hamburgerBtn.addEventListener('click', () => {
-                navSidebar.classList.contains('open') ? closeNav() : openNav();
-            });
-
-            overlay.addEventListener('click', closeNav);
-
-            window.addEventListener('resize', () => {
-                if (window.innerWidth > 900) closeNav();
-            });
-        })();
-
-        // Dark Mode Toggle
-        const themeToggle = document.getElementById('themeToggle');
-        const body = document.body;
-
-        const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        if (savedTheme === 'dark') {
-            body.classList.add('dark-mode');
-            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        }
-
-        themeToggle.addEventListener('click', () => {
-            body.classList.toggle('dark-mode');
-            const isDark = body.classList.contains('dark-mode');
-            localStorage.setItem('theme', isDark ? 'dark' : 'light');
-            themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
         });
 
-        // Modal functionality
-        function openModal(modalId) {
-            document.getElementById(modalId).classList.add('active');
+        // Modal functions
+        function openAddTransactionModal() {
+            document.getElementById('addTransactionModal').classList.add('active');
+            document.getElementById('transactionDate').valueAsDate = new Date();
         }
 
-        function closeModal(modalId) {
-            document.getElementById(modalId).classList.remove('active');
-            // Reset form
-            if (modalId === 'addTransactionModal') {
-                document.getElementById('transactionForm').reset();
-                document.getElementById('editTransactionId').value = '';
-                document.querySelector('#addTransactionModal .modal-header h3').textContent = 'Add New Transaction';
-                document.querySelector('#transactionForm input[name="action"]').value = 'add_transaction';
-            }
+        function closeAddTransactionModal() {
+            document.getElementById('addTransactionModal').classList.remove('active');
+            document.getElementById('transactionForm').reset();
         }
 
         // Transaction type change handler
-        document.getElementById('transactionType').addEventListener('change', function() {
-            const type = this.value;
-            const label = document.getElementById('payeePayerLabel');
-            label.textContent = type === 'income' ? 'Payer *' : 'Payee *';
-            
-            // Filter categories based on type
-            const categorySelect = document.getElementById('transactionCategory');
-            const options = categorySelect.options;
-            
-            for (let i = 0; i < options.length; i++) {
-                const option = options[i];
-                if (option.value === '') continue;
+        const transactionType = document.getElementById('transactionType');
+        if (transactionType) {
+            transactionType.addEventListener('change', function() {
+                const type = this.value;
+                const label = document.getElementById('payeePayerLabel');
+                label.textContent = type === 'income' ? 'Payer *' : 'Payee *';
                 
-                const categoryType = option.getAttribute('data-type');
-                if (categoryType === type) {
-                    option.style.display = '';
-                } else {
-                    option.style.display = 'none';
-                    if (option.selected) {
-                        categorySelect.value = '';
+                const categorySelect = document.getElementById('transactionCategory');
+                const options = categorySelect.options;
+                
+                for (let i = 0; i < options.length; i++) {
+                    const option = options[i];
+                    if (option.value === '') continue;
+                    
+                    const categoryType = option.getAttribute('data-type');
+                    if (categoryType === type) {
+                        option.style.display = '';
+                    } else {
+                        option.style.display = 'none';
+                        if (option.selected) {
+                            categorySelect.value = '';
+                        }
                     }
                 }
-            }
-        });
-
-        // Edit transaction
-        function editTransaction(id, transaction) {
-            document.getElementById('editTransactionId').value = id;
-            document.getElementById('transactionType').value = transaction.transaction_type;
-            document.getElementById('transactionCategory').value = transaction.category_id;
-            document.getElementById('transactionAmount').value = transaction.amount;
-            document.getElementById('transactionDescription').value = transaction.description;
-            document.getElementById('transactionDate').value = transaction.transaction_date;
-            document.getElementById('transactionReference').value = transaction.reference_number || '';
-            document.getElementById('transactionPayee').value = transaction.payee_payer;
-            document.getElementById('transactionMethod').value = transaction.payment_method;
-            
-            // Update UI for type
-            document.getElementById('transactionType').dispatchEvent(new Event('change'));
-            
-            // Change form action to edit
-            document.querySelector('#transactionForm input[name="action"]').value = 'edit_transaction';
-            document.querySelector('#addTransactionModal .modal-header h3').textContent = 'Edit Transaction';
-            
-            openModal('addTransactionModal');
-        }
-
-        // Reject transaction modal
-        function openRejectModal(transactionId) {
-            document.getElementById('rejectTransactionId').value = transactionId;
-            openModal('rejectTransactionModal');
-        }
-
-        // View transaction details
-        function viewTransactionDetails(transaction) {
-            const content = document.getElementById('transactionDetailsContent');
-            
-            let detailsHtml = `
-                <div style="display: grid; gap: 1rem;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Transaction ID</span>
-                        <strong>#${transaction.id}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Type</span>
-                        <span class="status-badge status-${transaction.transaction_type}">${transaction.transaction_type.charAt(0).toUpperCase() + transaction.transaction_type.slice(1)}</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Amount</span>
-                        <strong class="amount ${transaction.transaction_type}" style="font-size: 1.1rem;">RWF ${parseFloat(transaction.amount).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Category</span>
-                        <strong>${transaction.category_name}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Description</span>
-                        <strong>${transaction.description}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Date</span>
-                        <strong>${new Date(transaction.transaction_date).toLocaleDateString()}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">${transaction.transaction_type === 'income' ? 'Payer' : 'Payee'}</span>
-                        <strong>${transaction.payee_payer}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Payment Method</span>
-                        <strong>${transaction.payment_method.replace('_', ' ').toUpperCase()}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Reference</span>
-                        <strong>${transaction.reference_number || 'N/A'}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Status</span>
-                        <span class="status-badge status-${transaction.status}">${transaction.status.replace(/_/g, ' ').toUpperCase()}</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Requested By</span>
-                        <strong>${transaction.requested_by_name}</strong>
-                    </div>
-            `;
-            
-            if (transaction.approved_by_finance_name) {
-                detailsHtml += `
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Approved by Finance</span>
-                        <strong>${transaction.approved_by_finance_name}</strong>
-                    </div>
-                `;
-            }
-            
-            if (transaction.approved_by_president_name) {
-                detailsHtml += `
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span style="color: var(--dark-gray);">Approved by President</span>
-                        <strong>${transaction.approved_by_president_name}</strong>
-                    </div>
-                `;
-            }
-            
-            if (transaction.rejection_reason) {
-                detailsHtml += `
-                    <div>
-                        <span style="color: var(--dark-gray);">Rejection Reason</span>
-                        <div style="background: var(--light-gray); padding: 0.75rem; border-radius: var(--border-radius); margin-top: 0.5rem;">
-                            ${transaction.rejection_reason}
-                        </div>
-                    </div>
-                `;
-            }
-            
-            detailsHtml += `</div>`;
-            
-            content.innerHTML = detailsHtml;
-            openModal('transactionDetailsModal');
+            });
         }
 
         // Initialize chart
         document.addEventListener('DOMContentLoaded', function() {
             const monthlyTrends = <?php echo json_encode($monthly_trends); ?>;
             
-            if (monthlyTrends.length > 0) {
-                const ctx = document.getElementById('monthlyTrendsChart').getContext('2d');
-                const chart = new Chart(ctx, {
-                    type: 'bar',
-                    data: {
-                        labels: monthlyTrends.map(item => new Date(item.month + '-01').toLocaleDateString('en-US', {month: 'short', year: 'numeric'})).reverse(),
-                        datasets: [
-                            {
-                                label: 'Income',
-                                data: monthlyTrends.map(item => item.income).reverse(),
-                                backgroundColor: '#28a745',
-                                borderColor: '#1e7e34',
-                                borderWidth: 1
-                            },
-                            {
-                                label: 'Expenses',
-                                data: monthlyTrends.map(item => item.expenses).reverse(),
-                                backgroundColor: '#dc3545',
-                                borderColor: '#c82333',
-                                borderWidth: 1
-                            }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            y: {
-                                beginAtZero: true,
-                                ticks: {
-                                    callback: function(value) {
-                                        return 'RWF ' + value.toLocaleString();
+            if (monthlyTrends.length > 0 && monthlyTrends.some(t => t.income > 0 || t.expenses > 0)) {
+                const ctx = document.getElementById('monthlyTrendsChart');
+                if (ctx) {
+                    new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: monthlyTrends.map(item => {
+                                const [year, month] = item.month.split('-');
+                                return new Date(year, month - 1).toLocaleDateString('en-US', {month: 'short', year: 'numeric'});
+                            }),
+                            datasets: [
+                                {
+                                    label: 'Income',
+                                    data: monthlyTrends.map(item => parseFloat(item.income)),
+                                    backgroundColor: '#28a745',
+                                    borderColor: '#1e7e34',
+                                    borderWidth: 1
+                                },
+                                {
+                                    label: 'Expenses',
+                                    data: monthlyTrends.map(item => parseFloat(item.expenses)),
+                                    backgroundColor: '#dc3545',
+                                    borderColor: '#c82333',
+                                    borderWidth: 1
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    ticks: {
+                                        callback: function(value) {
+                                            return 'RWF ' + value.toLocaleString();
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                });
+                    });
+                }
+            } else {
+                const chartCard = document.querySelector('.chart-card');
+                if (chartCard) chartCard.style.display = 'none';
             }
-            
-            // Set default date to today
-            document.getElementById('transactionDate').valueAsDate = new Date();
         });
 
-        // Close modal on outside click
+        // Close modals on outside click
         window.addEventListener('click', function(event) {
-            const modals = document.querySelectorAll('.modal');
+            const modals = document.querySelectorAll('.modal-overlay');
             modals.forEach(modal => {
                 if (event.target === modal) {
                     modal.classList.remove('active');
                 }
             });
         });
+
+        // Prevent form resubmission on page refresh
+        if (window.history.replaceState) {
+            window.history.replaceState(null, null, window.location.href);
+        }
+
+        // Auto-close alerts after 5 seconds
+        setTimeout(() => {
+            document.querySelectorAll('.alert').forEach(alert => {
+                alert.style.opacity = '0';
+                alert.style.transition = 'opacity 0.5s';
+                setTimeout(() => {
+                    if (alert.parentNode) alert.remove();
+                }, 500);
+            });
+        }, 5000);
     </script>
 </body>
 </html>

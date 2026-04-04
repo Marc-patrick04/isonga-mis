@@ -1638,7 +1638,6 @@ if (!empty($performance_data)) {
                 <div class="page-header">
                     <div class="page-title">
                         <h1>Committee Management</h1>
-                        <p>Oversee and manage all committee members and their performance</p>
                     </div>
                 </div>
 
