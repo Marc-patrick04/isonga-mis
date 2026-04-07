@@ -1875,10 +1875,10 @@ foreach ($stat_queries as $key => $query) {
                     </div>
 
                     <div class="hero-actions">
-                        <a href="auth/student_login" class="btn btn-primary" data-aos="fade-up" data-aos-delay="500">
+                        <a href="auth/student_login.php" class="btn btn-primary" data-aos="fade-up" data-aos-delay="500">
                             <i class="fas fa-user-graduate"></i> Student Portal
                         </a>
-                        <a href="auth/login" class="btn btn-secondary" data-aos="fade-up" data-aos-delay="600">
+                        <a href="auth/login.php" class="btn btn-secondary" data-aos="fade-up" data-aos-delay="600">
                             <i class="fas fa-users"></i> Committee Portal
                         </a>
                     </div>
