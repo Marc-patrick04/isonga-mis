@@ -1806,17 +1806,17 @@ foreach ($stat_queries as $key => $query) {
                 <!-- Desktop Navigation -->
                 <div class="desktop-nav">
                     <nav class="nav-links" aria-label="Main Navigation">
-                        <a href="announcements">Announcements</a>
-                        <a href="news">News</a>
-                        <a href="events">Events</a>
-                        <a href="committee">Committee</a>
-                        <a href="gallery">Gallery</a>
+                        <a href="announcements.php">Announcements</a>
+                        <a href="news.php">News</a>
+                        <a href="events.php">Events</a>
+                        <a href="committee.php">Committee</a>
+                        <a href="gallery.php">Gallery</a>
                     </nav>
                     <div class="login-buttons">
-                        <a href="auth/student_login" class="login-btn btn-student">
+                        <a href="auth/student_login.php" class="login-btn btn-student">
                             <i class="fas fa-user-graduate"></i> Student
                         </a>
-                        <a href="auth/login" class="login-btn btn-committee">
+                        <a href="auth/login.php" class="login-btn btn-committee">
                             <i class="fas fa-users"></i> Committee
                         </a>
                     </div>
@@ -1832,18 +1832,18 @@ foreach ($stat_queries as $key => $query) {
             <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
                 <div class="mobile-nav">
                     <nav class="nav-links" aria-label="Mobile Navigation">
-                        <a href="announcements">Announcements</a>
-                        <a href="news">News</a>
-                        <a href="events">Events</a>
-                        <a href="committee">Committee</a>
-                        <a href="gallery">Gallery</a>
+                        <a href="announcements.php">Announcements</a>
+                        <a href="news.php">News</a>
+                        <a href="events.php">Events</a>
+                        <a href="committee.php">Committee</a>
+                        <a href="gallery.php">Gallery</a>
                     </nav>
                 </div>
                 <div class="mobile-login-buttons">
-                    <a href="auth/student_login" class="login-btn btn-student">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
                         <i class="fas fa-user-graduate"></i> Student Portal
                     </a>
-                    <a href="auth/login" class="login-btn btn-committee">
+                    <a href="auth/login.php" class="login-btn btn-committee">
                         <i class="fas fa-users"></i> Committee Portal
                     </a>
                 </div>
@@ -1971,7 +1971,7 @@ foreach ($stat_queries as $key => $query) {
                                     <?php endforeach; ?>
                                 <?php endif; ?>
                             </div>
-                            <a href="announcements" class="read-more">
+                            <a href="announcements.php" class="read-more">
                                 View All <i class="fas fa-arrow-right"></i>
                             </a>
                         </div>
@@ -2036,7 +2036,7 @@ foreach ($stat_queries as $key => $query) {
                                     <?php endforeach; ?>
                                 <?php endif; ?>
                             </div>
-                            <a href="events" class="read-more">
+                            <a href="events.php" class="read-more">
                                 View Calendar <i class="fas fa-arrow-right"></i>
                             </a>
                         </div>
@@ -2094,7 +2094,7 @@ foreach ($stat_queries as $key => $query) {
                 </div>
                 
                 <div class="view-all">
-                    <a href="committee" class="btn btn-primary" data-aos="fade-up">
+                    <a href="committee.php" class="btn btn-primary" data-aos="fade-up">
                         <i class="fas fa-users"></i> View Full Committee
                     </a>
                 </div>
@@ -2127,10 +2127,10 @@ foreach ($stat_queries as $key => $query) {
                     <div class="footer-links-group">
                         <h4 class="footer-heading">Quick Links</h4>
                         <ul class="footer-links">
-                            <li><a href="announcements"><i class="fas fa-chevron-right"></i> Announcements</a></li>
-                            <li><a href="news"><i class="fas fa-chevron-right"></i> Campus News</a></li>
-                            <li><a href="events"><i class="fas fa-chevron-right"></i> Events</a></li>
-                            <li><a href="committee"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                            <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                            <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                            <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
+                            <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
                         </ul>
                     </div>
                     

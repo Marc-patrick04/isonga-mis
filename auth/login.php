@@ -611,9 +611,9 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
             </form>
 
             <div class="help-links">
-                <p>Having trouble signing in? <a href="forgot-password">Reset your password</a></p>
-                <p style="margin-top: 10px;">Not a committee member? <a href="student_login">Student Login</a></p>
-                <p style="margin-top: 10px;">Return to <a href="../index">Home Page</a></p>
+                <p>Having trouble signing in? <a href="forgot-password.php">Reset your password</a></p>
+                <p style="margin-top: 10px;">Not a committee member? <a href="student_login.php">Student Login</a></p>
+                <p style="margin-top: 10px;">Return to <a href="../index.php">Home Page</a></p>
             </div>
         </div>
     </div>

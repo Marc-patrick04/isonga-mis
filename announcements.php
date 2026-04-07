@@ -1329,18 +1329,18 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
             <!-- Desktop Navigation -->
             <div class="desktop-nav">
                 <nav class="nav-links" aria-label="Main Navigation">
-                    <a href="index">Home</a>
-                    <a href="announcements" class="active">Announcements</a>
-                    <a href="news">News</a>
-                    <a href="events">Events</a>
-                    <a href="committee">Committee</a>
-                    <a href="gallery">Gallery</a>
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php" class="active">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
                 </nav>
                 <div class="login-buttons">
-                    <a href="auth/student_login" class="login-btn btn-student">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
                         <i class="fas fa-user-graduate"></i> Student
                     </a>
-                    <a href="auth/login" class="login-btn btn-committee">
+                    <a href="auth/login.php" class="login-btn btn-committee">
                         <i class="fas fa-users"></i> Committee
                     </a>
                 </div>
@@ -1356,19 +1356,19 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
         <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
             <div class="mobile-nav">
                 <nav class="nav-links" aria-label="Mobile Navigation">
-                    <a href="index">Home</a>
-                    <a href="announcements" class="active">Announcements</a>
-                    <a href="news">News</a>
-                    <a href="events">Events</a>
-                    <a href="committee">Committee</a>
-                    <a href="gallery">Gallery</a>
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php" class="active">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
                 </nav>
             </div>
             <div class="mobile-login-buttons">
-                <a href="auth/student_login" class="login-btn btn-student">
+                <a href="auth/student_login.php" class="login-btn btn-student">
                     <i class="fas fa-user-graduate"></i> Student Portal
                 </a>
-                <a href="auth/login" class="login-btn btn-committee">
+                <a href="auth/login.php" class="login-btn btn-committee">
                     <i class="fas fa-users"></i> Committee Portal
                 </a>
             </div>
@@ -1380,7 +1380,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
         <?php if ($single_announcement): ?>
             <!-- Single Announcement View -->
             <div class="single-announcement">
-                <a href="announcements" class="back-link">
+                <a href="announcements.php" class="back-link">
                     <i class="fas fa-arrow-left"></i> Back to All Announcements
                 </a>
                 
@@ -1456,7 +1456,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                             <i class="fas fa-filter"></i> Apply
                         </button>
                         <?php if ($category_filter !== 'all' || !empty($search_query)): ?>
-                            <a href="announcements" class="clear-filters">
+                            <a href="announcements.php" class="clear-filters">
                                 <i class="fas fa-times"></i> Clear
                             </a>
                         <?php endif; ?>
@@ -1481,7 +1481,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                             <?php else: ?>
                                 <?php foreach ($recent_announcements as $recent): ?>
                                     <li class="recent-item">
-                                        <a href="announcements?id=<?php echo $recent['id']; ?>">
+                                        <a href="announcements.php?id=<?php echo $recent['id']; ?>">
                                             <?php echo htmlspecialchars($recent['title']); ?>
                                         </a>
                                         <div class="recent-date">
@@ -1502,7 +1502,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                         </h3>
                         <ul class="filter-list">
                             <li class="filter-item">
-                                <a href="announcements">
+                                <a href="announcements.php">
                                     All Announcements
                                     <span class="filter-count"><?php echo count($announcements); ?></span>
                                 </a>
@@ -1545,7 +1545,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                                 <?php endif; ?>
                             </p>
                             <?php if ($category_filter !== 'all' || !empty($search_query)): ?>
-                                <a href="announcements" class="login-btn btn-student" style="margin-top: 1rem; display: inline-block;">
+                                <a href="announcements.php" class="login-btn btn-student" style="margin-top: 1rem; display: inline-block;">
                                     <i class="fas fa-times"></i> Clear Filters
                                 </a>
                             <?php endif; ?>
@@ -1593,7 +1593,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                                         ?>
                                     </div>
 
-                                    <a href="announcements?id=<?php echo $announcement['id']; ?>" class="read-more">
+                                    <a href="announcements.php?id=<?php echo $announcement['id']; ?>" class="read-more">
                                         Read Full Announcement <i class="fas fa-arrow-right"></i>
                                     </a>
                                 </article>
@@ -1629,10 +1629,10 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
             <div class="footer-links-group">
                 <h4 class="footer-heading">Quick Links</h4>
                 <ul class="footer-links">
-                    <li><a href="index"><i class="fas fa-chevron-right"></i> Home</a></li>
-                    <li><a href="announcements"><i class="fas fa-chevron-right"></i> Announcements</a></li>
-                    <li><a href="news"><i class="fas fa-chevron-right"></i> Campus News</a></li>
-                    <li><a href="events"><i class="fas fa-chevron-right"></i> Events</a></li>
+                    <li><a href="index.php"><i class="fas fa-chevron-right"></i> Home</a></li>
+                    <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                    <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                    <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
                 </ul>
             </div>
             
@@ -1642,7 +1642,7 @@ $page_title = $single_announcement ? htmlspecialchars($single_announcement['titl
                     <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                     <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
                     <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
-                    <li><a href="gallery"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                    <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                 </ul>
             </div>
             

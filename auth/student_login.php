@@ -11,13 +11,13 @@ require_once '../config/database.php';
 
 // Redirect if already logged in as student
 if (isset($_SESSION['user_id']) && $_SESSION['role'] === 'student') {
-    header('Location: ../student/dashboard');
+    header('Location: ../student/dashboard.php');
     exit();
 }
 
 // If committee member is logged in, redirect them to their dashboard
 if (isset($_SESSION['user_id']) && $_SESSION['role'] !== 'student') {
-    header('Location: ../auth/login'); // Redirect to committee login
+    header('Location: ../auth/login.php'); // Redirect to committee login
     exit();
 }
 
@@ -72,10 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Redirect based on class rep status
                 if ($user['is_class_rep']) {
                     // Class representative - go directly to class rep dashboard
-                    header('Location: ../student/class_rep_dashboard');
+                    header('Location: ../student/class_rep_dashboard.php');
                 } else {
                     // Regular student - go to normal dashboard
-                    header('Location: ../student/dashboard');
+                    header('Location: ../student/dashboard.php');
                 }
                 exit();
             } else {
@@ -584,11 +584,11 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
                 </div>
             <?php endif; ?>
 
-            <form method="POST" action="student_login" id="loginForm">
+            <form method="POST" action="student_login.php" id="loginForm">
                 <div class="input-group">
                     <i class="fas fa-id-card"></i>
                     <input type="text" id="reg_number" name="reg_number" 
-                           placeholder="e.g., 24RP00001" 
+                           placeholder="e.g., 20RP12345" 
                            value="<?php echo isset($reg_number) ? htmlspecialchars($reg_number) : ''; ?>" 
                            required>
                 </div>
@@ -609,9 +609,9 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $identifier 
             </form>
 
             <div class="help-links">
-                <p>Having trouble signing in? <a href="forgot-password">Reset your password</a></p>
-                <p style="margin-top: 10px;">Not a student? <a href="../auth/login">Committee Login</a></p>
-                <p style="margin-top: 10px;">Return to <a href="../index">Home Page</a></p>
+                <p>Having trouble signing in? <a href="forgot-password.php">Reset your password</a></p>
+                <p style="margin-top: 10px;">Not a student? <a href="../auth/login.php">Committee Login</a></p>
+                <p style="margin-top: 10px;">Return to <a href="../index.php">Home Page</a></p>
             </div>
         </div>
     </div>

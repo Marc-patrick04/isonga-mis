@@ -1553,18 +1553,18 @@ $page_title = "Campus Events - RPSU Musanze College";
             <!-- Desktop Navigation -->
             <div class="desktop-nav">
                 <nav class="nav-links" aria-label="Main Navigation">
-                    <a href="index">Home</a>
-                    <a href="announcements">Announcements</a>
-                    <a href="news">News</a>
-                    <a href="events" class="active">Events</a>
-                    <a href="committee">Committee</a>
-                    <a href="gallery">Gallery</a>
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php" class="active">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
                 </nav>
                 <div class="login-buttons">
-                    <a href="auth/student_login" class="login-btn btn-student">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
                         <i class="fas fa-user-graduate"></i> Student
                     </a>
-                    <a href="auth/login" class="login-btn btn-committee">
+                    <a href="auth/login.php" class="login-btn btn-committee">
                         <i class="fas fa-users"></i> Committee
                     </a>
                 </div>
@@ -1580,19 +1580,19 @@ $page_title = "Campus Events - RPSU Musanze College";
         <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
             <div class="mobile-nav">
                 <nav class="nav-links" aria-label="Mobile Navigation">
-                    <a href="index">Home</a>
-                    <a href="announcements">Announcements</a>
-                    <a href="news">News</a>
-                    <a href="events" class="active">Events</a>
-                    <a href="committee">Committee</a>
-                    <a href="gallery">Gallery</a>
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php" class="active">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php">Gallery</a>
                 </nav>
             </div>
             <div class="mobile-login-buttons">
-                <a href="auth/student_login" class="login-btn btn-student">
+                <a href="auth/student_login.php" class="login-btn btn-student">
                     <i class="fas fa-user-graduate"></i> Student Portal
                 </a>
-                <a href="auth/login" class="login-btn btn-committee">
+                <a href="auth/login.php" class="login-btn btn-committee">
                     <i class="fas fa-users"></i> Committee Portal
                 </a>
             </div>
@@ -1609,17 +1609,17 @@ $page_title = "Campus Events - RPSU Musanze College";
 
         <!-- Event Type Filter -->
         <div class="event-type-filter" data-aos="fade-up" data-aos-delay="100">
-            <a href="events?type=upcoming&category=<?php echo $current_category; ?>" 
+            <a href="events.php" 
                class="type-btn <?php echo $event_type === 'upcoming' ? 'active' : ''; ?>">
                 <i class="fas fa-calendar-alt"></i> Upcoming Events
                 <span class="type-badge"><?php echo $event_stats['upcoming_events']; ?></span>
             </a>
-            <a href="events?type=new&category=<?php echo $current_category; ?>" 
+            <a href="events.php?type=new&category=<?php echo $current_category; ?>" 
                class="type-btn <?php echo $event_type === 'new' ? 'active' : ''; ?>">
                 <i class="fas fa-star"></i> New Events
                 <span class="type-badge"><?php echo $event_stats['new_events']; ?></span>
             </a>
-            <a href="events?type=past&category=<?php echo $current_category; ?>" 
+            <a href="events.php?type=past&category=<?php echo $current_category; ?>" 
                class="type-btn <?php echo $event_type === 'past' ? 'active' : ''; ?>">
                 <i class="fas fa-history"></i> Past Events
                 <span class="type-badge"><?php echo $event_stats['past_events']; ?></span>
@@ -1628,12 +1628,12 @@ $page_title = "Campus Events - RPSU Musanze College";
 
         <!-- Category Filter -->
         <div class="category-filter" data-aos="fade-up" data-aos-delay="200">
-            <a href="events?type=<?php echo $event_type; ?>&category=all" 
+            <a href="events.php?type=<?php echo $event_type; ?>&category=all" 
                class="category-btn <?php echo $current_category === 'all' ? 'active' : ''; ?>">
                 <i class="fas fa-layer-group"></i> All Categories
             </a>
             <?php foreach ($categories as $category): ?>
-                <a href="events?type=<?php echo $event_type; ?>&category=<?php echo $category['slug']; ?>" 
+                <a href="events.php?type=<?php echo $event_type; ?>&category=<?php echo $category['slug']; ?>" 
                    class="category-btn <?php echo $current_category === $category['slug'] ? 'active' : ''; ?>">
                     <i class="fas fa-<?php echo $category['icon']; ?>"></i>
                     <?php echo htmlspecialchars($category['name']); ?>
@@ -1675,7 +1675,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                                 <?php echo htmlspecialchars($featured['category_name']); ?>
                             </div>
                             <h3 class="featured-title">
-                                <a href="event_single?id=<?php echo $featured['id']; ?>">
+                                <a href="event_single.php?id=<?php echo $featured['id']; ?>">
                                     <?php echo htmlspecialchars($featured['title']); ?>
                                 </a>
                             </h3>
@@ -1793,7 +1793,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                     <?php if ($total_pages > 1): ?>
                         <div class="pagination">
                             <?php if ($page > 1): ?>
-                                <a href="events?type=<?php echo $event_type; ?>&category=<?php echo $current_category; ?>&page=<?php echo $page - 1; ?>">
+                                <a href="events.php?type=<?php echo $event_type; ?>&category=<?php echo $current_category; ?>&page=<?php echo $page - 1; ?>">
                                     <i class="fas fa-chevron-left"></i> Previous
                                 </a>
                             <?php else: ?>
@@ -1806,14 +1806,14 @@ $page_title = "Campus Events - RPSU Musanze College";
                             
                             for ($i = $start_page; $i <= $end_page; $i++): 
                             ?>
-                                <a href="events?type=<?php echo $event_type; ?>&category=<?php echo $current_category; ?>&page=<?php echo $i; ?>" 
+                                <a href="events.php?type=<?php echo $event_type; ?>&category=<?php echo $current_category; ?>&page=<?php echo $i; ?>" 
                                    class="<?php echo $i == $page ? 'current' : ''; ?>">
                                     <?php echo $i; ?>
                                 </a>
                             <?php endfor; ?>
 
                             <?php if ($page < $total_pages): ?>
-                                <a href="events?type=<?php echo $event_type; ?>&category=<?php echo $current_category; ?>&page=<?php echo $page + 1; ?>">
+                                <a href="events.php?type=<?php echo $event_type; ?>&category=<?php echo $current_category; ?>&page=<?php echo $page + 1; ?>">
                                     Next <i class="fas fa-chevron-right"></i>
                                 </a>
                             <?php else: ?>
@@ -1840,7 +1840,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                         <?php else: ?>
                             <?php foreach ($upcoming_events as $upcoming): ?>
                                 <li class="upcoming-item">
-                                    <a href="event_single?id=<?php echo $upcoming['id']; ?>">
+                                    <a href="event_single.php?id=<?php echo $upcoming['id']; ?>">
                                         <?php echo htmlspecialchars($upcoming['title']); ?>
                                     </a>
                                     <div class="upcoming-meta">
@@ -1888,7 +1888,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                     <ul class="upcoming-list">
                         <?php foreach ($category_counts as $cat): ?>
                             <li class="upcoming-item">
-                                <a href="events?type=<?php echo $event_type; ?>&category=<?php echo $cat['slug']; ?>">
+                                <a href="events.php?type=<?php echo $event_type; ?>&category=<?php echo $cat['slug']; ?>">
                                     <?php echo htmlspecialchars($cat['name']); ?>
                                     <span class="category-count" style="float: right;"><?php echo $cat['event_count']; ?></span>
                                 </a>
@@ -1940,10 +1940,10 @@ $page_title = "Campus Events - RPSU Musanze College";
             <div class="footer-links-group">
                 <h4 class="footer-heading">Quick Links</h4>
                 <ul class="footer-links">
-                    <li><a href="announcements"><i class="fas fa-chevron-right"></i> Announcements</a></li>
-                    <li><a href="news"><i class="fas fa-chevron-right"></i> Campus News</a></li>
-                    <li><a href="events"><i class="fas fa-chevron-right"></i> Events</a></li>
-                    <li><a href="committee"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                    <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                    <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                    <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
+                    <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
                 </ul>
             </div>
             
@@ -1953,7 +1953,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                     <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                     <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
                     <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
-                    <li><a href="gallery"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                    <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                 </ul>
             </div>
             

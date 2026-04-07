@@ -1735,18 +1735,18 @@ function getImageUrl($imagePath) {
             <!-- Desktop Navigation -->
             <div class="desktop-nav">
                 <nav class="nav-links" aria-label="Main Navigation">
-                    <a href="index">Home</a>
-                    <a href="announcements">Announcements</a>
-                    <a href="news">News</a>
-                    <a href="events">Events</a>
-                    <a href="committee">Committee</a>
-                    <a href="gallery" class="active">Gallery</a>
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php" class="active">Gallery</a>
                 </nav>
                 <div class="login-buttons">
-                    <a href="auth/student_login" class="login-btn btn-student">
+                    <a href="auth/student_login.php" class="login-btn btn-student">
                         <i class="fas fa-user-graduate"></i> Student
                     </a>
-                    <a href="auth/login" class="login-btn btn-committee">
+                    <a href="auth/login.php" class="login-btn btn-committee">
                         <i class="fas fa-users"></i> Committee
                     </a>
                 </div>
@@ -1762,19 +1762,19 @@ function getImageUrl($imagePath) {
         <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
             <div class="mobile-nav">
                 <nav class="nav-links" aria-label="Mobile Navigation">
-                    <a href="index">Home</a>
-                    <a href="announcements">Announcements</a>
-                    <a href="news">News</a>
-                    <a href="events">Events</a>
-                    <a href="committee">Committee</a>
-                    <a href="gallery" class="active">Gallery</a>
+                    <a href="index.php">Home</a>
+                    <a href="announcements.php">Announcements</a>
+                    <a href="news.php">News</a>
+                    <a href="events.php">Events</a>
+                    <a href="committee.php">Committee</a>
+                    <a href="gallery.php" class="active">Gallery</a>
                 </nav>
             </div>
             <div class="mobile-login-buttons">
-                <a href="auth/student_login" class="login-btn btn-student">
+                <a href="auth/student_login.php" class="login-btn btn-student">
                     <i class="fas fa-user-graduate"></i> Student Portal
                 </a>
-                <a href="auth/login" class="login-btn btn-committee">
+                <a href="auth/login.php" class="login-btn btn-committee">
                     <i class="fas fa-users"></i> Committee Portal
                 </a>
             </div>
@@ -1792,12 +1792,12 @@ function getImageUrl($imagePath) {
         <!-- Gallery Controls -->
         <div class="gallery-controls" data-aos="fade-up" data-aos-delay="100">
             <div class="category-filter">
-                <a href="gallery?category=all&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>" 
+                <a href="gallery.php?category=all&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>" 
                    class="category-btn <?php echo $current_category === 'all' ? 'active' : ''; ?>">
                     <i class="fas fa-layer-group"></i> All Photos
                 </a>
                 <?php foreach ($category_counts as $category): ?>
-                    <a href="gallery?category=<?php echo $category['id']; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>" 
+                    <a href="gallery.php?category=<?php echo $category['id']; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>" 
                        class="category-btn <?php echo $current_category == $category['id'] ? 'active' : ''; ?>">
                         <i class="fas fa-<?php echo isset($category['icon']) ? $category['icon'] : 'images'; ?>"></i>
                         <?php echo htmlspecialchars($category['name']); ?>
@@ -1954,7 +1954,7 @@ function getImageUrl($imagePath) {
                     <?php if ($total_pages > 1): ?>
                         <div class="pagination">
                             <?php if ($page > 1): ?>
-                                <a href="gallery?category=<?php echo $current_category; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>&page=<?php echo $page - 1; ?>">
+                                <a href="gallery.php?category=<?php echo $current_category; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>&page=<?php echo $page - 1; ?>">
                                     <i class="fas fa-chevron-left"></i> Previous
                                 </a>
                             <?php else: ?>
@@ -1967,14 +1967,14 @@ function getImageUrl($imagePath) {
                             
                             for ($i = $start_page; $i <= $end_page; $i++): 
                             ?>
-                                <a href="gallery?category=<?php echo $current_category; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>&page=<?php echo $i; ?>" 
+                                <a href="gallery.php?category=<?php echo $current_category; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>&page=<?php echo $i; ?>" 
                                    class="<?php echo $i == $page ? 'current' : ''; ?>">
                                     <?php echo $i; ?>
                                 </a>
                             <?php endfor; ?>
 
                             <?php if ($page < $total_pages): ?>
-                                <a href="gallery?category=<?php echo $current_category; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>&page=<?php echo $page + 1; ?>">
+                                <a href="gallery.php?category=<?php echo $current_category; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>&page=<?php echo $page + 1; ?>">
                                     Next <i class="fas fa-chevron-right"></i>
                                 </a>
                             <?php else: ?>
@@ -2060,7 +2060,7 @@ function getImageUrl($imagePath) {
                     <ul class="categories-list">
                         <?php foreach ($category_counts as $category): ?>
                             <li class="category-item">
-                                <a href="gallery?category=<?php echo $category['id']; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>">
+                                <a href="gallery.php?category=<?php echo $category['id']; ?>&view=<?php echo $view_type; ?>&sort=<?php echo $sort_by; ?>">
                                     <span>
                                         <i class="fas fa-<?php echo isset($category['icon']) ? $category['icon'] : 'images'; ?>"></i>
                                         <?php echo htmlspecialchars($category['name']); ?>
@@ -2141,10 +2141,10 @@ function getImageUrl($imagePath) {
             <div class="footer-links-group">
                 <h4 class="footer-heading">Quick Links</h4>
                 <ul class="footer-links">
-                    <li><a href="announcements"><i class="fas fa-chevron-right"></i> Announcements</a></li>
-                    <li><a href="news"><i class="fas fa-chevron-right"></i> Campus News</a></li>
-                    <li><a href="events"><i class="fas fa-chevron-right"></i> Events</a></li>
-                    <li><a href="committee"><i class="fas fa-chevron-right"></i> Committee</a></li>
+                    <li><a href="announcements.php"><i class="fas fa-chevron-right"></i> Announcements</a></li>
+                    <li><a href="news.php"><i class="fas fa-chevron-right"></i> Campus News</a></li>
+                    <li><a href="events.php"><i class="fas fa-chevron-right"></i> Events</a></li>
+                    <li><a href="committee.php"><i class="fas fa-chevron-right"></i> Committee</a></li>
                 </ul>
             </div>
             
@@ -2154,7 +2154,7 @@ function getImageUrl($imagePath) {
                     <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                     <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
                     <li><a href="/assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
-                    <li><a href="gallery"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                    <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                 </ul>
             </div>
             
