@@ -586,7 +586,7 @@ function recordLoginActivity($pdo, $userId = null, $success = true, $email = nul
                 </div>
             <?php endif; ?>
 
-            <form method="POST" action="login" id="loginForm">
+            <form method="POST" action="login.php" id="loginForm">
                 <div class="input-group">
                     <i class="fas fa-envelope"></i>
                     <input type="email" id="email" name="email" 
