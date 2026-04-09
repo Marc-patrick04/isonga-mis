@@ -4,12 +4,12 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? 0)) {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
 if (!isset($_GET['id'])) {
-    header('Location: class_rep_financial_aid');
+    header('Location: class_rep_financial_aid.php');
     exit();
 }
 
@@ -211,13 +211,13 @@ function getUrgencyBadge($urgency) {
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li><a href="class_tickets"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
-                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="class_rep_financial_aid" class="active"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
-                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
+                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="class_rep_financial_aid.php" class="active"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
+                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -237,9 +237,9 @@ function getUrgencyBadge($urgency) {
                             <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
                         </button>
                     </form>
-                    <a href="class_rep_financial_aid" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
+                    <a href="class_rep_financial_aid.php" class="btn btn-secondary"><i class="fas fa-arrow-left"></i> Back</a>
                     <?php if ($request['status'] === 'approved'): ?>
-                        <a href="../student/generate_approval_letter?id=<?php echo $request_id; ?>" class="btn btn-success">
+                        <a href="../student/generate_approval_letter.php?id=<?php echo $request_id; ?>" class="btn btn-success">
                             <i class="fas fa-download"></i> Approval Letter
                         </a>
                     <?php endif; ?>

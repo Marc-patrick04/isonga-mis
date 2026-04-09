@@ -3,7 +3,7 @@ session_start();
 require_once '../config/database.php';
 
 // Check if user is logged in and is President of Representative Board
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'president_representative_board') {
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'vice_president_representative_board') {
     header('Location: ../auth/login.php');
     exit();
 }
@@ -32,12 +32,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         // Get the committee ID for President of Representative Board
         try {
-            $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'president_representative_board'");
+            $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'vice_president_representative_board'");
             $stmt->execute([$user_id]);
             $committee_member = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if (!$committee_member) {
-                $error = "You are not assigned as President of Representative Board in any committee.";
+                $error = "You are not assigned as vice_president_representative_board in any committee.";
             } else {
                 // For President of Representative Board, we use their committee_member_id as committee_id
                 $committee_id = $committee_member['id'];
@@ -109,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Get budget requests data for the President of Representative Board
 try {
     // Get the committee member ID for President of Representative Board
-    $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'president_representative_board'");
+    $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'vice_president_representative_board'");
     $stmt->execute([$user_id]);
     $committee_member = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -150,7 +150,7 @@ try {
     } else {
         $budget_requests = [];
         $stats = ['total_requests' => 0, 'total_approved_amount' => 0, 'total_funded_amount' => 0, 'pending_review' => 0, 'approved_requests' => 0];
-        $error = "You are not assigned as President of Representative Board in any committee.";
+        $error = "You are not assigned as Vice President of Representative Board in any committee.";
     }
     
 } catch (PDOException $e) {
@@ -1066,7 +1066,7 @@ try {
                     </div>
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($president_name); ?></div>
-                        <div class="user-role">President - Representative Board</div>
+                        <div class="user-role">Vice President - Representative Board</div>
                     </div>
                 </div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
@@ -1132,12 +1132,7 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
-                 <li class="menu-item">
-                    <a href="tickets_analysis.php" >
-                        <i class="fas fa-ticket-alt"></i>
-                        <span>Tickets Analysis</span>
-                    </a>
-                </li>
+                
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>

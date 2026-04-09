@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep (PostgreSQL uses true for boolean)
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? false)) {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
@@ -16,16 +16,6 @@ $department = $_SESSION['department'];
 $program = $_SESSION['program'];
 $academic_year = $_SESSION['academic_year'];
 
-// Get theme preference
-$theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
-
-// Handle theme toggle
-if (isset($_POST['toggle_theme'])) {
-    $new_theme = $theme === 'light' ? 'dark' : 'light';
-    setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: class_rep_dashboard');
-    exit();
-}
 
 // Get class representative statistics (PostgreSQL compatible)
 // Total students in the same program and year
@@ -123,7 +113,7 @@ function safe_display($data) {
 ?>
 
 <!DOCTYPE html>
-<html lang="en" data-theme="<?php echo $theme; ?>">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
@@ -150,14 +140,6 @@ function safe_display($data) {
             --shadow: 0 4px 12px rgba(0,0,0,0.1);
             --radius: 8px;
             --transition: all 0.3s ease;
-        }
-        [data-theme="dark"] {
-            --white: #1a1a1a;
-            --light: #2d2d2d;
-            --gray: #3d3d3d;
-            --dark-gray: #a0a0a0;
-            --text: #e9ecef;
-            --shadow: 0 4px 12px rgba(0,0,0,0.3);
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); font-size: 0.875rem; }
@@ -263,13 +245,13 @@ function safe_display($data) {
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard" class="active"><i class="fas fa-tachometer-alt"></i> Class Rep Dashboard</a></li>
-                <li><a href="class_tickets"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
-                <li><a href="class_rep_financial_aid"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
-                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard.php" class="active"><i class="fas fa-tachometer-alt"></i> Class Rep Dashboard</a></li>
+                <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
+                <li><a href="class_rep_financial_aid.php"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
+                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -287,11 +269,6 @@ function safe_display($data) {
                     <button class="icon-btn" id="mobileMenuToggle" title="Menu">
                         <i class="fas fa-bars"></i>
                     </button>
-                    <form method="POST">
-                        <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
-                            <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-                        </button>
-                    </form>
                 </div>
             </div>
 
@@ -331,7 +308,7 @@ function safe_display($data) {
                 <div class="card">
                     <div class="card-header">
                         <h3 class="card-title">Recent Class Tickets</h3>
-                        <a href="class_tickets" class="link">View All</a>
+                        <a href="class_tickets.php" class="link">View All</a>
                     </div>
                     <?php if (empty($recent_class_tickets)): ?>
                         <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
@@ -401,10 +378,10 @@ function safe_display($data) {
                     <h3 class="card-title">Quick Actions</h3>
                 </div>
                 <div class="quick-actions">
-                    <a href="class_tickets" class="btn btn-primary"><i class="fas fa-ticket-alt"></i> View Class Tickets</a>
-                    <a href="class_students" class="btn btn-success"><i class="fas fa-users"></i> Class Students</a>
-                    <a href="rep_meetings" class="btn btn-secondary"><i class="fas fa-calendar-alt"></i> Meetings</a>
-                    <a href="rep_reports" class="btn btn-secondary"><i class="fas fa-file-alt"></i> Submit Report</a>
+                    <a href="class_tickets.php" class="btn btn-primary"><i class="fas fa-ticket-alt"></i> View Class Tickets</a>
+                    <a href="class_students.php" class="btn btn-success"><i class="fas fa-users"></i> Class Students</a>
+                    <a href="rep_meetings.php" class="btn btn-secondary"><i class="fas fa-calendar-alt"></i> Meetings</a>
+                    <a href="rep_reports.php" class="btn btn-secondary"><i class="fas fa-file-alt"></i> Submit Report</a>
                 </div>
             </div>
         </div>

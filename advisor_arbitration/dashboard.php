@@ -1180,8 +1180,8 @@ $resolution_rate = $total_cases > 0 ? round(($resolved_cases / $total_cases) * 1
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Arbitration Advisor <?php echo htmlspecialchars($_SESSION['full_name']); ?>! ⚖️</h1>
-                    <p>Manage assigned cases and provide arbitration guidance</p>
+                    <h1>Welcome, Arbitration Advisor <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
+                  
                 </div>
             </div>
 
@@ -1221,15 +1221,7 @@ $resolution_rate = $total_cases > 0 ? round(($resolved_cases / $total_cases) * 1
                         <div class="stat-label">Resolved Cases</div>
                     </div>
                 </div>
-                <div class="stat-card info">
-                    <div class="stat-icon">
-                        <i class="fas fa-gavel"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($upcoming_hearings); ?></div>
-                        <div class="stat-label">Upcoming Hearings</div>
-                    </div>
-                </div>
+               
             </div>
 
             <!-- Additional Stats Grid -->
@@ -1286,17 +1278,7 @@ $resolution_rate = $total_cases > 0 ? round(($resolved_cases / $total_cases) * 1
                     </div>
                 </div>
 
-                <!-- Case Status Distribution Chart -->
-                <div class="chart-card">
-                    <div class="card-header">
-                        <h3>Case Status Distribution</h3>
-                    </div>
-                    <div class="card-body">
-                        <div class="chart-container">
-                            <canvas id="caseStatusChart"></canvas>
-                        </div>
-                    </div>
-                </div>
+                
             </div>
 
             <!-- Content Grid -->
@@ -1382,44 +1364,7 @@ $resolution_rate = $total_cases > 0 ? round(($resolved_cases / $total_cases) * 1
 
                 <!-- Right Column -->
                 <div class="right-column">
-                    <!-- Upcoming Hearings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Hearings</h3>
-                            <a href="hearings.php" class="card-header-btn" title="View All">
-                                <i class="fas fa-external-link-alt"></i>
-                            </a>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_hearings_list)): ?>
-                                <div class="empty-state">
-                                    <i class="fas fa-calendar-check"></i>
-                                    <p>No upcoming hearings</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($upcoming_hearings_list as $hearing): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar" style="background: var(--info);">
-                                                <i class="fas fa-gavel" style="font-size: 0.7rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($hearing['case_number']); ?></strong>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, g:i A', strtotime($hearing['hearing_date'])); ?>
-                                                    <?php if (!empty($hearing['location'])): ?>
-                                                        <br>📍 <?php echo htmlspecialchars($hearing['location']); ?>
-                                                    <?php endif; ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Active Elections -->
                     <div class="card">

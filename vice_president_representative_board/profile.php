@@ -1302,16 +1302,13 @@ try {
 
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
+               
+                 <li class="menu-item">
+                    <a href="committee_budget_requests.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
                     </a>
-                </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
-                
+                </li>    
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-chart-bar"></i>

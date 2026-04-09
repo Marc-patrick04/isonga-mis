@@ -20,7 +20,7 @@ try {
     $user = [];
 }
 
-// Get sidebar statistics
+// Get sidebar statistics (PostgreSQL fixes)
 try {
     // Pending tickets count
     $ticketStmt = $pdo->prepare("
@@ -32,31 +32,31 @@ try {
     $ticketStmt->execute([$user_id]);
     $pending_tickets = $ticketStmt->fetch(PDO::FETCH_ASSOC)['pending_tickets'] ?? 0;
     
-    // New students count
+    // New students count - PostgreSQL uses CURRENT_DATE - INTERVAL
     $new_students_stmt = $pdo->prepare("
         SELECT COUNT(*) as new_students 
         FROM users 
         WHERE role = 'student' 
         AND status = 'active' 
-        AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        AND created_at >= CURRENT_DATE - INTERVAL '7 days'
     ");
     $new_students_stmt->execute();
     $new_students = $new_students_stmt->fetch(PDO::FETCH_ASSOC)['new_students'] ?? 0;
     
-    // Upcoming meetings count
+    // Upcoming meetings count - PostgreSQL uses CURRENT_DATE
     $upcoming_meetings = $pdo->query("
         SELECT COUNT(*) as count FROM meetings 
-        WHERE meeting_date >= CURDATE() AND status = 'scheduled'
-    ")->fetch()['count'] ?? 0;
+        WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'
+    ")->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Pending minutes count
     $pending_minutes = $pdo->query("
         SELECT COUNT(*) as count FROM meeting_minutes 
         WHERE approval_status = 'submitted'
-    ")->fetch()['count'] ?? 0;
+    ")->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Pending reports
-    $pending_reports = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'")->fetch()['pending_reports'] ?? 0;
+    $pending_reports = $pdo->query("SELECT COUNT(*) as pending_reports FROM reports WHERE status = 'submitted'")->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
     // Unread messages
     $unread_messages = 0;
@@ -102,8 +102,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'add' || $action === '
                 $message_type = 'error';
             } else {
                 $insert_stmt = $pdo->prepare("
-                    INSERT INTO meeting_minutes (meeting_id, minute_taker_id, content, attachments, approval_status)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO meeting_minutes (meeting_id, minute_taker_id, content, attachments, approval_status, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ");
                 
                 $attachments_json = !empty($attachments) ? json_encode($attachments) : null;
@@ -119,10 +119,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'add' || $action === '
                             $assigned_to = $_POST['action_assignees'][$index] ?? null;
                             $due_date = $_POST['action_due_dates'][$index] ?? null;
                             $priority = $_POST['action_priorities'][$index] ?? 'medium';
+                            $status = $_POST['action_statuses'][$index] ?? 'pending';
                             
                             $action_stmt = $pdo->prepare("
-                                INSERT INTO meeting_action_items (meeting_id, minute_id, title, description, assigned_to, due_date, priority, created_by)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO meeting_action_items (meeting_id, minute_id, title, description, assigned_to, due_date, priority, status, created_by, created_at, updated_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                             ");
                             $action_stmt->execute([
                                 $meeting_id, 
@@ -132,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'add' || $action === '
                                 $assigned_to, 
                                 $due_date, 
                                 $priority, 
+                                $status,
                                 $user_id
                             ]);
                         }
@@ -176,8 +178,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'add' || $action === '
                     } else {
                         // Add new action item
                         $insert_action_stmt = $pdo->prepare("
-                            INSERT INTO meeting_action_items (meeting_id, minute_id, title, description, assigned_to, due_date, priority, status, created_by)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO meeting_action_items (meeting_id, minute_id, title, description, assigned_to, due_date, priority, status, created_by, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         ");
                         $insert_action_stmt->execute([
                             $meeting_id, $minute_id, $action_title, $action_desc, $assigned_to, $due_date, $priority, $status, $user_id
@@ -200,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($action === 'add' || $action === '
 // Submit for Approval
 if ($action === 'submit_approval' && $minute_id) {
     try {
-        $update_stmt = $pdo->prepare("UPDATE meeting_minutes SET approval_status = 'submitted' WHERE id = ?");
+        $update_stmt = $pdo->prepare("UPDATE meeting_minutes SET approval_status = 'submitted', updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         $update_stmt->execute([$minute_id]);
         
         $message = "Meeting minutes submitted for approval!";
@@ -221,7 +223,7 @@ if (($action === 'approve' || $action === 'reject') && $minute_id && $_SERVER['R
         $status = $action === 'approve' ? 'approved' : 'rejected';
         $update_stmt = $pdo->prepare("
             UPDATE meeting_minutes 
-            SET approval_status = ?, approved_by = ?, approval_notes = ?, approved_at = NOW() 
+            SET approval_status = ?, approved_by = ?, approval_notes = ?, approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP 
             WHERE id = ?
         ");
         $update_stmt->execute([$status, $user_id, $approval_notes, $minute_id]);
@@ -265,7 +267,7 @@ if ($action === 'update_action_status' && isset($_POST['action_item_id'])) {
     try {
         $update_stmt = $pdo->prepare("
             UPDATE meeting_action_items 
-            SET status = ?, completion_notes = ?, completed_at = " . ($status === 'completed' ? "NOW()" : "NULL") . "
+            SET status = ?, completion_notes = ?, completed_at = " . ($status === 'completed' ? "CURRENT_TIMESTAMP" : "NULL") . ", updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ");
         $update_stmt->execute([$status, $completion_notes, $action_item_id]);
@@ -333,10 +335,14 @@ if (($action === 'edit' || $action === 'view' || $action === 'approve' || $actio
                 FROM meeting_action_items mai
                 LEFT JOIN users u ON mai.assigned_to = u.id
                 WHERE mai.minute_id = ?
-                ORDER BY mai.priority = 'urgent' DESC, 
-                         mai.priority = 'high' DESC, 
-                         mai.priority = 'medium' DESC,
-                         mai.created_at
+                ORDER BY 
+                    CASE mai.priority 
+                        WHEN 'urgent' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                    END ASC,
+                    mai.created_at ASC
             ");
             $action_stmt->execute([$minute_id]);
             $action_items = $action_stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -415,7 +421,7 @@ $page = max(1, intval($_GET['page'] ?? 1));
 $limit = 15;
 $offset = ($page - 1) * $limit;
 
-// Build query for minutes list
+// Build query for minutes list (PostgreSQL uses ILIKE for case-insensitive)
 $query = "
     SELECT mm.*, 
            m.title as meeting_title, m.meeting_date, m.meeting_type,
@@ -434,8 +440,8 @@ $params = [];
 $count_params = [];
 
 if ($search) {
-    $query .= " AND (m.title LIKE ? OR mm.content LIKE ?)";
-    $count_query .= " AND (m.title LIKE ? OR mm.content LIKE ?)";
+    $query .= " AND (m.title ILIKE ? OR mm.content ILIKE ?)";
+    $count_query .= " AND (m.title ILIKE ? OR mm.content ILIKE ?)";
     $search_term = "%$search%";
     $params = array_merge($params, [$search_term, $search_term]);
     $count_params = array_merge($count_params, [$search_term, $search_term]);
@@ -485,19 +491,19 @@ try {
     $message_type = 'error';
 }
 
-// Get statistics for dashboard cards
+// Get statistics for dashboard cards (PostgreSQL fixes)
 try {
     // Total minutes
-    $total_minutes = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes")->fetch()['count'] ?? 0;
+    $total_minutes = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes")->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Draft minutes
-    $draft_minutes = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes WHERE approval_status = 'draft'")->fetch()['count'] ?? 0;
+    $draft_minutes = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes WHERE approval_status = 'draft'")->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Approved minutes
-    $approved_minutes = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes WHERE approval_status = 'approved'")->fetch()['count'] ?? 0;
+    $approved_minutes = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes WHERE approval_status = 'approved'")->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
     // Pending approval minutes
-    $pending_minutes_count = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes WHERE approval_status = 'submitted'")->fetch()['count'] ?? 0;
+    $pending_minutes_count = $pdo->query("SELECT COUNT(*) as count FROM meeting_minutes WHERE approval_status = 'submitted'")->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
 } catch (PDOException $e) {
     error_log("Statistics error: " . $e->getMessage());
@@ -534,7 +540,7 @@ function getActionStatusClass($status) {
     <title>Meeting Minutes - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/rp_logo.png">
     <style>
         :root {
             --primary-blue: #0056b3;
@@ -694,6 +700,7 @@ function getActionStatusClass($status) {
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            position: relative;
         }
 
         .icon-btn:hover {
@@ -1573,7 +1580,6 @@ function getActionStatusClass($status) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
@@ -1585,13 +1591,6 @@ function getActionStatusClass($status) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <!-- <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div> -->
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">General Secretary</div>
@@ -1690,7 +1689,10 @@ function getActionStatusClass($status) {
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
             <div class="page-header">
-               
+                <div class="page-title">
+                    <h1>Meeting Minutes</h1>
+                    <p>Create, manage, and track meeting minutes with action items</p>
+                </div>
                 <div class="page-actions">
                     <?php if ($action === 'list'): ?>
                         <a href="?action=add" class="btn btn-primary">
@@ -1947,7 +1949,7 @@ function getActionStatusClass($status) {
                                                            value="<?php echo htmlspecialchars($action['due_date']); ?>">
                                                 </div>
                                                 <div class="form-group">
-                                                    <label class="filter-label">Priority</label>
+                                                    <label class                                                    <label class="filter-label">Priority</label>
                                                     <select class="form-select" name="action_priorities[]">
                                                         <option value="low" <?php echo $action['priority'] == 'low' ? 'selected' : ''; ?>>Low</option>
                                                         <option value="medium" <?php echo $action['priority'] == 'medium' ? 'selected' : ''; ?>>Medium</option>
@@ -2061,7 +2063,7 @@ function getActionStatusClass($status) {
             <div class="card">
                 <div class="card-header">
                     <h3>Meeting Minutes - <?php echo htmlspecialchars($minutes_data['meeting_title']); ?></h3>
-                    <div class="action-buttons">
+                    <div class="action-buttons" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <span class="status-badge status-<?php echo $minutes_data['approval_status']; ?>">
                             <?php echo ucfirst($minutes_data['approval_status']); ?>
                         </span>
@@ -2397,23 +2399,23 @@ function getActionStatusClass($status) {
                                         <tr>
                                             <td>
                                                 <strong><?php echo htmlspecialchars($minute['meeting_title']); ?></strong>
-                                            </td>
-                                            <td><?php echo date('M j, Y', strtotime($minute['meeting_date'])); ?></td>
-                                            <td><?php echo ucfirst($minute['meeting_type']); ?></td>
-                                            <td><?php echo htmlspecialchars($minute['minute_taker_name']); ?></td>
+                                            </td
+                                            <td><?php echo date('M j, Y', strtotime($minute['meeting_date'])); ?></td
+                                            <td><?php echo ucfirst($minute['meeting_type']); ?></td
+                                            <td><?php echo htmlspecialchars($minute['minute_taker_name']); ?></td
                                             <td>
                                                 <span class="status-badge <?php echo $minute['action_items_count'] > 0 ? 'status-approved' : 'status-pending'; ?>">
                                                     <?php echo $minute['action_items_count']; ?> items
                                                 </span>
-                                            </td>
+                                            </td
                                             <td>
                                                 <span class="status-badge status-<?php echo $minute['approval_status']; ?>">
                                                     <?php echo ucfirst($minute['approval_status']); ?>
                                                 </span>
-                                            </td>
-                                            <td><?php echo htmlspecialchars($minute['approver_name'] ?? 'N/A'); ?></td>
+                                            </td
+                                            <td><?php echo htmlspecialchars($minute['approver_name'] ?? 'N/A'); ?></td
                                             <td>
-                                                <div class="action-buttons">
+                                                <div class="action-buttons" style="display: flex; gap: 0.25rem;">
                                                     <a href="?action=view&minute_id=<?php echo $minute['id']; ?>" 
                                                        class="btn btn-outline btn-sm" title="View Details">
                                                         <i class="fas fa-eye"></i>
@@ -2431,7 +2433,7 @@ function getActionStatusClass($status) {
                                                         </a>
                                                     <?php endif; ?>
                                                 </div>
-                                            </td>
+                                            </td
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -2475,8 +2477,6 @@ function getActionStatusClass($status) {
     </div>
 
     <script>
-        
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
@@ -2514,7 +2514,7 @@ function getActionStatusClass($status) {
                 mobileOverlay.classList.toggle('active', isOpen);
                 mobileMenuToggle.innerHTML = isOpen
                     ? '<i class="fas fa-times"></i>'
-                    : '<i class="fas fa-bars</i>';
+                    : '<i class="fas fa-bars"></i>';
                 document.body.style.overflow = isOpen ? 'hidden' : '';
             });
         }
@@ -2627,6 +2627,37 @@ function getActionStatusClass($status) {
                 }, 2000);
             });
         }
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, index) => {
+                card.style.animation = `fadeInUp 0.4s ease forwards`;
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
+        });
     </script>
 </body>
 </html>

@@ -1246,6 +1246,7 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
+                
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>

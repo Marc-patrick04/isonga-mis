@@ -1174,6 +1174,7 @@ if (isset($_GET['msg'])) {
         <nav class="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item"><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
+                <li class="menu-item"><a href="hero.php"><i class="fas fa-images"></i> Hero Images</a></li>
                 <li class="menu-item"><a href="users.php"><i class="fas fa-users"></i> User Management</a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-user-tie"></i> Committee</a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i> Students</a></li>

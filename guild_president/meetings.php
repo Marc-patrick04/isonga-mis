@@ -589,8 +589,8 @@ try {
                 <li class="menu-item"><a href="documents.php"><i class="fas fa-file-contract"></i><span>Documents</span><?php if ($pending_docs > 0): ?><span class="menu-badge"><?php echo $pending_docs; ?></span><?php endif; ?></a></li>
                 <li class="menu-item"><a href="committee.php"><i class="fas fa-users"></i><span>Committee Management</span></a></li>
                 <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i><span>Student Management</span><?php if ($new_students > 0): ?><span class="menu-badge"><?php echo $new_students; ?> new</span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="meetings.php" class="active"><i class="fas fa-calendar-alt"></i><span>Meetings</span></a></li>
                 <li class="menu-item"><a href="messages.php"><i class="fas fa-comments"></i><span>Messages</span><?php if ($unread_messages > 0): ?><span class="menu-badge"><?php echo $unread_messages; ?></span><?php endif; ?></a></li>
+                <li class="menu-item"><a href="meetings.php" class="active"><i class="fas fa-calendar-alt"></i><span>Meetings</span></a></li>
                 <li class="menu-item"><a href="finance.php"><i class="fas fa-money-bill-wave"></i><span>Finance</span></a></li>
                 <li class="menu-item"><a href="profile.php"><i class="fas fa-user-cog"></i><span>Profile & Settings</span></a></li>
             </ul>

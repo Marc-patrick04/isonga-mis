@@ -1289,9 +1289,7 @@ try {
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
-                    <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button>
+                   
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1389,8 +1387,8 @@ try {
                 <!-- Page Header -->
                 <div class="page-header">
                     <div class="page-title">
-                        <h1>Profile & Settings ⚖️</h1>
-                        <p>Manage your personal information and arbitration advisor preferences</p>
+                        <h1>Profile & Settings</h1>
+ 
                     </div>
                 </div>
 
@@ -1455,14 +1453,14 @@ try {
                                     onclick="switchTab('security')">
                                 <i class="fas fa-shield-alt"></i> Security
                             </button>
-                            <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
+                            <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
                                     onclick="switchTab('preferences')">
                                 <i class="fas fa-cog"></i> Preferences
                             </button>
                             <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" 
                                     onclick="switchTab('sessions')">
                                 <i class="fas fa-history"></i> Login History
-                            </button>
+                            </button> -->
                         </div>
 
                         <!-- Tab Content -->
@@ -1478,7 +1476,7 @@ try {
                                             <div class="form-group">
                                                 <label for="full_name">Full Name *</label>
                                                 <input type="text" id="full_name" name="full_name" class="form-control" 
-                                                       value="<?php echo htmlspecialchars($user['full_name']); ?>" required>
+                                                       value="<?php echo htmlspecialchars($user['full_name']); ?>" disabled>
                                             </div>
                                             <div class="form-group">
                                                 <label for="email">Email Address *</label>
@@ -1502,7 +1500,7 @@ try {
                                         
                                         <div class="form-group">
                                             <label for="gender">Gender</label>
-                                            <select id="gender" name="gender" class="form-control">
+                                            <select id="gender" name="gender" class="form-control" disabled>
                                                 <option value="">Select Gender</option>
                                                 <option value="male" <?php echo ($user['gender'] ?? '') === 'male' ? 'selected' : ''; ?>>Male</option>
                                                 <option value="female" <?php echo ($user['gender'] ?? '') === 'female' ? 'selected' : ''; ?>>Female</option>
@@ -1585,23 +1583,7 @@ try {
                                     </form>
                                 </div>
 
-                                <div class="form-section">
-                                    <h4>Two-Factor Authentication</h4>
-                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-blue); border-radius: var(--border-radius);">
-                                        <div>
-                                            <div style="font-weight: 600; margin-bottom: 0.25rem;">Two-Factor Authentication</div>
-                                            <div style="font-size: 0.9rem; color: var(--dark-gray);">
-                                                <?php echo $user['two_factor_enabled'] ? 'Enabled' : 'Disabled'; ?>
-                                            </div>
-                                        </div>
-                                        <form method="POST" style="margin: 0;">
-                                            <input type="hidden" name="action" value="<?php echo $user['two_factor_enabled'] ? 'disable_2fa' : 'enable_2fa'; ?>">
-                                            <button type="submit" class="btn <?php echo $user['two_factor_enabled'] ? 'btn-secondary' : 'btn-primary'; ?>">
-                                                <?php echo $user['two_factor_enabled'] ? 'Disable' : 'Enable'; ?> 2FA
-                                            </button>
-                                        </form>
-                                    </div>
-                                </div>
+                                
 
                                 <div class="form-section">
                                     <h4>Account Security</h4>
@@ -1885,52 +1867,6 @@ try {
                 }
             }
 
-            // Dark mode toggle
-            const themeToggle = document.getElementById('themeToggle');
-            const body = document.body;
-
-            if (themeToggle) {
-                const savedTheme = localStorage.getItem('theme');
-                const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                
-                let currentTheme = savedTheme || (systemPrefersDark ? 'dark' : 'light');
-                
-                if (currentTheme === 'dark') {
-                    body.classList.add('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                    themeToggle.title = 'Switch to Light Mode';
-                } else {
-                    body.classList.remove('dark-mode');
-                    themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                    themeToggle.title = 'Switch to Dark Mode';
-                }
-
-                themeToggle.addEventListener('click', () => {
-                    body.classList.toggle('dark-mode');
-                    const isDark = body.classList.contains('dark-mode');
-                    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-                    
-                    if (isDark) {
-                        themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        themeToggle.title = 'Switch to Light Mode';
-                    } else {
-                        themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        themeToggle.title = 'Switch to Dark Mode';
-                    }
-                });
-
-                window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-                    if (!localStorage.getItem('theme')) {
-                        if (e.matches) {
-                            body.classList.add('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-                        } else {
-                            body.classList.remove('dark-mode');
-                            themeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-                        }
-                    }
-                });
-            }
 
             // Sidebar Toggle
             const sidebar = document.getElementById('sidebar');

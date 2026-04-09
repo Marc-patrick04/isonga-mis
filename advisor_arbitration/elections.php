@@ -1414,8 +1414,8 @@ try {
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
-                    <h1>Elections Committee ⚖️</h1>
-                    <p>Monitor and participate in RPSU elections as committee member</p>
+                    <h1>Elections Committee </h1>
+                   
                 </div>
                 <?php if ($action === 'list'): ?>
                     <div class="btn btn-outline" style="cursor: default;">
@@ -1444,12 +1444,7 @@ try {
             <?php endif; ?>
 
             <?php if ($action === 'list'): ?>
-                <!-- Elections List View -->
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i> 
-                    <strong>Committee Member Access:</strong> You can monitor elections where you are assigned as a committee member. 
-                    Your permissions vary based on your assigned role (Chairperson, Secretary, Member, or Observer).
-                </div>
+               
 
                 <div class="stats-grid">
                     <div class="stat-card">

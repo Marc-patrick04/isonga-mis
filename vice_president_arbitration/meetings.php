@@ -20,9 +20,9 @@ try {
     $user = [];
 }
 
-// Get committee member ID for the current user
+// Get committee member ID for the current user (Vice President Arbitration)
 try {
-    $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND status = 'active'");
+    $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND role = 'vice_president_arbitration' AND status = 'active'");
     $stmt->execute([$user_id]);
     $committee_member = $stmt->fetch(PDO::FETCH_ASSOC);
     $committee_member_id = $committee_member['id'] ?? null;
@@ -41,7 +41,7 @@ $page = max(1, intval($_GET['page'] ?? 1));
 $limit = 10;
 $offset = ($page - 1) * $limit;
 
-// Build query for meetings list
+// Build query for meetings list (PostgreSQL uses ILIKE for case-insensitive)
 $query = "
     SELECT m.*, u.full_name as chairperson_name
     FROM meetings m 
@@ -54,8 +54,8 @@ $params = [];
 $count_params = [];
 
 if ($search) {
-    $query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
-    $count_query .= " AND (m.title LIKE ? OR m.description LIKE ? OR m.location LIKE ?)";
+    $query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
+    $count_query .= " AND (m.title ILIKE ? OR m.description ILIKE ? OR m.location ILIKE ?)";
     $search_term = "%$search%";
     $params = array_merge($params, [$search_term, $search_term, $search_term]);
     $count_params = array_merge($count_params, [$search_term, $search_term, $search_term]);
@@ -106,7 +106,7 @@ try {
     // Get user's attendance for each meeting
     if ($committee_member_id && !empty($meetings)) {
         $meeting_ids = array_column($meetings, 'id');
-        $placeholders = str_repeat('?,', count($meeting_ids) - 1) . '?';
+        $placeholders = implode(',', array_fill(0, count($meeting_ids), '?'));
         
         $attendance_stmt = $pdo->prepare("
             SELECT meeting_id, attendance_status, check_in_time, notes 
@@ -145,23 +145,26 @@ try {
     $total_pages = 1;
 }
 
-// Get statistics for dashboard cards
+// Get statistics for dashboard cards (PostgreSQL fixes)
 try {
     // Total meetings
-    $total_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings")->fetch()['count'];
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings");
+    $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // Upcoming meetings
-    $upcoming_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'")->fetch()['count'];
+    // Upcoming meetings - PostgreSQL uses CURRENT_DATE
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
+    $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // Today's meetings
-    $todays_meetings = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURDATE() AND status IN ('scheduled', 'ongoing')")->fetch()['count'];
+    // Today's meetings - PostgreSQL uses CURRENT_DATE
+    $stmt = $pdo->query("SELECT COUNT(*) as count FROM meetings WHERE meeting_date = CURRENT_DATE AND status IN ('scheduled', 'ongoing')");
+    $todays_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // Meetings chaired by VP
-    $vp_chaired_meetings = $pdo->prepare("SELECT COUNT(*) as count FROM meetings WHERE chairperson_id = ? AND meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)");
+    // Meetings chaired by VP - PostgreSQL uses CURRENT_DATE - INTERVAL
+    $vp_chaired_meetings = $pdo->prepare("SELECT COUNT(*) as count FROM meetings WHERE chairperson_id = ? AND meeting_date >= CURRENT_DATE - INTERVAL '3 months'");
     $vp_chaired_meetings->execute([$user_id]);
-    $vp_chaired_count = $vp_chaired_meetings->fetch()['count'];
+    $vp_chaired_count = $vp_chaired_meetings->fetch(PDO::FETCH_ASSOC)['count'] ?? 0;
     
-    // User's attendance statistics
+    // User's attendance statistics - PostgreSQL uses CURRENT_DATE - INTERVAL
     if ($committee_member_id) {
         $attendance_stmt = $pdo->prepare("
             SELECT 
@@ -171,13 +174,13 @@ try {
                 SUM(CASE WHEN ma.attendance_status = 'excused' THEN 1 ELSE 0 END) as excused
             FROM meeting_attendance ma
             JOIN meetings m ON ma.meeting_id = m.id
-            WHERE ma.committee_member_id = ? AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+            WHERE ma.committee_member_id = ? AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         ");
         $attendance_stmt->execute([$committee_member_id]);
         $attendance_stats = $attendance_stmt->fetch(PDO::FETCH_ASSOC);
         
-        $attendance_rate = $attendance_stats['total_invited'] > 0 
-            ? round(($attendance_stats['attended'] / $attendance_stats['total_invited']) * 100) 
+        $attendance_rate = ($attendance_stats['total_invited'] ?? 0) > 0 
+            ? round((($attendance_stats['attended'] ?? 0) / ($attendance_stats['total_invited'] ?? 1)) * 100) 
             : 0;
     } else {
         $attendance_stats = ['total_invited' => 0, 'attended' => 0, 'absent' => 0, 'excused' => 0];
@@ -188,12 +191,12 @@ try {
     $stmt = $pdo->query("SELECT DISTINCT meeting_type FROM meetings WHERE meeting_type IS NOT NULL");
     $meeting_types = $stmt->fetchAll(PDO::FETCH_COLUMN);
     
-    // Get upcoming important meetings (next 7 days)
+    // Get upcoming important meetings (next 7 days) - PostgreSQL uses CURRENT_DATE + INTERVAL
     $stmt = $pdo->prepare("
         SELECT m.*, u.full_name as chairperson_name
         FROM meetings m
         LEFT JOIN users u ON m.chairperson_id = u.id
-        WHERE m.meeting_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
+        WHERE m.meeting_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
         AND m.status = 'scheduled'
         ORDER BY m.meeting_date ASC, m.start_time ASC
         LIMIT 5
@@ -223,13 +226,13 @@ try {
         $user_attendance_history = [];
     }
     
-    // Get meetings chaired by VP
+    // Get meetings chaired by VP - PostgreSQL uses CURRENT_DATE - INTERVAL
     $stmt = $pdo->prepare("
         SELECT m.*, COUNT(ma.id) as attendance_count
         FROM meetings m
         LEFT JOIN meeting_attendance ma ON m.id = ma.meeting_id AND ma.attendance_status = 'present'
         WHERE m.chairperson_id = ?
-        AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+        AND m.meeting_date >= CURRENT_DATE - INTERVAL '3 months'
         GROUP BY m.id
         ORDER BY m.meeting_date DESC
         LIMIT 5
@@ -248,7 +251,7 @@ try {
     $vp_chaired_meetings_list = [];
 }
 
-// Get unread messages count
+// Get unread messages count (PostgreSQL fix)
 try {
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as unread_messages 
@@ -260,9 +263,10 @@ try {
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
 } catch (PDOException $e) {
     $unread_messages = 0;
+    error_log("Unread messages error: " . $e->getMessage());
 }
 
-// Get dashboard statistics for sidebar
+// Get dashboard statistics for sidebar (PostgreSQL fixes)
 try {
     // Cases assigned to VP
     $stmt = $pdo->prepare("SELECT COUNT(*) as my_cases FROM arbitration_cases WHERE assigned_to = ?");
@@ -273,12 +277,12 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as pending_review FROM arbitration_cases WHERE status IN ('filed', 'under_review')");
     $pending_review = $stmt->fetch(PDO::FETCH_ASSOC)['pending_review'] ?? 0;
     
-    // Upcoming hearings where VP is involved
+    // Upcoming hearings where VP is involved - PostgreSQL uses CURRENT_DATE
     $stmt = $pdo->prepare("
         SELECT COUNT(*) as upcoming_hearings 
         FROM arbitration_hearings ah 
         JOIN arbitration_cases ac ON ah.case_id = ac.id 
-        WHERE ah.hearing_date >= CURDATE() 
+        WHERE ah.hearing_date >= CURRENT_DATE 
         AND ah.status = 'scheduled'
         AND (ac.assigned_to = ? OR ac.assigned_to IS NULL)
     ");
@@ -293,6 +297,10 @@ try {
     $my_cases = $pending_review = $upcoming_hearings = $mediation_cases = 0;
     error_log("Dashboard stats error: " . $e->getMessage());
 }
+
+// Ensure variables are defined
+$attendance_stats = $attendance_stats ?? ['total_invited' => 0, 'attended' => 0, 'absent' => 0, 'excused' => 0];
+$attendance_rate = $attendance_rate ?? 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -302,7 +310,7 @@ try {
     <title>Meetings - Vice President Arbitration - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/rp_logo.png">
     <style>
         :root {
             --primary-blue: #0056b3;
@@ -324,8 +332,9 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
-
 
         * {
             margin: 0;
@@ -630,7 +639,7 @@ try {
             margin-bottom: 1.5rem;
         }
 
-        .page-title h1 {
+        .page-title {
             font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 0.25rem;
@@ -1114,11 +1123,6 @@ try {
             display: block;
         }
 
-        :root {
-            --sidebar-width: 260px;
-            --sidebar-collapsed-width: 70px;
-        }
-
         /* Responsive */
         @media (max-width: 992px) {
             .sidebar {
@@ -1229,7 +1233,7 @@ try {
                 font-size: 1rem;
             }
 
-            .page-title h1 {
+            .page-title {
                 font-size: 1.2rem;
             }
         }
@@ -1287,15 +1291,14 @@ try {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-               <!-- Sidebar -->
-          <!-- Sidebar -->
+        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <button class="sidebar-toggle" id="sidebarToggle">
                 <i class="fas fa-chevron-left"></i>
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1351,14 +1354,11 @@ try {
             </ul>
         </nav>
 
-
         <!-- Main Content -->
-        <main class="main-content">
+        <main class="main-content" id="mainContent">
             <div class="page-header">
-                <h1 class="page-title">Committee Meetings 📋</h1>
-                <p class="page-description">Manage and track arbitration committee meetings and attendance</p>
+                <h1 class="page-title">Committee Meetings</h1>
             </div>
-
 
             <!-- Statistics Grid -->
             <div class="stats-grid">
@@ -1468,62 +1468,64 @@ try {
                                     <p>No meetings found matching your criteria</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Meeting Title</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Type</th>
-                                            <th>Chairperson</th>
-                                            <th>Status</th>
-                                            <th>Your Attendance</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($meetings as $meeting): ?>
+                                <div class="table-wrapper">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                    <?php if ($meeting['description']): ?>
-                                                        <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
-                                                    <?php endif; ?>
-                                                    <?php if ($meeting['chairperson_id'] == $user_id): ?>
-                                                        <br><span class="status-badge" style="background: var(--primary-blue); color: white; font-size: 0.6rem;">You Chair</span>
-                                                    <?php endif; ?>
-                                                </td>
-                                                <td>
-                                                    <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
-                                                    <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
-                                                    <?php if ($meeting['end_time']): ?>
-                                                        - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
-                                                    <?php endif; ?>
-                                                    </small>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($meeting['location']); ?></td>
-                                                <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td>
-                                                <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td>
-                                                <td>
-                                                    <span class="status-badge status-<?php echo $meeting['status']; ?>">
-                                                        <?php echo ucfirst($meeting['status']); ?>
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <?php if ($meeting['attendance_status']): ?>
-                                                        <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
-                                                            <?php echo ucfirst($meeting['attendance_status']); ?>
-                                                        </span>
-                                                        <?php if ($meeting['check_in_time']): ?>
-                                                            <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
-                                                        <?php endif; ?>
-                                                    <?php else: ?>
-                                                        <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
-                                                    <?php endif; ?>
-                                                </td>
+                                                <th>Meeting Title</th>
+                                                <th>Date & Time</th>
+                                                <th>Location</th>
+                                                <th>Type</th>
+                                                <th>Chairperson</th>
+                                                <th>Status</th>
+                                                <th>Your Attendance</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($meetings as $meeting): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
+                                                        <?php if ($meeting['description']): ?>
+                                                            <br><small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)); ?>...</small>
+                                                        <?php endif; ?>
+                                                        <?php if ($meeting['chairperson_id'] == $user_id): ?>
+                                                            <br><span class="status-badge" style="background: var(--primary-blue); color: white; font-size: 0.6rem;">You Chair</span>
+                                                        <?php endif; ?>
+                                                    </td
+                                                    <td>
+                                                        <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?><br>
+                                                        <small><?php echo date('g:i A', strtotime($meeting['start_time'])); ?> 
+                                                        <?php if ($meeting['end_time']): ?>
+                                                            - <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
+                                                        <?php endif; ?>
+                                                        </small>
+                                                    </td
+                                                    <td><?php echo htmlspecialchars($meeting['location']); ?></td
+                                                    <td><?php echo htmlspecialchars(ucfirst(str_replace('_', ' ', $meeting['meeting_type']))); ?></td
+                                                    <td><?php echo htmlspecialchars($meeting['chairperson_name'] ?? 'N/A'); ?></td
+                                                    <td>
+                                                        <span class="status-badge status-<?php echo $meeting['status']; ?>">
+                                                            <?php echo ucfirst($meeting['status']); ?>
+                                                        </span>
+                                                    </td
+                                                    <td>
+                                                        <?php if ($meeting['attendance_status']): ?>
+                                                            <span class="status-badge attendance-<?php echo $meeting['attendance_status']; ?>">
+                                                                <?php echo ucfirst($meeting['attendance_status']); ?>
+                                                            </span>
+                                                            <?php if ($meeting['check_in_time']): ?>
+                                                                <br><small>at <?php echo date('g:i A', strtotime($meeting['check_in_time'])); ?></small>
+                                                            <?php endif; ?>
+                                                        <?php else: ?>
+                                                            <span style="color: var(--dark-gray); font-size: 0.8rem;">Not recorded</span>
+                                                        <?php endif; ?>
+                                                    </td
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
 
                                 <!-- Pagination -->
                                 <?php if ($total_pages > 1): ?>
@@ -1606,41 +1608,6 @@ try {
                             </div>
                         </div>
                     </div>
-
-
-                    <!-- Upcoming Important Meetings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming This Week</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_important)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No upcoming meetings this week</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($upcoming_important as $meeting): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar" style="background: var(--primary-blue);">
-                                                <i class="fas fa-calendar" style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('D, M j', strtotime($meeting['meeting_date'])); ?> 
-                                                    at <?php echo date('g:i A', strtotime($meeting['start_time'])); ?>
-                                                    • <?php echo htmlspecialchars($meeting['location']); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
                 </div>
             </div>
         </main>
@@ -1708,7 +1675,6 @@ try {
             }
         });
 
-
         // Auto-refresh page every 5 minutes
         setInterval(() => {
             console.log('Meetings page auto-refresh triggered');
@@ -1718,8 +1684,31 @@ try {
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.card');
             cards.forEach((card, index) => {
+                card.style.animation = `fadeInUp 0.4s ease forwards`;
                 card.style.animationDelay = `${index * 0.1}s`;
+                card.style.opacity = '0';
             });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

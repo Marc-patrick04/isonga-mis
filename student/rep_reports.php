@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep (PostgreSQL uses true for boolean)
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? false)) {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
@@ -57,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_report'])) {
             
             if (isset($template_fields['sections']) && is_array($template_fields['sections'])) {
                 foreach ($template_fields['sections'] as $section) {
-                    $field_name = strtolower(str_replace(' ', '_', $section['title']));
+                    $field_name = strtolower(preg_replace('/[^a-z0-9]/', '_', $section['title']));
                     $content[$field_name] = $_POST[$field_name] ?? '';
                 }
             }
@@ -82,22 +82,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_report'])) {
             $report_id = $pdo->lastInsertId();
             
             $_SESSION['success_message'] = "Report submitted successfully! Your report ID is #$report_id";
-            header('Location: rep_reports');
+            header('Location: rep_reports.php');
             exit();
             
         } catch (PDOException $e) {
             $error_message = "Failed to submit report. Please try again. Error: " . $e->getMessage();
         }
     }
-}
-
-// Handle template selection for form generation
-$selected_template = null;
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['select_template'])) {
-    $template_id = $_POST['template_id'];
-    $template_stmt = $pdo->prepare("SELECT * FROM class_rep_templates WHERE id = ?");
-    $template_stmt->execute([$template_id]);
-    $selected_template = $template_stmt->fetch(PDO::FETCH_ASSOC);
 }
 
 // Helper functions
@@ -200,7 +191,7 @@ function getStatusBadge($status) {
         
         /* Template Grid */
         .template-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-        .template-card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); transition: var(--transition); border-left: 4px solid var(--secondary); }
+        .template-card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); transition: var(--transition); border-left: 4px solid var(--secondary); cursor: pointer; }
         .template-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
         .template-icon { width: 50px; height: 50px; border-radius: 50%; background: rgba(30,136,229,0.1); display: flex; align-items: center; justify-content: center; color: var(--secondary); margin-bottom: 1rem; font-size: 1.2rem; }
         .template-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; }
@@ -243,14 +234,25 @@ function getStatusBadge($status) {
         .empty-state h3 { margin-bottom: 0.5rem; font-size: 1rem; }
         
         /* Modal Styles */
-        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; }
-        .modal-content { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; align-items: center; justify-content: center; }
+        .modal-content { background: var(--white); border-radius: var(--radius); box-shadow: var(--shadow); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto; position: relative; }
         .modal-header { padding: 1.25rem; border-bottom: 1px solid var(--gray); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--white); z-index: 1; }
         .modal-header h3 { font-size: 1.1rem; }
         .modal-body { padding: 1.25rem; }
         .modal-footer { padding: 1rem 1.25rem; border-top: 1px solid var(--gray); display: flex; justify-content: flex-end; gap: 1rem; }
-        .close-modal { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--dark-gray); width: auto; height: auto; }
+        .close-modal { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--dark-gray); width: auto; height: auto; padding: 0.5rem; }
         .close-modal:hover { color: var(--danger); }
+        
+        /* Loading Spinner */
+        .loading-spinner { text-align: center; padding: 2rem; }
+        .loading-spinner i { font-size: 2rem; color: var(--secondary); animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Animations */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
         
         /* Responsive */
         @media (max-width: 1024px) {
@@ -284,12 +286,13 @@ function getStatusBadge($status) {
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li><a href="class_tickets"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
-                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports" class="active"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Class Rep Dashboard</a></li>
+                <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
+                <li><a href="class_rep_financial_aid.php"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
+                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports.php" class="active"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -322,7 +325,7 @@ function getStatusBadge($status) {
             <!-- Info Alert -->
             <div class="alert alert-info">
                 <i class="fas fa-info-circle"></i> 
-                <strong>Report Templates:</strong> Select a template below to start creating your report. Templates help ensure you include all necessary information in the right format.
+                <strong>Report Templates:</strong> Click on any template below to start creating your report. Templates help ensure you include all necessary information in the right format.
             </div>
 
             <!-- Report Statistics -->
@@ -377,7 +380,7 @@ function getStatusBadge($status) {
                         </div>
                     <?php else: ?>
                         <?php foreach ($templates as $template): ?>
-                            <div class="template-card">
+                            <div class="template-card" data-template-id="<?php echo $template['id']; ?>">
                                 <div class="template-icon">
                                     <i class="fas fa-<?php 
                                         switch($template['report_type']) {
@@ -393,96 +396,15 @@ function getStatusBadge($status) {
                                 <div class="template-description"><?php echo safe_display($template['description']); ?></div>
                                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
                                     <span class="template-type"><?php echo ucfirst($template['report_type']); ?> Report</span>
-                                    <form method="POST" style="margin: 0;">
-                                        <input type="hidden" name="template_id" value="<?php echo $template['id']; ?>">
-                                        <button type="submit" name="select_template" class="btn btn-primary" style="padding: 0.5rem 1rem; font-size: 0.75rem;">
-                                            <i class="fas fa-plus"></i> Use Template
-                                        </button>
-                                    </form>
+                                    <button class="btn btn-primary use-template-btn" data-template-id="<?php echo $template['id']; ?>" style="padding: 0.5rem 1rem; font-size: 0.75rem;">
+                                        <i class="fas fa-plus"></i> Use Template
+                                    </button>
                                 </div>
                             </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
             </div>
-
-            <!-- Report Form (shown when template is selected) -->
-            <?php if ($selected_template): ?>
-                <div class="card">
-                    <div class="card-header">
-                        <h3 class="card-title">Create Report: <?php echo safe_display($selected_template['name']); ?></h3>
-                    </div>
-                    <div class="card-body">
-                        <form method="POST" id="reportForm">
-                            <input type="hidden" name="template_id" value="<?php echo $selected_template['id']; ?>">
-                            
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="title">Report Title *</label>
-                                    <input type="text" id="title" name="title" class="form-control" 
-                                           placeholder="Enter a descriptive title for your report" required>
-                                </div>
-                                
-                                <?php if ($selected_template['report_type'] === 'monthly'): ?>
-                                <div class="form-group">
-                                    <label for="report_period">Report Period *</label>
-                                    <input type="month" id="report_period" name="report_period" class="form-control" required>
-                                </div>
-                                <?php elseif (in_array($selected_template['report_type'], ['activity', 'incident', 'meeting'])): ?>
-                                <div class="form-group">
-                                    <label for="activity_date">Activity/Event Date *</label>
-                                    <input type="date" id="activity_date" name="activity_date" class="form-control" required>
-                                </div>
-                                <?php endif; ?>
-                            </div>
-                            
-                            <?php
-                            $template_fields = json_decode($selected_template['fields'], true);
-                            if (isset($template_fields['sections']) && is_array($template_fields['sections'])):
-                                foreach ($template_fields['sections'] as $section):
-                                    $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                            ?>
-                                <div class="form-group">
-                                    <label for="<?php echo $field_name; ?>">
-                                        <?php echo safe_display($section['title']); ?>
-                                        <?php if ($section['required']): ?><span style="color: var(--danger);">*</span><?php endif; ?>
-                                    </label>
-                                    
-                                    <?php if ($section['type'] === 'textarea'): ?>
-                                        <textarea id="<?php echo $field_name; ?>" name="<?php echo $field_name; ?>" 
-                                                  class="form-control" 
-                                                  placeholder="Enter <?php echo strtolower($section['title']); ?>..."
-                                                  <?php echo $section['required'] ? 'required' : ''; ?>></textarea>
-                                    <?php elseif ($section['type'] === 'number'): ?>
-                                        <input type="number" id="<?php echo $field_name; ?>" name="<?php echo $field_name; ?>" 
-                                               class="form-control" 
-                                               placeholder="Enter <?php echo strtolower($section['title']); ?>..."
-                                               <?php echo $section['required'] ? 'required' : ''; ?>>
-                                    <?php else: ?>
-                                        <input type="<?php echo $section['type']; ?>" id="<?php echo $field_name; ?>" name="<?php echo $field_name; ?>" 
-                                               class="form-control" 
-                                               placeholder="Enter <?php echo strtolower($section['title']); ?>..."
-                                               <?php echo $section['required'] ? 'required' : ''; ?>>
-                                    <?php endif; ?>
-                                    
-                                    <?php if (!empty($section['description'])): ?>
-                                        <div class="form-help"><?php echo safe_display($section['description']); ?></div>
-                                    <?php endif; ?>
-                                </div>
-                            <?php endforeach; endif; ?>
-                            
-                            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
-                                <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="history.back()">
-                                    <i class="fas fa-arrow-left"></i> Back to Templates
-                                </button>
-                                <button type="submit" name="submit_report" class="btn btn-success" style="flex: 1;">
-                                    <i class="fas fa-paper-plane"></i> Submit Report
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            <?php endif; ?>
 
             <!-- Previous Reports -->
             <div class="card">
@@ -494,7 +416,7 @@ function getStatusBadge($status) {
                         <div class="empty-state">
                             <i class="fas fa-file-alt"></i>
                             <h3>No Reports Yet</h3>
-                            <p>You haven't submitted any reports yet. Select a template above to get started.</p>
+                            <p>You haven't submitted any reports yet. Click on a template above to get started.</p>
                         </div>
                     <?php else: ?>
                         <?php foreach ($previous_reports as $report): ?>
@@ -528,10 +450,23 @@ function getStatusBadge($status) {
         <div class="modal-content">
             <div class="modal-header">
                 <h3>Report Details</h3>
-                <button class="close-modal">&times;</button>
+                <button class="close-modal" onclick="closeViewModal()">&times;</button>
             </div>
             <div class="modal-body" id="reportDetails">
                 <!-- Report details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Template Form Modal -->
+    <div id="templateModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTemplateTitle">Create Report</h3>
+                <button class="close-modal" onclick="closeTemplateModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="templateModalBody">
+                <!-- Template form will be loaded here -->
             </div>
         </div>
     </div>
@@ -542,7 +477,8 @@ function getStatusBadge($status) {
         const mobileMenuToggle = document.getElementById('mobileMenuToggle');
         
         if (mobileMenuToggle) {
-            mobileMenuToggle.addEventListener('click', function() {
+            mobileMenuToggle.addEventListener('click', function(e) {
+                e.stopPropagation();
                 sidebar.classList.toggle('mobile-open');
             });
         }
@@ -550,7 +486,9 @@ function getStatusBadge($status) {
         // Close mobile menu when clicking outside
         document.addEventListener('click', function(event) {
             if (window.innerWidth <= 768) {
-                if (!sidebar.contains(event.target) && !mobileMenuToggle.contains(event.target)) {
+                if (sidebar && mobileMenuToggle && 
+                    !sidebar.contains(event.target) && 
+                    !mobileMenuToggle.contains(event.target)) {
                     sidebar.classList.remove('mobile-open');
                 }
             }
@@ -558,77 +496,292 @@ function getStatusBadge($status) {
 
         // Handle window resize
         window.addEventListener('resize', function() {
-            if (window.innerWidth > 768) {
+            if (window.innerWidth > 768 && sidebar) {
                 sidebar.classList.remove('mobile-open');
             }
         });
 
-        // Set default dates for forms
-        document.addEventListener('DOMContentLoaded', function() {
-            // Set default report period to current month
-            const reportPeriod = document.getElementById('report_period');
-            if (reportPeriod) {
-                const now = new Date();
-                reportPeriod.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
-            }
+        // Template Modal functionality
+        const templateModal = document.getElementById('templateModal');
+        const templateModalBody = document.getElementById('templateModalBody');
+        const modalTemplateTitle = document.getElementById('modalTemplateTitle');
+
+        // Helper function to escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Function to open template modal
+        function openTemplateModal(templateId) {
+            console.log('Opening template modal for ID:', templateId);
             
-            // Set default activity date to today
-            const activityDate = document.getElementById('activity_date');
-            if (activityDate) {
-                const now = new Date();
-                activityDate.value = now.toISOString().split('T')[0];
-            }
+            // Show loading state
+            templateModalBody.innerHTML = `
+                <div class="loading-spinner">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p style="margin-top: 1rem; color: var(--dark-gray);">Loading template...</p>
+                </div>
+            `;
             
-            // Auto-generate title based on template and dates
-            const titleInput = document.getElementById('title');
-            const reportPeriodInput = document.getElementById('report_period');
-            const activityDateInput = document.getElementById('activity_date');
+            // Display the modal
+            templateModal.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
             
-            function generateTitle() {
-                if (!titleInput || titleInput.value.trim() !== '') return;
-                
-                const templateName = '<?php echo $selected_template ? safe_display($selected_template["name"]) : ""; ?>';
-                let generatedTitle = templateName;
-                
-                if (reportPeriodInput && reportPeriodInput.value) {
-                    const period = new Date(reportPeriodInput.value + '-01');
-                    generatedTitle += ' - ' + period.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-                } else if (activityDateInput && activityDateInput.value) {
-                    const date = new Date(activityDateInput.value);
-                    generatedTitle += ' - ' + date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+            // Fetch template form via AJAX
+            fetch('get_template_fields.php?template_id=' + templateId)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Template data received:', data);
+                    
+                    if (data.success) {
+                        const template = data.template;
+                        modalTemplateTitle.textContent = 'Create Report: ' + template.name;
+                        
+                        // Parse fields safely
+                        let templateFields = { sections: [] };
+                        try {
+                            if (typeof template.fields === 'string') {
+                                templateFields = JSON.parse(template.fields);
+                            } else if (typeof template.fields === 'object') {
+                                templateFields = template.fields;
+                            }
+                        } catch (e) {
+                            console.error('Error parsing template fields:', e);
+                        }
+                        
+                        let formHtml = `
+                            <form method="POST" id="reportForm" action="">
+                                <input type="hidden" name="template_id" value="${template.id}">
+                                <input type="hidden" name="submit_report" value="1">
+                                
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="title">Report Title *</label>
+                                        <input type="text" id="title" name="title" class="form-control" 
+                                               placeholder="Enter a descriptive title for your report" required>
+                                    </div>
+                        `;
+                        
+                        if (template.report_type === 'monthly') {
+                            const now = new Date();
+                            const currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+                            formHtml += `
+                                <div class="form-group">
+                                    <label for="report_period">Report Period *</label>
+                                    <input type="month" id="report_period" name="report_period" class="form-control" value="${currentMonth}" required>
+                                </div>
+                            `;
+                        } else if (['activity', 'incident', 'meeting'].includes(template.report_type)) {
+                            const today = new Date().toISOString().split('T')[0];
+                            formHtml += `
+                                <div class="form-group">
+                                    <label for="activity_date">Activity/Event Date *</label>
+                                    <input type="date" id="activity_date" name="activity_date" class="form-control" value="${today}" required>
+                                </div>
+                            `;
+                        }
+                        
+                        formHtml += `</div>`;
+                        
+                        // Add template fields
+                        if (templateFields.sections && Array.isArray(templateFields.sections) && templateFields.sections.length > 0) {
+                            templateFields.sections.forEach(section => {
+                                const fieldName = section.title.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                                const required = section.required ? 'required' : '';
+                                const requiredStar = section.required ? '<span style="color: var(--danger);">*</span>' : '';
+                                
+                                formHtml += `
+                                    <div class="form-group">
+                                        <label for="${fieldName}">
+                                            ${escapeHtml(section.title)}
+                                            ${requiredStar}
+                                        </label>
+                                `;
+                                
+                                if (section.type === 'textarea') {
+                                    formHtml += `
+                                        <textarea id="${fieldName}" name="${fieldName}" class="form-control" 
+                                                  placeholder="Enter ${escapeHtml(section.title.toLowerCase())}..." ${required} rows="4"></textarea>
+                                    `;
+                                } else if (section.type === 'number') {
+                                    formHtml += `
+                                        <input type="number" id="${fieldName}" name="${fieldName}" class="form-control" 
+                                               placeholder="Enter ${escapeHtml(section.title.toLowerCase())}..." ${required} step="0.01">
+                                    `;
+                                } else {
+                                    formHtml += `
+                                        <input type="${section.type}" id="${fieldName}" name="${fieldName}" class="form-control" 
+                                               placeholder="Enter ${escapeHtml(section.title.toLowerCase())}..." ${required}>
+                                    `;
+                                }
+                                
+                                if (section.description) {
+                                    formHtml += `<div class="form-help">${escapeHtml(section.description)}</div>`;
+                                }
+                                
+                                formHtml += `</div>`;
+                            });
+                        } else {
+                            formHtml += `
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    No custom fields defined for this template. You can still submit the report.
+                                </div>
+                            `;
+                        }
+                        
+                        formHtml += `
+                            <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+                                <button type="button" class="btn btn-secondary" style="flex: 1;" onclick="closeTemplateModal()">
+                                    <i class="fas fa-times"></i> Cancel
+                                </button>
+                                <button type="submit" class="btn btn-success" style="flex: 1;">
+                                    <i class="fas fa-paper-plane"></i> Submit Report
+                                </button>
+                            </div>
+                        </form>
+                        `;
+                        
+                        templateModalBody.innerHTML = formHtml;
+                        
+                        // Auto-generate title based on template and dates
+                        const titleInput = document.getElementById('title');
+                        const reportPeriodInput = document.getElementById('report_period');
+                        const activityDateInput = document.getElementById('activity_date');
+                        
+                        function generateTitle() {
+                            if (!titleInput) return;
+                            
+                            let generatedTitle = template.name;
+                            
+                            if (reportPeriodInput && reportPeriodInput.value) {
+                                const period = new Date(reportPeriodInput.value + '-01');
+                                generatedTitle += ' - ' + period.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                            } else if (activityDateInput && activityDateInput.value) {
+                                const date = new Date(activityDateInput.value);
+                                generatedTitle += ' - ' + date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+                            }
+                            
+                            if (!titleInput.value || titleInput.value.trim() === '') {
+                                titleInput.value = generatedTitle;
+                            }
+                        }
+                        
+                        if (reportPeriodInput) reportPeriodInput.addEventListener('change', generateTitle);
+                        if (activityDateInput) activityDateInput.addEventListener('change', generateTitle);
+                        generateTitle();
+                        
+                    } else {
+                        templateModalBody.innerHTML = `
+                            <div class="alert alert-error">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                Failed to load template: ${escapeHtml(data.message || 'Unknown error')}
+                            </div>
+                            <div style="margin-top: 1rem; text-align: center;">
+                                <button type="button" class="btn btn-secondary" onclick="closeTemplateModal()">Close</button>
+                            </div>
+                        `;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading template:', error);
+                    templateModalBody.innerHTML = `
+                        <div class="alert alert-error">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            Failed to load template. Error: ${escapeHtml(error.message)}
+                        </div>
+                        <div style="margin-top: 1rem; text-align: center;">
+                            <button type="button" class="btn btn-secondary" onclick="closeTemplateModal()">Close</button>
+                        </div>
+                    `;
+                });
+        }
+        
+        // Function to close template modal
+        function closeTemplateModal() {
+            templateModal.style.display = 'none';
+            templateModalBody.innerHTML = '';
+            document.body.style.overflow = '';
+        }
+        
+        // Add click event to "Use Template" buttons using event delegation
+        document.addEventListener('click', function(e) {
+            // Check if clicked on use-template-btn or inside template-card
+            if (e.target && e.target.classList && e.target.classList.contains('use-template-btn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                const templateId = e.target.getAttribute('data-template-id');
+                if (templateId) {
+                    openTemplateModal(templateId);
                 }
-                
-                titleInput.value = generatedTitle;
-            }
-            
-            if (reportPeriodInput) reportPeriodInput.addEventListener('change', generateTitle);
-            if (activityDateInput) activityDateInput.addEventListener('change', generateTitle);
-            
-            // Generate title on page load if we have a selected template
-            if (<?php echo $selected_template ? 'true' : 'false'; ?>) {
-                generateTitle();
             }
         });
-
+        
+        // Also allow clicking on the template card itself
+        document.querySelectorAll('.template-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                // Don't trigger if clicking on the button itself (already handled)
+                if (e.target.classList && e.target.classList.contains('use-template-btn')) {
+                    return;
+                }
+                const templateId = this.getAttribute('data-template-id');
+                if (templateId) {
+                    openTemplateModal(templateId);
+                }
+            });
+        });
+        
+        // Close template modal when clicking outside
+        templateModal.addEventListener('click', function(e) {
+            if (e.target === templateModal) {
+                closeTemplateModal();
+            }
+        });
+        
+        // Escape key to close template modal
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && templateModal.style.display === 'flex') {
+                closeTemplateModal();
+            }
+            if (e.key === 'Escape' && viewModal.style.display === 'flex') {
+                closeViewModal();
+            }
+        });
+        
         // View Report functionality
-        const modal = document.getElementById('viewReportModal');
+        const viewModal = document.getElementById('viewReportModal');
         const reportDetails = document.getElementById('reportDetails');
+        
+        function closeViewModal() {
+            viewModal.style.display = 'none';
+            reportDetails.innerHTML = '';
+            document.body.style.overflow = '';
+        }
         
         // Function to fetch and display report details
         async function viewReport(reportId) {
             try {
                 // Show loading state
                 reportDetails.innerHTML = `
-                    <div style="text-align: center; padding: 2rem;">
-                        <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--secondary);"></i>
+                    <div class="loading-spinner">
+                        <i class="fas fa-spinner fa-spin"></i>
                         <p style="margin-top: 1rem; color: var(--dark-gray);">Loading report details...</p>
                     </div>
                 `;
                 
-                modal.style.display = 'flex';
+                viewModal.style.display = 'flex';
+                document.body.style.overflow = 'hidden';
                 
                 // Fetch report details via AJAX
-                const response = await fetch('get_rep_report_details?id=' + reportId);
+                const response = await fetch('get_rep_report_details.php?id=' + reportId);
                 const html = await response.text();
                 
                 reportDetails.innerHTML = html;
@@ -657,56 +810,36 @@ function getStatusBadge($status) {
             });
         });
         
-        // Close modal functionality
+        // Close view modal when clicking outside
+        viewModal.addEventListener('click', function(e) {
+            if (e.target === viewModal) {
+                closeViewModal();
+            }
+        });
+        
+        // Close buttons for modals
         document.querySelectorAll('.close-modal').forEach(button => {
             button.addEventListener('click', function() {
-                modal.style.display = 'none';
+                if (viewModal.style.display === 'flex') {
+                    closeViewModal();
+                }
             });
-        });
-        
-        // Close modal when clicking outside
-        modal.addEventListener('click', function(e) {
-            if (e.target === modal) {
-                modal.style.display = 'none';
-            }
-        });
-        
-        // Escape key to close modal
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && modal.style.display === 'flex') {
-                modal.style.display = 'none';
-            }
         });
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
             const cards = document.querySelectorAll('.stat-card, .card');
             cards.forEach((card, index) => {
-                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animation = `fadeInUp 0.4s ease forwards`;
                 card.style.animationDelay = `${index * 0.05}s`;
                 card.style.opacity = '0';
             });
-            
-            const style = document.createElement('style');
-            style.textContent = `
-                @keyframes fadeInUp {
-                    from {
-                        opacity: 0;
-                        transform: translateY(10px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
-                }
-            `;
-            document.head.appendChild(style);
             
             setTimeout(() => {
                 cards.forEach(card => {
                     card.style.opacity = '1';
                 });
-            }, 500);
+            }, 100);
         });
     </script>
 </body>

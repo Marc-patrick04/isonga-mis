@@ -20,12 +20,12 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
-// Get available templates for Vice President
+// Get available templates for Vice President (PostgreSQL uses true/false)
 try {
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'vice_president_representative_board' OR role_specific IS NULL
-        AND is_active = 1
+        WHERE (role_specific = 'vice_president_representative_board' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -58,7 +58,7 @@ try {
     error_log("Team members query error: " . $e->getMessage());
 }
 
-// Get submitted reports (both individual and team reports)
+// Get submitted reports (both individual and team reports) - PostgreSQL uses true/false
 try {
     $stmt = $pdo->prepare("
         SELECT r.*, rt.name as template_name, rt.report_type,
@@ -68,7 +68,7 @@ try {
         LEFT JOIN report_templates rt ON r.template_id = rt.id
         LEFT JOIN users u ON r.reviewed_by = u.id
         LEFT JOIN committee_members cm ON r.user_id = cm.id
-        WHERE r.user_id = ? OR (r.is_team_report = 1 AND r.team_role = 'combined' AND r.user_id IN (
+        WHERE r.user_id = ? OR (r.is_team_report = true AND r.team_role = 'combined' AND r.user_id IN (
             SELECT id FROM committee_members 
             WHERE role IN ('president_representative_board', 'vice_president_representative_board', 'secretary_representative_board')
         ))
@@ -89,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $report_type = $_POST['report_type'] ?? 'monthly';
         $report_period = $_POST['report_period'] ?? null;
         $activity_date = $_POST['activity_date'] ?? null;
-        $is_team_report = isset($_POST['is_team_report']) ? 1 : 0;
+        $is_team_report = isset($_POST['is_team_report']) ? true : false;
         $team_role = $_POST['team_role'] ?? 'combined';
         
         // Get template to validate fields
@@ -106,9 +106,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $template_fields = json_decode($selected_template['fields'], true);
             
             // Collect form data based on template fields
-            foreach ($template_fields['sections'] as $section) {
-                $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                $content_data[$field_name] = $_POST[$field_name] ?? '';
+            if (isset($template_fields['sections']) && is_array($template_fields['sections'])) {
+                foreach ($template_fields['sections'] as $section) {
+                    $field_name = strtolower(preg_replace('/[^a-z0-9]/', '_', $section['title']));
+                    $content_data[$field_name] = $_POST[$field_name] ?? '';
+                }
             }
             
             try {
@@ -116,10 +118,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Start transaction for team report
                     $pdo->beginTransaction();
                     
-                    // Create main team report
+                    // Create main team report (PostgreSQL uses CURRENT_TIMESTAMP)
                     $stmt = $pdo->prepare("
-                        INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, is_team_report, team_role, submitted_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, NOW())
+                        INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, is_team_report, team_role, submitted_at, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', true, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     
                     $stmt->execute([
@@ -140,10 +142,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $sections = [];
                         foreach ($team_members as $member) {
                             if ($member['id'] != $user_id) {
-                                $section_title = "Section for " . $member['name'] . " (" . $member['role'] . ")";
+                                $section_title = "Section for " . $member['name'] . " (" . str_replace('_', ' ', $member['role']) . ")";
                                 $stmt = $pdo->prepare("
-                                    INSERT INTO report_sections (report_id, section_title, assigned_to, content, status, order_index)
-                                    VALUES (?, ?, ?, '', 'draft', ?)
+                                    INSERT INTO report_sections (report_id, section_title, assigned_to, content, status, order_index, created_at, updated_at)
+                                    VALUES (?, ?, ?, '', 'draft', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                                 ");
                                 $stmt->execute([$report_id, $section_title, $member['id'], count($sections) + 1]);
                                 $section_id = $pdo->lastInsertId();
@@ -152,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         
                         // Update assigned sections
-                        $stmt = $pdo->prepare("UPDATE reports SET assigned_sections = ? WHERE id = ?");
+                        $stmt = $pdo->prepare("UPDATE reports SET assigned_sections = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
                         $stmt->execute([json_encode($sections), $report_id]);
                     }
                     
@@ -160,10 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Team report created successfully! Team members can now collaborate.";
                     
                 } else {
-                    // Create individual report
+                    // Create individual report (PostgreSQL uses CURRENT_TIMESTAMP)
                     $stmt = $pdo->prepare("
-                        INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NOW())
+                        INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     
                     $stmt->execute([
@@ -197,8 +199,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             
                             if (move_uploaded_file($file_tmp, $file_path)) {
                                 $stmt = $pdo->prepare("
-                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by)
-                                    VALUES (?, ?, ?, ?, ?, ?)
+                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                                 ");
                                 $stmt->execute([
                                     $report_id,
@@ -231,7 +233,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $report_id = $_POST['report_id'];
         
         try {
-            $stmt = $pdo->prepare("UPDATE reports SET status = 'submitted', submitted_at = NOW() WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE reports SET status = 'submitted', submitted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$report_id]);
             $_SESSION['success_message'] = "Team report submitted successfully!";
             header("Location: reports.php");
@@ -247,7 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $content = $_POST['content'] ?? '';
         
         try {
-            $stmt = $pdo->prepare("UPDATE report_sections SET content = ?, status = 'completed', updated_at = NOW() WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE report_sections SET content = ?, status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$content, $section_id]);
             $_SESSION['success_message'] = "Section saved successfully!";
             header("Location: reports.php?action=edit&id=" . $_POST['report_id']);
@@ -268,7 +270,7 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
             FROM reports r 
             LEFT JOIN report_templates rt ON r.template_id = rt.id
             JOIN committee_members cm ON r.user_id = cm.id
-            WHERE r.id = ? AND (r.user_id = ? OR r.is_team_report = 1)
+            WHERE r.id = ? AND (r.user_id = ? OR r.is_team_report = true)
         ");
         $stmt->execute([$report_id, $user_id]);
         $report = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -334,7 +336,7 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
     }
 }
 
-// Get report statistics
+// Get report statistics (PostgreSQL uses true/false)
 try {
     $stmt = $pdo->prepare("
         SELECT 
@@ -343,9 +345,9 @@ try {
             SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_reports,
             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
             SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_reports,
-            SUM(CASE WHEN is_team_report = 1 THEN 1 ELSE 0 END) as team_reports
+            SUM(CASE WHEN is_team_report = true THEN 1 ELSE 0 END) as team_reports
         FROM reports 
-        WHERE user_id = ? OR (is_team_report = 1 AND team_role = 'combined' AND user_id IN (
+        WHERE user_id = ? OR (is_team_report = true AND team_role = 'combined' AND user_id IN (
             SELECT id FROM committee_members 
             WHERE role IN ('president_representative_board', 'vice_president_representative_board', 'secretary_representative_board')
         ))
@@ -363,7 +365,7 @@ try {
     ];
 }
 
-// Insert vice president specific templates if they don't exist
+// Insert vice president specific templates if they don't exist (PostgreSQL uses true/false)
 try {
     $vp_templates = [
         [
@@ -506,8 +508,8 @@ try {
         
         if (!$check_stmt->fetch()) {
             $insert_stmt = $pdo->prepare("
-                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, 1, NOW())
+                INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $insert_stmt->execute([
                 $template_data['name'],
@@ -522,8 +524,8 @@ try {
     // Refresh templates list
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'vice_president_representative_board' OR role_specific IS NULL
-        AND is_active = 1
+        WHERE (role_specific = 'vice_president_representative_board' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -542,7 +544,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) 
             SELECT r.*, rt.name as template_name, rt.fields as template_fields
             FROM reports r 
             LEFT JOIN report_templates rt ON r.template_id = rt.id 
-            WHERE r.id = ? AND (r.user_id = ? OR r.is_team_report = 1)
+            WHERE r.id = ? AND (r.user_id = ? OR r.is_team_report = true)
         ");
         $stmt->execute([$_GET['id'], $user_id]);
         $current_report = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -564,24 +566,38 @@ if (isset($_GET['action']) && $_GET['action'] === 'edit' && isset($_GET['id'])) 
     }
 }
 
-// Get dashboard statistics for sidebar
+// Get dashboard statistics for sidebar (PostgreSQL fixes)
 try {
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
     $sidebar_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
     $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
+    // PostgreSQL uses CURRENT_DATE instead of CURDATE()
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
     $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
     
-    $stmt = $pdo->prepare("SELECT COUNT(*) as unread_messages FROM conversation_messages cm JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)");
+    // Fix conversation messages query for PostgreSQL
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm 
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id 
+        WHERE cp.user_id = ? 
+        AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
     $stmt->execute([$user_id]);
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     
 } catch (PDOException $e) {
     $sidebar_reps_count = $pending_reports = $upcoming_meetings = $unread_messages = 0;
+    error_log("Sidebar stats error: " . $e->getMessage());
 }
+
+// Ensure variables are defined
+$total_reps = $sidebar_reps_count;
+$pending_reports = $pending_reports ?? 0;
+$upcoming_meetings = $upcoming_meetings ?? 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -591,7 +607,7 @@ try {
     <title>Vice President Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/rp_logo.png">
     <style>
         :root {
             --primary-blue: #007bff;
@@ -1511,6 +1527,10 @@ try {
             font-size: 0.75rem;
         }
 
+        .table-responsive {
+            overflow-x: auto;
+        }
+
         /* Modal */
         .modal {
             display: none;
@@ -1690,7 +1710,7 @@ try {
                     <i class="fas fa-bars"></i>
                 </button>
                 <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
                 <div class="brand-text">
                     <h1>Isonga - Reports</h1>
@@ -1728,11 +1748,10 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1741,7 +1760,6 @@ try {
                     <a href="class_reps.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1759,16 +1777,13 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
+               
                 <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
+                    <a href="committee_budget_requests.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
                     </a>
                 </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
-                
                 <li class="menu-item">
                     <a href="reports.php" class="active">
                         <i class="fas fa-chart-bar"></i>
@@ -1790,6 +1805,7 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
+               
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1801,8 +1817,6 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-            
-
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
@@ -1902,7 +1916,7 @@ try {
                                     
                                     if (!empty($template_fields['sections'])) {
                                         foreach ($template_fields['sections'] as $section) {
-                                            $field_name = strtolower(str_replace(' ', '_', $section['title']));
+                                            $field_name = strtolower(preg_replace('/[^a-z0-9]/', '_', $section['title']));
                                             $section_value = $content[$field_name] ?? '';
                                             ?>
                                             <div class="form-group">
@@ -1999,7 +2013,7 @@ try {
                                 
                                 if (!empty($template_fields['sections'])) {
                                     foreach ($template_fields['sections'] as $section) {
-                                        $field_name = strtolower(str_replace(' ', '_', $section['title']));
+                                        $field_name = strtolower(preg_replace('/[^a-z0-9]/', '_', $section['title']));
                                         $section_value = $content[$field_name] ?? '';
                                         ?>
                                         <div class="form-group">
@@ -2041,7 +2055,6 @@ try {
                 <div class="tabs">
                     <button class="tab active" data-tab="create">Create New Report</button>
                     <button class="tab" data-tab="submitted">Submitted Reports (<?php echo count($submitted_reports); ?>)</button>
-                    <button class="tab" data-tab="team">Team Collaboration</button>
                 </div>
 
                 <!-- Create Report Tab -->
@@ -2078,7 +2091,7 @@ try {
                                 <!-- Team Members Overview -->
                                 <div class="team-options">
                                     <h4><i class="fas fa-users"></i> Representative Board Team</h4>
-                                    <p>Your team consists of 3 members who can collaborate on reports:</p>
+                                    <p>Your team consists of <?php echo count($team_members); ?> members who can collaborate on reports:</p>
                                     
                                     <div class="team-member-grid">
                                         <?php foreach ($team_members as $member): ?>
@@ -2268,16 +2281,6 @@ try {
                         </div>
                     </div>
                 </div>
-
-                <!-- Team Collaboration Tab -->
-                <div class="tab-content" id="team-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Team Collaboration</h3>
-                        </div>
-                        
-                    </div>
-                </div>
             <?php endif; ?>
         </main>
     </div>
@@ -2285,7 +2288,7 @@ try {
     <!-- Report View Modal -->
     <div id="reportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
         <div style="background: var(--white); border-radius: var(--border-radius); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: between; align-items: center;">
+            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: space-between; align-items: center;">
                 <h3 id="modalTitle">Report Details</h3>
                 <button onclick="closeModal()" style="background: none; border: none; font-size: 1.25rem; color: var(--dark-gray); cursor: pointer;">&times;</button>
             </div>
@@ -2395,21 +2398,21 @@ try {
                 
                 if (data.fields && data.fields.sections) {
                     data.fields.sections.forEach(section => {
-                        const fieldName = section.title.toLowerCase().replace(/ /g, '_');
+                        const fieldName = section.title.toLowerCase().replace(/[^a-z0-9]/g, '_');
                         const fieldId = `field_${fieldName}`;
                         
                         const fieldGroup = document.createElement('div');
                         fieldGroup.className = 'form-group';
                         
                         let fieldHtml = `
-                            <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '*' : ''}</label>
+                            <label class="form-label" for="${fieldId}">${escapeHtml(section.title)} ${section.required ? '*' : ''}</label>
                         `;
                         
                         if (section.type === 'textarea' || section.type === 'richtext') {
                             fieldHtml += `
                                 <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
                                           ${section.required ? 'required' : ''} 
-                                          placeholder="${section.description || ''}"
+                                          placeholder="${escapeHtml(section.description || '')}"
                                           rows="6"></textarea>
                             `;
                         } else if (section.type === 'date') {
@@ -2420,18 +2423,18 @@ try {
                         } else if (section.type === 'number') {
                             fieldHtml += `
                                 <input type="number" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}>
+                                       ${section.required ? 'required' : ''} step="0.01">
                             `;
                         } else {
                             fieldHtml += `
                                 <input type="text" class="form-control" id="${fieldId}" name="${fieldName}" 
                                        ${section.required ? 'required' : ''}
-                                       placeholder="${section.description || ''}">
+                                       placeholder="${escapeHtml(section.description || '')}">
                             `;
                         }
                         
                         if (section.description) {
-                            fieldHtml += `<div class="form-text">${section.description}</div>`;
+                            fieldHtml += `<div class="form-text">${escapeHtml(section.description)}</div>`;
                         }
                         
                         fieldGroup.innerHTML = fieldHtml;
@@ -2448,6 +2451,14 @@ try {
             }
         }
 
+        // Escape HTML helper
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // File handling
         function handleFileSelect(input) {
             const fileList = document.getElementById('fileList');
@@ -2457,7 +2468,7 @@ try {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 fileItem.innerHTML = `
-                    <span class="file-name">${file.name}</span>
+                    <span class="file-name">${escapeHtml(file.name)}</span>
                     <button type="button" class="file-remove" onclick="removeFile(this)">
                         <i class="fas fa-times"></i>
                     </button>
@@ -2494,11 +2505,11 @@ try {
                 let content = `
                     <div class="form-group">
                         <label class="form-label">Template</label>
-                        <div>${report.template_name || 'Custom'}</div>
+                        <div>${escapeHtml(report.template_name || 'Custom')}</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Report Type</label>
-                        <div>${report.report_type}</div>
+                        <div>${escapeHtml(report.report_type)}</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Team Report</label>
@@ -2515,25 +2526,37 @@ try {
                 `;
                 
                 if (report.content) {
-                    const reportContent = JSON.parse(report.content);
-                    Object.keys(reportContent).forEach(key => {
-                        if (reportContent[key]) {
-                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            content += `
-                                <div class="form-group">
-                                    <label class="form-label">${label}</label>
-                                    <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${reportContent[key]}</div>
-                                </div>
-                            `;
-                        }
-                    });
+                    let reportContent;
+                    if (typeof report.content === 'string') {
+                        reportContent = JSON.parse(report.content);
+                    } else {
+                        reportContent = report.content;
+                    }
+                    
+                    if (reportContent && typeof reportContent === 'object') {
+                        Object.keys(reportContent).forEach(key => {
+                            if (reportContent[key]) {
+                                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                content += `
+                                    <div class="form-group">
+                                        <label class="form-label">${escapeHtml(label)}</label>
+                                        <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${escapeHtml(reportContent[key])}</div>
+                                    </div>
+                                `;
+                            }
+                        });
+                    }
                 }
                 
                 document.getElementById('modalContent').innerHTML = content;
                 document.getElementById('reportModal').style.display = 'flex';
             } catch (error) {
                 console.error('Error loading report:', error);
-                alert('Error loading report details');
+                document.getElementById('modalContent').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle"></i> Error loading report details.
+                    </div>
+                `;
             }
         }
 
@@ -2542,8 +2565,18 @@ try {
         }
 
         // Close modal when clicking outside
-        document.getElementById('reportModal').addEventListener('click', function(e) {
-            if (e.target === this) {
+        const reportModal = document.getElementById('reportModal');
+        if (reportModal) {
+            reportModal.addEventListener('click', function(e) {
+                if (e.target === this) {
+                    closeModal();
+                }
+            });
+        }
+
+        // Escape key to close modal
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && reportModal && reportModal.style.display === 'flex') {
                 closeModal();
             }
         });

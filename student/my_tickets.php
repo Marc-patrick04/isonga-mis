@@ -16,16 +16,6 @@ $department = $_SESSION['department'];
 $program = $_SESSION['program'];
 $academic_year = $_SESSION['academic_year'];
 
-// Get theme preference
-$theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
-
-// Handle theme toggle
-if (isset($_POST['toggle_theme'])) {
-    $new_theme = $theme === 'light' ? 'dark' : 'light';
-    setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: my_tickets');
-    exit();
-}
 
 // Handle viewing ticket details with comments
 $selected_ticket_id = $_GET['ticket_id'] ?? null;
@@ -155,7 +145,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
 ?>
 
 <!DOCTYPE html>
-<html lang="en" data-theme="<?php echo $theme; ?>">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -170,61 +160,60 @@ function formatCommenterRole($commenter_role, $commenter_type) {
             --shadow: 0 4px 12px rgba(0,0,0,0.1); --radius: 8px; 
             --transition: all 0.3s ease;
         }
-        [data-theme="dark"] {
-            --white: #1a1a1a; --light: #2d2d2d; --gray: #3d3d3d;
-            --dark-gray: #a0a0a0; --text: #e9ecef;
-            --shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); }
-        .container { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+        body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); font-size: 0.875rem; }
+        .container { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
         
         /* Sidebar */
-        .sidebar { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 1.5rem; position: fixed; width: 250px; height: 100vh; z-index: 1000; }
+        .sidebar { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 1.5rem; position: fixed; width: 260px; height: 100vh; z-index: 1000; overflow-y: auto; }
         .brand { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.2); }
         .brand-logo { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; }
         .brand-text h1 { font-size: 1.2rem; font-weight: 700; }
         .nav-links { list-style: none; }
-        .nav-links li { margin-bottom: 0.5rem; }
-        .nav-links a { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; color: white; text-decoration: none; border-radius: var(--radius); transition: var(--transition); }
+        .nav-links li { margin-bottom: 0.25rem; }
+        .nav-links a { display: flex; align-items: center; gap: 0.8rem; padding: 0.75rem 1rem; color: white; text-decoration: none; border-radius: var(--radius); transition: var(--transition); font-size: 0.85rem; }
         .nav-links a:hover, .nav-links a.active { background: rgba(255,255,255,0.15); }
+        .nav-links i { width: 20px; text-align: center; }
         
         /* Main Content */
-        .main { grid-column: 2; padding: 2rem; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; background: var(--white); padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
-        .welcome h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .main { grid-column: 2; padding: 1.5rem; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; background: var(--white); padding: 1.25rem 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
+        .welcome h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
+        .welcome p { font-size: 0.85rem; color: var(--dark-gray); }
         .actions { display: flex; gap: 1rem; }
-        .btn { padding: 0.8rem 1.5rem; border: none; border-radius: 50px; cursor: pointer; transition: var(--transition); text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+        .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 50px; cursor: pointer; transition: var(--transition); text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.85rem; }
         .btn-primary { background: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%); color: white; }
         .btn-success { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; }
         .btn-secondary { background: var(--gray); color: var(--text); }
         .btn-info { background: var(--info); color: white; }
-        .icon-btn { background: var(--white); border: 2px solid var(--gray); border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .icon-btn { background: var(--white); border: 2px solid var(--gray); border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: var(--transition); }
+        .icon-btn:hover { background: var(--gray); }
         
         /* Stats Grid */
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .stat-card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; text-align: center; box-shadow: var(--shadow); transition: var(--transition); }
-        .stat-card:hover { transform: translateY(-3px); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .stat-card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; text-align: center; box-shadow: var(--shadow); transition: var(--transition); }
+        .stat-card:hover { transform: translateY(-2px); }
         .stat-icon { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.2rem; }
-        .stat-number { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .stat-label { font-size: 0.9rem; color: var(--dark-gray); }
+        .stat-number { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
+        .stat-label { font-size: 0.8rem; color: var(--dark-gray); }
         
         /* Cards */
-        .card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-        .card-title { font-size: 1.2rem; font-weight: 600; }
-        .link { color: var(--secondary); text-decoration: none; font-size: 0.9rem; }
+        .card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); margin-bottom: 1.5rem; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .card-title { font-size: 1rem; font-weight: 600; }
+        .link { color: var(--secondary); text-decoration: none; font-size: 0.8rem; }
+        .link:hover { text-decoration: underline; }
         
         /* Class Rep Badge */
-        .class-rep-badge { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem; }
+        .class-rep-badge { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 0.75rem; }
         
         /* Tickets List */
         .ticket-list { display: grid; gap: 1rem; }
-        .ticket-card { background: var(--light); border-radius: var(--radius); padding: 1.5rem; transition: var(--transition); border-left: 4px solid var(--secondary); }
+        .ticket-card { background: var(--light); border-radius: var(--radius); padding: 1.25rem; transition: var(--transition); border-left: 4px solid var(--secondary); }
         .ticket-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
         .ticket-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem; }
-        .ticket-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; }
-        .ticket-meta { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--dark-gray); margin-bottom: 1rem; }
+        .ticket-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; }
+        .ticket-meta { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--dark-gray); margin-bottom: 1rem; flex-wrap: wrap; }
         .ticket-description { margin-bottom: 1rem; line-height: 1.5; }
         .ticket-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; background: var(--white); padding: 1rem; border-radius: var(--radius); }
         .detail-item { display: flex; flex-direction: column; }
@@ -232,7 +221,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
         .detail-value { font-weight: 600; }
         
         /* Status */
-        .status { padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; display: inline-block; }
+        .status { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; display: inline-block; }
         .status-open { background: rgba(40,167,69,0.1); color: var(--success); }
         .status-progress { background: rgba(255,193,7,0.1); color: var(--warning); }
         .status-resolved { background: rgba(108,117,125,0.1); color: var(--dark-gray); }
@@ -268,12 +257,17 @@ function formatCommenterRole($commenter_role, $commenter_type) {
         .empty-state i { font-size: 3rem; margin-bottom: 1rem; color: var(--gray); }
         
         /* Comment Count Badge */
-        .comment-count { background: var(--info); color: white; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.7rem; font-weight: 600; margin-left: 0.5rem; }
+        .comment-count { background: var(--info); color: white; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.65rem; font-weight: 600; margin-left: 0.5rem; }
         
         /* Responsive */
+        @media (max-width: 1024px) {
+            .ticket-details { grid-template-columns: 1fr 1fr; }
+        }
+        
         @media (max-width: 768px) {
             .container { grid-template-columns: 1fr; }
-            .sidebar { transform: translateX(-100%); }
+            .sidebar { transform: translateX(-100%); transition: transform 0.3s ease; }
+            .sidebar.mobile-open { transform: translateX(0); }
             .main { grid-column: 1; padding: 1rem; }
             .header { flex-direction: column; gap: 1rem; text-align: center; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
@@ -291,18 +285,19 @@ function formatCommenterRole($commenter_role, $commenter_type) {
 <body>
     <div class="container">
         <!-- Sidebar -->
-        <div class="sidebar">
+        <div class="sidebar" id="sidebar">
             <div class="brand">
                 <div class="brand-logo"><i class="fas fa-user-shield"></i></div>
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_tickets"><i class="fas fa-arrow-left"></i> Back to Tickets</a></li>
-                <li><a href="#" class="active"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
-                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Class Rep Dashboard</a></li>
+                <li><a href="my_tickets.php" class="active"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
+                <li><a href="class_tickets.php"><i class="fas fa-users"></i> Class Tickets</a></li>
+                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -317,12 +312,10 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                     <p>Track all tickets you've submitted and their current status</p>
                 </div>
                 <div class="actions">
-                    <form method="POST">
-                        <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
-                            <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-                        </button>
-                    </form>
-                    <a href="class_tickets" class="btn btn-secondary">
+                    <button class="icon-btn" id="mobileMenuToggle" title="Menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <a href="class_tickets.php" class="btn btn-secondary">
                         <i class="fas fa-chart-bar"></i> Class Statistics
                     </a>
                 </div>
@@ -331,7 +324,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
             <?php if ($selected_ticket): ?>
                 <!-- Ticket Detail View -->
                 <div class="back-button">
-                    <a href="my_tickets" class="btn btn-secondary">
+                    <a href="my_tickets.php" class="btn btn-secondary">
                         <i class="fas fa-arrow-left"></i> Back to All Tickets
                     </a>
                 </div>
@@ -483,7 +476,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                             <i class="fas fa-ticket-alt"></i>
                             <h3>No Tickets Yet</h3>
                             <p>You haven't submitted any tickets yet. Submit your first ticket to get started.</p>
-                            <a href="class_tickets" class="btn btn-primary" style="margin-top: 1rem;">
+                            <a href="class_tickets.php" class="btn btn-primary" style="margin-top: 1rem;">
                                 <i class="fas fa-plus"></i> Submit First Ticket
                             </a>
                         </div>
@@ -494,7 +487,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                                     <div class="ticket-header">
                                         <div style="flex: 1;">
                                             <div class="ticket-title">
-                                                <a href="my_tickets?ticket_id=<?php echo $ticket['id']; ?>" style="color: inherit; text-decoration: none;">
+                                                <a href="my_tickets.php?ticket_id=<?php echo $ticket['id']; ?>" style="color: inherit; text-decoration: none;">
                                                     <?php echo safe_display($ticket['subject']); ?>
                                                 </a>
                                                 <?php if ($ticket['comment_count'] > 0): ?>
@@ -558,7 +551,7 @@ function formatCommenterRole($commenter_role, $commenter_type) {
                                     <?php endif; ?>
 
                                     <div style="margin-top: 1rem; text-align: right;">
-                                        <a href="my_tickets?ticket_id=<?php echo $ticket['id']; ?>" class="btn btn-info btn-sm">
+                                        <a href="my_tickets.php?ticket_id=<?php echo $ticket['id']; ?>" class="btn btn-info btn-sm">
                                             <i class="fas fa-eye"></i> View Details & Comments
                                         </a>
                                     </div>
@@ -572,11 +565,61 @@ function formatCommenterRole($commenter_role, $commenter_type) {
     </div>
 
     <script>
-        // Add any JavaScript functionality needed for the tickets page
+        // Mobile Menu Toggle
+        const sidebar = document.getElementById('sidebar');
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', function() {
+                sidebar.classList.toggle('mobile-open');
+            });
+        }
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            if (window.innerWidth <= 768) {
+                if (!sidebar.contains(event.target) && !mobileMenuToggle.contains(event.target)) {
+                    sidebar.classList.remove('mobile-open');
+                }
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('mobile-open');
+            }
+        });
+
+        // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('My Tickets page loaded');
+            const cards = document.querySelectorAll('.stat-card, .card');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
             
-            // You can add filtering or search functionality here if needed
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
         });
     </script>
 </body>

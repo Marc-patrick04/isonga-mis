@@ -27,8 +27,8 @@ try {
 
 // Get dashboard statistics for Vice President of Representative Board
 try {
-    // 1. Total class representatives - from users table
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
+    // 1. Total class representatives - PostgreSQL uses true for boolean
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
     $total_reps = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     // 2. Total students in college
@@ -39,17 +39,17 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
     $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
-    // 4. Upcoming meetings for Representative Board
+    // 4. Upcoming meetings for Representative Board - PostgreSQL uses CURRENT_DATE
     $stmt = $pdo->query("
         SELECT COUNT(*) as upcoming_meetings 
         FROM meetings 
-        WHERE meeting_date >= CURDATE() 
+        WHERE meeting_date >= CURRENT_DATE 
         AND status = 'scheduled' 
         AND committee_role = 'representative_board'
     ");
     $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
     
-    // 5. Student tickets analysis
+    // 5. Student tickets analysis - PostgreSQL uses CURRENT_DATE - INTERVAL '30 days'
     $stmt = $pdo->query("
         SELECT 
             COUNT(*) as total_tickets,
@@ -57,7 +57,7 @@ try {
             SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_tickets,
             SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets
         FROM tickets 
-        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
     ");
     $ticket_stats = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -71,19 +71,19 @@ try {
     ");
     $board_team = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // 7. Recent Representative Board reports
+    // 7. Recent Representative Board reports - PostgreSQL uses true for boolean
     $stmt = $pdo->query("
         SELECT r.*, u.full_name as author_name
         FROM reports r
         JOIN users u ON r.user_id = u.id
-        WHERE r.is_team_report = 1 
+        WHERE r.is_team_report = true 
         AND r.team_role IN ('president', 'vice_president', 'secretary', 'combined')
         ORDER BY r.created_at DESC 
         LIMIT 5
     ");
     $recent_board_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // 8. Vice President's attendance in meetings
+    // 8. Vice President's attendance in meetings - PostgreSQL uses CURRENT_DATE - INTERVAL '30 days'
     $stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total_meetings,
@@ -93,7 +93,7 @@ try {
         LEFT JOIN meeting_attendance ma ON m.id = ma.meeting_id
         LEFT JOIN committee_members cm ON ma.committee_member_id = cm.id
         WHERE cm.role = 'vice_president_representative_board'
-        AND m.meeting_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        AND m.meeting_date >= CURRENT_DATE - INTERVAL '30 days'
     ");
     $stmt->execute();
     $attendance_stats = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -110,12 +110,12 @@ try {
     ");
     $pending_class_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // 10. Upcoming meetings for the Vice President to attend
+    // 10. Upcoming meetings for the Vice President to attend - PostgreSQL uses CURRENT_DATE
     $stmt = $pdo->query("
         SELECT m.*, u.full_name as chairperson_name
         FROM meetings m
         JOIN users u ON m.chairperson_id = u.id
-        WHERE m.meeting_date >= CURDATE()
+        WHERE m.meeting_date >= CURRENT_DATE
         AND m.status = 'scheduled'
         AND (m.committee_role = 'representative_board' OR m.meeting_type = 'executive')
         ORDER BY m.meeting_date ASC, m.start_time ASC
@@ -147,33 +147,33 @@ try {
     $stmt->execute([$user_id]);
     $vice_president_budget_requests = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // 13. Department-wise class representative distribution
+    // 13. Department-wise class representative distribution - PostgreSQL uses true for boolean
     $stmt = $pdo->query("
         SELECT 
             d.name as department_name,
             COUNT(u.id) as rep_count
         FROM users u
         JOIN departments d ON u.department_id = d.id
-        WHERE u.is_class_rep = 1
+        WHERE u.is_class_rep = true
         AND u.status = 'active'
         GROUP BY d.id, d.name
         ORDER BY rep_count DESC
     ");
     $department_reps = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // 14. Recent student tickets for analysis
+    // 14. Recent student tickets for analysis - PostgreSQL uses CURRENT_DATE - INTERVAL '7 days'
     $stmt = $pdo->query("
         SELECT t.*, d.name as department_name, p.name as program_name
         FROM tickets t
         LEFT JOIN departments d ON t.department_id = d.id
         LEFT JOIN programs p ON t.program_id = p.id
-        WHERE t.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        WHERE t.created_at >= CURRENT_DATE - INTERVAL '7 days'
         ORDER BY t.created_at DESC
         LIMIT 5
     ");
     $recent_tickets = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
-    // 15. Class representative performance metrics
+    // 15. Class representative performance metrics - PostgreSQL uses true for boolean and CURRENT_DATE - INTERVAL
     $stmt = $pdo->query("
         SELECT 
             u.full_name,
@@ -182,9 +182,9 @@ try {
             SUM(CASE WHEN crr.status = 'rejected' THEN 1 ELSE 0 END) as rejected_reports
         FROM users u
         LEFT JOIN class_rep_reports crr ON u.id = crr.user_id
-        WHERE u.is_class_rep = 1
+        WHERE u.is_class_rep = true
         AND u.status = 'active'
-        AND crr.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        AND crr.created_at >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY u.id, u.full_name
         ORDER BY reports_submitted DESC
         LIMIT 5
@@ -200,6 +200,12 @@ try {
     $recent_activities = $vice_president_budget_requests = $department_reps = $recent_tickets = $rep_performance = [];
     $attendance_stats = ['total_meetings' => 0, 'attended_meetings' => 0, 'absent_meetings' => 0];
 }
+
+// Ensure attendance_stats has proper values
+$attendance_stats['total_meetings'] = $attendance_stats['total_meetings'] ?? 0;
+$attendance_stats['attended_meetings'] = $attendance_stats['attended_meetings'] ?? 0;
+$attendance_stats['absent_meetings'] = $attendance_stats['absent_meetings'] ?? 0;
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1088,7 +1094,7 @@ try {
                     <i class="fas fa-bars"></i>
                 </button>
                 <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
                 <div class="brand-text">
                     <h1>Isonga - Representative Board Vice President</h1>
@@ -1123,7 +1129,6 @@ try {
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
@@ -1156,16 +1161,13 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
+               
                 <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
+                    <a href="committee_budget_requests.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
                     </a>
                 </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
-                
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-chart-bar"></i>
@@ -1187,6 +1189,7 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
+               
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1201,7 +1204,6 @@ try {
             <div class="dashboard-header">
                 <div class="welcome-section">
                     <h1>Welcome, Vice President <?php echo htmlspecialchars($vice_president_name); ?>!</h1>
-                
                 </div>
             </div>
 
@@ -1256,7 +1258,6 @@ try {
             <div class="content-grid">
                 <!-- Left Column -->
                 <div class="left-column">
-                    
                     <!-- Pending Class Representative Reports -->
                     <div class="card">
                         <div class="card-header">
@@ -1274,38 +1275,62 @@ try {
                                     <p>No pending class representative reports</p>
                                 </div>
                             <?php else: ?>
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Representative</th>
-                                            <th>Report Title</th>
-                                            <th>Department</th>
-                                            <th>Date</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($pending_class_reports as $report): ?>
+                                <div class="table-responsive">
+                                    <table class="table">
+                                        <thead>
                                             <tr>
-                                                <td>
-                                                    <strong><?php echo htmlspecialchars($report['full_name']); ?></strong>
-                                                </td>
-                                                <td><?php echo htmlspecialchars($report['title']); ?></td>
-                                                <td><?php echo htmlspecialchars($report['department_name'] ?? 'N/A'); ?></td>
-                                                <td><?php echo date('M j', strtotime($report['created_at'])); ?></td>
+                                                <th>Representative</th>
+                                                <th>Report Title</th>
+                                                <th>Department</th>
+                                                <th>Date</th>
                                             </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            <?php foreach ($pending_class_reports as $report): ?>
+                                                <tr>
+                                                    <td>
+                                                        <strong><?php echo htmlspecialchars($report['full_name']); ?></strong>
+                                                    </                                                    <td><?php echo htmlspecialchars($report['title']); ?></td>
+                                                    <td><?php echo htmlspecialchars($report['department_name'] ?? 'N/A'); ?></td>
+                                                    <td><?php echo date('M j', strtotime($report['created_at'])); ?></td>
+                                                </tr>
+                                            <?php endforeach; ?>
+                                        </tbody>
+                                    </table>
+                                </div>
                             <?php endif; ?>
                         </div>
                     </div>
 
                     <!-- Department-wise Class Representatives -->
-                    
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Class Representatives by Department</h3>
+                        </div>
+                        <div class="card-body">
+                            <?php if (empty($department_reps)): ?>
+                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                    <p>No department data available</p>
+                                </div>
+                            <?php else: ?>
+                                <div class="department-stats">
+                                    <?php foreach ($department_reps as $dept): ?>
+                                        <div class="department-stat">
+                                            <div class="department-name"><?php echo htmlspecialchars($dept['department_name']); ?></div>
+                                            <div class="department-count"><?php echo $dept['rep_count']; ?></div>
+                                            <div style="font-size: 0.6rem; color: var(--dark-gray); margin-top: 0.25rem;">
+                                                representatives
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
 
                     <!-- Quick Actions -->
                     <div class="quick-actions">
-                        <a href="class_rep_reports.php?action=review" class="action-btn">
+                        <a href="class_rep_reports.php" class="action-btn">
                             <i class="fas fa-file-check"></i>
                             <span class="action-label">Review Reports</span>
                         </a>
@@ -1326,8 +1351,34 @@ try {
 
                 <!-- Right Column -->
                 <div class="right-column">
+                    <!-- Representative Board Team -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Representative Board Team</h3>
+                        </div>
+                        <div class="card-body">
+                            <?php if (empty($board_team)): ?>
+                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                    <p>No team members found</p>
+                                </div>
+                            <?php else: ?>
+                                <?php foreach ($board_team as $member): ?>
+                                    <div class="member-info">
+                                        <div class="member-avatar">
+                                            <?php echo strtoupper(substr($member['name'], 0, 1)); ?>
+                                        </div>
+                                        <div class="member-details">
+                                            <div class="member-name"><?php echo htmlspecialchars($member['name']); ?></div>
+                                            <div class="member-role"><?php echo htmlspecialchars(str_replace('_', ' ', $member['role'])); ?></div>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+
                     
-                                        
+
                     <!-- Attendance Statistics -->
                     <div class="card">
                         <div class="card-header">
@@ -1357,6 +1408,15 @@ try {
                                         echo $rate; 
                                         ?>%
                                     </strong>
+                                </div>
+                            </div>
+                            <div class="attendance-progress" style="margin-top: 1rem;">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" style="width: <?php echo $rate; ?>%"></div>
+                                </div>
+                                <div class="progress-text">
+                                    <span>Last 30 days</span>
+                                    <span><?php echo $rate; ?>%</span>
                                 </div>
                             </div>
                         </div>
@@ -1404,52 +1464,41 @@ try {
             }
         });
 
-        // Student Tickets Chart
-        const ticketsCtx = document.getElementById('ticketsChart').getContext('2d');
-        const ticketsChart = new Chart(ticketsCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['Resolved', 'Open', 'In Progress'],
-                datasets: [{
-                    data: [
-                        <?php echo $ticket_stats['resolved_tickets'] ?? 0; ?>,
-                        <?php echo $ticket_stats['open_tickets'] ?? 0; ?>,
-                        <?php echo $ticket_stats['in_progress_tickets'] ?? 0; ?>
-                    ],
-                    backgroundColor: [
-                        'rgba(40, 167, 69, 0.8)',
-                        'rgba(255, 193, 7, 0.8)',
-                        'rgba(23, 162, 184, 0.8)'
-                    ],
-                    borderColor: [
-                        'rgb(40, 167, 69)',
-                        'rgb(255, 193, 7)',
-                        'rgb(23, 162, 184)'
-                    ],
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 20,
-                            usePointStyle: true,
-                        }
-                    }
-                },
-                cutout: '65%'
-            }
-        });
-
         // Auto-refresh dashboard every 5 minutes
         setInterval(() => {
-            // You can add auto-refresh logic here
-            console.log('Dashboard auto-refresh triggered');
+            console.log('Vice President Dashboard auto-refresh triggered');
         }, 300000);
+
+        // Add loading animations
+        document.addEventListener('DOMContentLoaded', function() {
+            const cards = document.querySelectorAll('.stat-card, .card');
+            cards.forEach((card, index) => {
+                card.style.animation = `fadeInUp 0.4s ease forwards`;
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 100);
+        });
     </script>
 </body>
 </html>

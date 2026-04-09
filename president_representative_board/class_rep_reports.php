@@ -1207,16 +1207,8 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
-                    </a>
-                </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
-                
+               
+           
                 <li class="menu-item">
                     <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>

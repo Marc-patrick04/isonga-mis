@@ -1459,7 +1459,7 @@ function safe_display($data) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard">
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1474,37 +1474,37 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="financial_aid">
+                    <a href="financial_aid.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Financial Aid</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="announcements">
+                    <a href="announcements.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="events">
+                    <a href="events.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="news">
+                    <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="gallery">
+                    <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="messages">
+                    <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1513,14 +1513,14 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="profile">
+                    <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="menu-item">
-                    <a href="class_rep_dashboard">
+                    <a href="class_rep_dashboard.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Dashboard</span>
                     </a>

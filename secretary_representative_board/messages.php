@@ -287,7 +287,7 @@ if (isset($_SESSION['error'])) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <title>Messages - Secretary of Representative Board - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -437,6 +437,21 @@ if (isset($_SESSION['error'])) {
             color: white;
             font-weight: 600;
             font-size: 1rem;
+            border: 3px solid var(--medium-gray);
+            overflow: hidden;
+            position: relative;
+            transition: var(--transition);
+        }
+
+        .user-avatar:hover {
+            border-color: var(--primary-blue);
+            transform: scale(1.05);
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
 
         .user-details {
@@ -636,23 +651,6 @@ if (isset($_SESSION['error'])) {
             margin-left: var(--sidebar-collapsed-width);
         }
 
-        /* Dashboard Header */
-        .dashboard-header {
-            margin-bottom: 1.5rem;
-        }
-
-        .welcome-section h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-            color: var(--text-dark);
-        }
-
-        .welcome-section p {
-            color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
         /* Alert */
         .alert {
             padding: 0.75rem 1rem;
@@ -670,12 +668,6 @@ if (isset($_SESSION['error'])) {
             border-left-color: var(--warning);
         }
 
-        .alert-info {
-            background: #cce7ff;
-            color: #004085;
-            border-left-color: var(--info);
-        }
-
         .alert a {
             color: inherit;
             font-weight: 600;
@@ -689,16 +681,17 @@ if (isset($_SESSION['error'])) {
         /* Toast Messages */
         .toast {
             position: fixed;
-            top: 100px;
-            right: 2rem;
+            top: 80px;
+            right: 1rem;
             padding: 1rem 1.5rem;
             border-radius: var(--border-radius);
             color: white;
             font-weight: 500;
-            z-index: 1000;
+            z-index: 1001;
             transform: translateX(400px);
             transition: transform 0.3s ease;
             max-width: 400px;
+            box-shadow: var(--shadow-lg);
         }
 
         .toast.show {
@@ -713,33 +706,42 @@ if (isset($_SESSION['error'])) {
             background: var(--danger);
         }
 
-        /* Messages Container */
+        /* ============================================ */
+        /* WHATSAPP-STYLE MESSAGES LAYOUT */
+        /* ============================================ */
         .messages-container {
-            display: grid;
-            grid-template-columns: 350px 1fr;
+            display: flex;
             background: var(--white);
             border-radius: var(--border-radius);
             box-shadow: var(--shadow-sm);
             overflow: hidden;
             height: calc(100vh - 250px);
             min-height: 500px;
+            position: relative;
         }
 
-        /* Conversations Sidebar */
+        /* Conversations Sidebar - Left Panel */
         .conversations-sidebar {
+            width: 360px;
+            flex-shrink: 0;
             border-right: 1px solid var(--medium-gray);
             display: flex;
             flex-direction: column;
+            background: var(--white);
+            height: 100%;
+            transition: transform 0.3s ease;
         }
 
         .sidebar-header {
             padding: 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
+            background: var(--white);
         }
 
         .sidebar-header h2 {
             margin-bottom: 1rem;
             color: var(--text-dark);
+            font-size: 1.25rem;
         }
 
         .action-buttons {
@@ -777,7 +779,6 @@ if (isset($_SESSION['error'])) {
 
         .btn-secondary:hover {
             background: var(--medium-gray);
-            transform: translateY(-1px);
         }
 
         .conversation-list {
@@ -792,7 +793,7 @@ if (isset($_SESSION['error'])) {
             padding: 1rem;
             border-bottom: 1px solid var(--medium-gray);
             cursor: pointer;
-            transition: var(--transition);
+            transition: background 0.2s ease;
         }
 
         .conversation-item:hover {
@@ -801,12 +802,11 @@ if (isset($_SESSION['error'])) {
 
         .conversation-item.active {
             background: var(--light-blue);
-            border-left: 3px solid var(--primary-blue);
         }
 
         .conversation-avatar {
-            width: 40px;
-            height: 40px;
+            width: 48px;
+            height: 48px;
             border-radius: 50%;
             background: var(--gradient-primary);
             display: flex;
@@ -814,6 +814,7 @@ if (isset($_SESSION['error'])) {
             justify-content: center;
             color: white;
             font-weight: 600;
+            font-size: 1.2rem;
             flex-shrink: 0;
         }
 
@@ -843,6 +844,7 @@ if (isset($_SESSION['error'])) {
             text-align: right;
             font-size: 0.7rem;
             color: var(--dark-gray);
+            flex-shrink: 0;
         }
 
         .unread-badge {
@@ -859,17 +861,43 @@ if (isset($_SESSION['error'])) {
             margin-top: 0.25rem;
         }
 
-        /* Chat Area */
+        /* Chat Area - Right Panel (WhatsApp style) */
         .chat-area {
+            flex: 1;
             display: flex;
             flex-direction: column;
             height: 100%;
+            background: var(--white);
+            transition: transform 0.3s ease;
         }
 
         .chat-header {
             padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--medium-gray);
             background: var(--white);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .mobile-back-btn {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--primary-blue);
+            padding: 0.5rem;
+            border-radius: 50%;
+            transition: background 0.2s;
+        }
+
+        .mobile-back-btn:hover {
+            background: var(--light-gray);
+        }
+
+        .chat-header-info {
+            flex: 1;
         }
 
         .chat-title {
@@ -882,6 +910,9 @@ if (isset($_SESSION['error'])) {
             font-size: 0.75rem;
             color: var(--dark-gray);
             margin-top: 0.25rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .messages-area {
@@ -890,13 +921,14 @@ if (isset($_SESSION['error'])) {
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 1rem;
+            gap: 0.75rem;
+            background: var(--light-gray);
         }
 
         .message {
             max-width: 70%;
             padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
+            border-radius: 18px;
             position: relative;
         }
 
@@ -909,9 +941,10 @@ if (isset($_SESSION['error'])) {
 
         .message.received {
             align-self: flex-start;
-            background: var(--light-gray);
+            background: var(--white);
             color: var(--text-dark);
             border-bottom-left-radius: 4px;
+            box-shadow: var(--shadow-sm);
         }
 
         .message.announcement {
@@ -958,7 +991,7 @@ if (isset($_SESSION['error'])) {
             flex: 1;
             padding: 0.75rem;
             border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
+            border-radius: 24px;
             resize: none;
             font-family: inherit;
             font-size: 0.875rem;
@@ -977,7 +1010,7 @@ if (isset($_SESSION['error'])) {
             background: var(--primary-blue);
             color: white;
             border: none;
-            border-radius: var(--border-radius);
+            border-radius: 50%;
             width: 44px;
             height: 44px;
             display: flex;
@@ -989,7 +1022,7 @@ if (isset($_SESSION['error'])) {
 
         .send-button:hover {
             background: var(--secondary-blue);
-            transform: translateY(-1px);
+            transform: scale(1.05);
         }
 
         /* Empty States */
@@ -1136,12 +1169,15 @@ if (isset($_SESSION['error'])) {
             margin-top: 2rem;
         }
 
-        /* Responsive */
-        @media (max-width: 992px) {
-            .messages-container {
-                grid-template-columns: 300px 1fr;
-            }
+        /* Floating Action Button for Mobile */
+        .fab-new-chat {
+            display: none;
+        }
 
+        /* ============================================ */
+        /* RESPONSIVE - MOBILE WHATSAPP STYLE */
+        /* ============================================ */
+        @media (max-width: 992px) {
             .sidebar {
                 transform: translateX(-100%);
                 position: fixed;
@@ -1199,12 +1235,76 @@ if (isset($_SESSION['error'])) {
 
         @media (max-width: 768px) {
             .messages-container {
-                grid-template-columns: 1fr;
                 height: calc(100vh - 200px);
+                position: relative;
+                overflow: hidden;
             }
             
+            /* Conversations Sidebar - takes full width */
             .conversations-sidebar {
-                display: none;
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                z-index: 10;
+                background: var(--white);
+                transform: translateX(0);
+                transition: transform 0.3s ease;
+            }
+            
+            /* Hide sidebar when chat is active */
+            .messages-container.chat-active .conversations-sidebar {
+                transform: translateX(-100%);
+            }
+            
+            /* Chat Area - full width, hidden by default */
+            .chat-area {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                z-index: 20;
+                background: var(--white);
+                transform: translateX(100%);
+                transition: transform 0.3s ease;
+            }
+            
+            /* Show chat when active */
+            .messages-container.chat-active .chat-area {
+                transform: translateX(0);
+            }
+            
+            /* Show mobile back button */
+            .mobile-back-btn {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 40px;
+                height: 40px;
+            }
+            
+            /* Adjust header padding */
+            .chat-header {
+                padding: 0.75rem 1rem;
+            }
+            
+            /* Message bubbles take more width on mobile */
+            .message {
+                max-width: 85%;
+            }
+            
+            /* Better touch targets */
+            .conversation-item {
+                padding: 0.875rem 1rem;
+            }
+            
+            .conversation-avatar {
+                width: 44px;
+                height: 44px;
             }
             
             .nav-container {
@@ -1223,6 +1323,42 @@ if (isset($_SESSION['error'])) {
             .main-content {
                 padding: 1rem;
             }
+            
+            /* Floating Action Button */
+            .fab-new-chat {
+                display: flex;
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                width: 56px;
+                height: 56px;
+                border-radius: 50%;
+                background: var(--primary-blue);
+                color: white;
+                border: none;
+                box-shadow: var(--shadow-lg);
+                cursor: pointer;
+                align-items: center;
+                justify-content: center;
+                font-size: 1.5rem;
+                z-index: 15;
+                transition: transform 0.2s, background 0.2s;
+            }
+            
+            .fab-new-chat:hover {
+                transform: scale(1.05);
+                background: var(--secondary-blue);
+            }
+            
+            /* Hide FAB when chat is active */
+            .messages-container.chat-active .fab-new-chat {
+                display: none;
+            }
+            
+            /* Hide desktop new chat button on mobile */
+            .sidebar-header .btn-primary {
+                display: none;
+            }
         }
 
         @media (max-width: 480px) {
@@ -1238,12 +1374,12 @@ if (isset($_SESSION['error'])) {
                 font-size: 0.9rem;
             }
 
-            .welcome-section h1 {
-                font-size: 1.2rem;
-            }
-
             .messages-container {
                 height: calc(100vh - 180px);
+            }
+            
+            .message {
+                max-width: 90%;
             }
         }
     </style>
@@ -1268,13 +1404,18 @@ if (isset($_SESSION['error'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                   
                     <button class="icon-btn" id="sidebarToggleBtn" title="Toggle Sidebar">
                         <i class="fas fa-chevron-left"></i>
                     </button>
                 </div>
                 <div class="user-info">
-                    
+                    <div class="user-avatar">
+                        <?php if (!empty($user['avatar_url'])): ?>
+                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
+                        <?php else: ?>
+                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
+                        <?php endif; ?>
+                    </div>
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($secretary_name); ?></div>
                         <div class="user-role">Secretary - Representative Board</div>
@@ -1331,15 +1472,7 @@ if (isset($_SESSION['error'])) {
                         <span>Class Rep Reports</span>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
-                    </a>
-                </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
+             
                 
                 <li class="menu-item">
                     <a href="reports.php">
@@ -1376,8 +1509,6 @@ if (isset($_SESSION['error'])) {
 
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
-            
-
             <?php if ($password_change_required): ?>
                 <div class="alert alert-warning">
                     <i class="fas fa-exclamation-triangle"></i> 
@@ -1410,12 +1541,12 @@ if (isset($_SESSION['error'])) {
                 </script>
             <?php endif; ?>
 
-            <!-- Messages Container -->
-            <div class="messages-container">
+            <!-- Messages Container - WhatsApp Style -->
+            <div class="messages-container" id="messagesContainer">
                 <!-- Conversations Sidebar -->
                 <div class="conversations-sidebar">
                     <div class="sidebar-header">
-                        <h2>Messages</h2>
+                        <h2>Chats</h2>
                         <div class="action-buttons">
                             <button class="btn btn-primary" id="newConversationBtn">
                                 <i class="fas fa-plus"></i> New Chat
@@ -1448,9 +1579,6 @@ if (isset($_SESSION['error'])) {
                                     <div class="conversation-info">
                                         <div class="conversation-title">
                                             <?php echo htmlspecialchars($conv['title']); ?>
-                                            <?php if ($conv['conversation_type'] === 'announcement'): ?>
-                                                <i class="fas fa-bullhorn" style="margin-left: 0.25rem; color: var(--warning);"></i>
-                                            <?php endif; ?>
                                         </div>
                                         <div class="conversation-preview">
                                             <?php 
@@ -1479,14 +1607,12 @@ if (isset($_SESSION['error'])) {
                 <div class="chat-area">
                     <?php if ($current_conversation): ?>
                         <div class="chat-header">
-                            <div>
+                            <button class="mobile-back-btn" id="mobileBackBtn">
+                                <i class="fas fa-arrow-left"></i>
+                            </button>
+                            <div class="chat-header-info">
                                 <div class="chat-title">
                                     <?php echo htmlspecialchars($current_conversation['title'] ?? 'Untitled Conversation'); ?>
-                                    <?php if (($current_conversation['conversation_type'] ?? '') === 'announcement'): ?>
-                                        <span style="color: var(--warning); margin-left: 0.5rem;">
-                                            <i class="fas fa-bullhorn"></i> Announcement
-                                        </span>
-                                    <?php endif; ?>
                                 </div>
                                 <div class="chat-participants">
                                     <?php 
@@ -1501,18 +1627,10 @@ if (isset($_SESSION['error'])) {
 
                         <div class="messages-area" id="messagesArea">
                             <?php foreach ($conversation_messages as $message): ?>
-                                <div class="message <?php 
-                                    echo $message['sender_id'] == $user_id ? 'sent' : 'received';
-                                    echo ($current_conversation['conversation_type'] ?? '') === 'announcement' ? ' announcement' : '';
-                                ?>">
+                                <div class="message <?php echo $message['sender_id'] == $user_id ? 'sent' : 'received'; ?>">
                                     <?php if ($message['sender_id'] != $user_id && ($current_conversation['conversation_type'] ?? '') !== 'direct'): ?>
                                         <div class="message-sender">
                                             <?php echo htmlspecialchars($message['sender_name']); ?>
-                                            <?php if (($current_conversation['conversation_type'] ?? '') === 'announcement'): ?>
-                                                <span style="color: var(--warning); margin-left: 0.5rem;">
-                                                    <i class="fas fa-bullhorn"></i> Announcement
-                                                </span>
-                                            <?php endif; ?>
                                         </div>
                                     <?php endif; ?>
                                     <div class="message-content">
@@ -1520,9 +1638,6 @@ if (isset($_SESSION['error'])) {
                                     </div>
                                     <div class="message-time">
                                         <?php echo date('g:i A', strtotime($message['created_at'])); ?>
-                                        <?php if ($message['sender_id'] == $user_id): ?>
-                                            <i class="fas fa-check-double" style="margin-left: 0.25rem; opacity: 0.7;"></i>
-                                        <?php endif; ?>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
@@ -1536,7 +1651,7 @@ if (isset($_SESSION['error'])) {
                                     <textarea 
                                         class="message-input" 
                                         name="message_content" 
-                                        placeholder="Type your message..." 
+                                        placeholder="Type a message..." 
                                         rows="1"
                                         required
                                     ></textarea>
@@ -1563,6 +1678,11 @@ if (isset($_SESSION['error'])) {
                         </div>
                     <?php endif; ?>
                 </div>
+                
+                <!-- Floating Action Button for Mobile -->
+                <button class="fab-new-chat" id="fabNewChat">
+                    <i class="fas fa-plus"></i>
+                </button>
             </div>
         </main>
     </div>
@@ -1615,8 +1735,6 @@ if (isset($_SESSION['error'])) {
     </div>
 
     <script>
-       
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
@@ -1681,11 +1799,11 @@ if (isset($_SESSION['error'])) {
         // Modal functionality
         const conversationModal = document.getElementById('newConversationModal');
         const messagesArea = document.getElementById('messagesArea');
-        const messageInput = document.querySelector('.message-input');
-
+        
         // Open modal buttons
         document.getElementById('newConversationBtn')?.addEventListener('click', () => conversationModal.style.display = 'block');
         document.getElementById('newConversationBtn2')?.addEventListener('click', () => conversationModal.style.display = 'block');
+        document.getElementById('fabNewChat')?.addEventListener('click', () => conversationModal.style.display = 'block');
 
         // Close modals
         document.querySelectorAll('.close, .close-modal').forEach(btn => {
@@ -1700,56 +1818,113 @@ if (isset($_SESSION['error'])) {
             }
         });
 
-        // Conversation item clicks
+        // ============================================
+        // WHATSAPP-STYLE MOBILE NAVIGATION
+        // ============================================
+        const messagesContainer = document.getElementById('messagesContainer');
+        const mobileBackBtn = document.getElementById('mobileBackBtn');
+        const hasActiveConversation = <?php echo $conversation_id ? 'true' : 'false'; ?>;
+        
+        // Function to show chat area on mobile (hide conversation list)
+        function showChatArea() {
+            if (window.innerWidth <= 768 && messagesContainer) {
+                messagesContainer.classList.add('chat-active');
+            }
+        }
+        
+        // Function to show conversations sidebar on mobile (hide chat)
+        function showConversationsSidebar() {
+            if (window.innerWidth <= 768 && messagesContainer) {
+                messagesContainer.classList.remove('chat-active');
+            }
+        }
+        
+        // Handle conversation item clicks - open chat area
         document.querySelectorAll('.conversation-item').forEach(item => {
-            item.addEventListener('click', function() {
+            item.addEventListener('click', function(e) {
                 const conversationId = this.getAttribute('data-conversation-id');
+                
+                // On mobile, show the chat area immediately for smooth UX
+                if (window.innerWidth <= 768) {
+                    showChatArea();
+                }
+                
+                // Navigate to the conversation (this will reload the page with the conversation)
                 window.location.href = `messages.php?conversation=${conversationId}`;
             });
         });
-
-        // Auto-resize textarea
-        if (messageInput) {
-            messageInput.addEventListener('input', function() {
-                this.style.height = 'auto';
-                this.style.height = (this.scrollHeight) + 'px';
-            });
-        }
-
-        // Auto-scroll to bottom of messages
-        if (messagesArea) {
-            messagesArea.scrollTop = messagesArea.scrollHeight;
-        }
-
-        // Add loading animations
-        document.addEventListener('DOMContentLoaded', function() {
-            const cards = document.querySelectorAll('.messages-container, .conversations-sidebar, .chat-area');
-            cards.forEach((card, index) => {
-                card.style.animation = 'fadeInUp 0.4s ease forwards';
-                card.style.animationDelay = `${index * 0.05}s`;
-                card.style.opacity = '0';
-            });
-            
-            const style = document.createElement('style');
-            style.textContent = `
-                @keyframes fadeInUp {
-                    from {
-                        opacity: 0;
-                        transform: translateY(10px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
+        
+        // Handle mobile back button click - return to conversation list
+        if (mobileBackBtn) {
+            mobileBackBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                showConversationsSidebar();
+                // Update URL to remove conversation parameter without reload
+                if (window.innerWidth <= 768) {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('conversation');
+                    window.history.pushState({}, '', url);
                 }
-            `;
-            document.head.appendChild(style);
+            });
+        }
+        
+        // Handle browser back/forward navigation
+        window.addEventListener('popstate', function() {
+            const currentUrl = new URL(window.location.href);
+            const hasConv = currentUrl.searchParams.has('conversation');
             
-            setTimeout(() => {
-                cards.forEach(card => {
-                    card.style.opacity = '1';
+            if (window.innerWidth <= 768) {
+                if (hasConv) {
+                    showChatArea();
+                } else {
+                    showConversationsSidebar();
+                }
+            }
+        });
+        
+        // On page load, set correct mobile state
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.innerWidth <= 768) {
+                if (hasActiveConversation) {
+                    // If there's an active conversation, show chat area
+                    showChatArea();
+                } else {
+                    // Otherwise show conversations sidebar
+                    showConversationsSidebar();
+                }
+            }
+            
+            // Auto-scroll to bottom of messages
+            if (messagesArea) {
+                messagesArea.scrollTop = messagesArea.scrollHeight;
+            }
+            
+            // Auto-resize textarea
+            const messageInput = document.querySelector('.message-input');
+            if (messageInput) {
+                messageInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = (this.scrollHeight) + 'px';
                 });
-            }, 500);
+            }
+        });
+        
+        // Handle window resize - reset mobile state
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                if (messagesContainer) {
+                    messagesContainer.classList.remove('chat-active');
+                }
+            } else {
+                // On mobile, check URL to determine which view to show
+                const currentUrl = new URL(window.location.href);
+                const hasConv = currentUrl.searchParams.has('conversation');
+                if (hasConv) {
+                    showChatArea();
+                } else {
+                    showConversationsSidebar();
+                }
+            }
         });
     </script>
 </body>

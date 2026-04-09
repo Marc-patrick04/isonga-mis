@@ -4,13 +4,13 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
 // Redirect class representatives to their dedicated dashboard
 if ($_SESSION['is_class_rep'] ?? 0) {
-    header('Location: class_rep_dashboard');
+    header('Location: class_rep_dashboard.php');
     exit();
 }
 
@@ -29,7 +29,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: announcements');
+    header('Location: announcements.php');
     exit();
 }
 
@@ -1080,7 +1080,7 @@ function timeAgo($datetime) {
                         <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
                     </button>
                 </form>
-                <a href="messages" class="icon-btn" title="Messages" style="position: relative;">
+                <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                     <i class="fas fa-envelope"></i>
                     <?php if ($unread_messages > 0): ?>
                         <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1095,7 +1095,7 @@ function timeAgo($datetime) {
                         <div class="user-role">Student</div>
                     </div>
                 </div>
-                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
@@ -1111,25 +1111,25 @@ function timeAgo($datetime) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard">
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets">
+                    <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>My Tickets</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="financial_aid">
+                    <a href="financial_aid.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Financial Aid</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="announcements" class="active">
+                    <a href="announcements.php" class="active">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
                         <?php if ($total_announcements > 0): ?>
@@ -1138,25 +1138,25 @@ function timeAgo($datetime) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="events">
+                    <a href="events.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="news">
+                    <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="gallery">
+                    <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="messages">
+                    <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1165,14 +1165,14 @@ function timeAgo($datetime) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="profile">
+                    <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="menu-item">
-                    <a href="class_rep_dashboard">
+                    <a href="class_rep_dashboard.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Dashboard</span>
                     </a>
@@ -1250,7 +1250,7 @@ function timeAgo($datetime) {
                                 </div>
                                 
                                 <h3 class="announcement-title">
-                                    <a href="view_announcement?id=<?php echo $announcement['id']; ?>">
+                                    <a href="view_announcement.php?id=<?php echo $announcement['id']; ?>">
                                         <?php echo safe_display($announcement['title']); ?>
                                     </a>
                                 </h3>
@@ -1279,7 +1279,7 @@ function timeAgo($datetime) {
                                     <?php echo ucfirst($announcement['priority']); ?>
                                 </span>
                                 
-                                <a href="view_announcement?id=<?php echo $announcement['id']; ?>" class="btn btn-secondary btn-sm">
+                                <a href="view_announcement.php?id=<?php echo $announcement['id']; ?>" class="btn btn-secondary btn-sm">
                                     <i class="fas fa-eye"></i> Read More
                                 </a>
                             </div>
@@ -1325,7 +1325,7 @@ function timeAgo($datetime) {
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-filter"></i> Apply
                         </button>
-                        <a href="announcements" class="btn btn-secondary">
+                        <a href="announcements.php" class="btn btn-secondary">
                             <i class="fas fa-redo"></i> Reset
                         </a>
                     </div>
@@ -1347,7 +1347,7 @@ function timeAgo($datetime) {
                             ? 'Try adjusting your filters or search terms.' 
                             : 'Check back later for new announcements.'; ?></p>
                         <?php if (!empty($search) || $category !== 'all' || $priority !== 'all'): ?>
-                            <a href="announcements" class="btn btn-primary">
+                            <a href="announcements.php" class="btn btn-primary">
                                 <i class="fas fa-redo"></i> Clear Filters
                             </a>
                         <?php endif; ?>
@@ -1369,7 +1369,7 @@ function timeAgo($datetime) {
                                     </div>
                                     
                                     <h3 class="announcement-title">
-                                        <a href="view_announcement?id=<?php echo $announcement['id']; ?>">
+                                        <a href="view_announcement.php?id=<?php echo $announcement['id']; ?>">
                                             <?php echo safe_display($announcement['title']); ?>
                                         </a>
                                     </h3>
@@ -1408,7 +1408,7 @@ function timeAgo($datetime) {
                                         <?php echo ucfirst($announcement['priority']); ?>
                                     </span>
                                     
-                                    <a href="view_announcement?id=<?php echo $announcement['id']; ?>" class="btn btn-secondary btn-sm">
+                                    <a href="view_announcement.php?id=<?php echo $announcement['id']; ?>" class="btn btn-secondary btn-sm">
                                         <i class="fas fa-eye"></i> Read More
                                     </a>
                                 </div>

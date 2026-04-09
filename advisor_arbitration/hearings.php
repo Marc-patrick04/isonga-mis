@@ -1361,8 +1361,8 @@ try {
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
-                    <h1>My Arbitration Hearings ⚖️</h1>
-                    <p>Manage hearings for cases assigned to you</p>
+                    <h1>My Arbitration Hearings </h1>
+                 
                 </div>
             </div>
 
@@ -1421,19 +1421,7 @@ try {
                 </div>
             </div>
 
-            <!-- Additional Stats -->
-            <div class="stats-grid" style="margin-top: 1rem;">
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-calendar-week"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($upcoming_hearings); ?></div>
-                        <div class="stat-label">Next 7 Days</div>
-                    </div>
-                </div>
-            </div>
-
+           
             <!-- Filters -->
             <div class="filters-card">
                 <form method="GET" class="filter-form">

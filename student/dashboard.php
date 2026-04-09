@@ -1191,7 +1191,7 @@ function safe_display($data) {
                         <div class="user-role">Student</div>
                     </div>
                 </div>
-                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
@@ -1207,13 +1207,14 @@ function safe_display($data) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard" class="active">
+                    <a href="dashboard.php" class="active">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
+                
                 <li class="menu-item">
-                    <a href="tickets">
+                    <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>My Tickets</span>
                         <?php if (($ticket_stats['open'] ?? 0) > 0): ?>
@@ -1222,37 +1223,37 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="financial_aid">
+                    <a href="financial_aid.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Financial Aid</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="announcements">
+                    <a href="announcements.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="events">
+                    <a href="events.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="news">
+                    <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="gallery">
+                    <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="messages">
+                    <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1261,14 +1262,14 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="profile">
+                    <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="menu-item">
-                    <a href="class_rep_dashboard">
+                    <a href="class_rep_dashboard.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Dashboard</span>
                     </a>
@@ -1364,7 +1365,7 @@ function safe_display($data) {
                     </div>
                     <div class="card-body">
                         <div class="quick-actions-grid">
-                            <a href="tickets" class="action-btn">
+                            <a href="tickets.php" class="action-btn">
                                 <i class="fas fa-ticket-alt"></i>
                                 <span class="action-text">View All Tickets</span>
                                 <i class="fas fa-chevron-right"></i>
@@ -1374,12 +1375,12 @@ function safe_display($data) {
                                 <span class="action-text">Update Profile</span>
                                 <i class="fas fa-chevron-right"></i>
                             </a>
-                            <a href="calendar" class="action-btn">
+                            <a href="calendar.php" class="action-btn">
                                 <i class="fas fa-calendar-alt"></i>
                                 <span class="action-text">Academic Calendar</span>
                                 <i class="fas fa-chevron-right"></i>
                             </a>
-                            <a href="announcements" class="action-btn">
+                            <a href="announcements.php" class="action-btn">
                                 <i class="fas fa-bullhorn"></i>
                                 <span class="action-text">Campus News</span>
                                 <i class="fas fa-chevron-right"></i>
@@ -1395,7 +1396,7 @@ function safe_display($data) {
                             <i class="fas fa-history"></i>
                             Recent Tickets
                         </h3>
-                        <a href="tickets" class="view-all-link">View all →</a>
+                        <a href="tickets.php" class="view-all-link">View all →</a>
                     </div>
                     <div class="card-body">
                         <div class="tickets-list">
@@ -1431,7 +1432,7 @@ function safe_display($data) {
                             <i class="fas fa-calendar-alt"></i>
                             Upcoming Events
                         </h3>
-                        <a href="events" class="view-all-link">View all →</a>
+                        <a href="events.php" class="view-all-link">View all →</a>
                     </div>
                     <div class="card-body">
                         <div class="events-list">

@@ -1333,8 +1333,8 @@ try {
                 <!-- Page Header -->
                 <div class="page-header">
                     <div class="page-title">
-                        <h1>Profile & Settings ⚖️</h1>
-                        <p>Manage your personal information and arbitration committee preferences</p>
+                        <h1>Profile & Settings</h1>
+                  
                     </div>
                 </div>
 
@@ -1399,14 +1399,14 @@ try {
                                     onclick="switchTab('security')">
                                 <i class="fas fa-shield-alt"></i> Security
                             </button>
-                            <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
+                            <!-- <button class="profile-tab <?php echo $active_tab === 'preferences' ? 'active' : ''; ?>" 
                                     onclick="switchTab('preferences')">
                                 <i class="fas fa-cog"></i> Preferences
                             </button>
                             <button class="profile-tab <?php echo $active_tab === 'sessions' ? 'active' : ''; ?>" 
                                     onclick="switchTab('sessions')">
                                 <i class="fas fa-history"></i> Login History
-                            </button>
+                            </button> -->
                         </div>
 
                         <!-- Tab Content -->
@@ -1530,7 +1530,7 @@ try {
                                     </form>
                                 </div>
 
-                                <div class="form-section">
+                                <!-- <div class="form-section">
                                     <h4>Two-Factor Authentication</h4>
                                     <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--light-blue); border-radius: var(--border-radius);">
                                         <div>
@@ -1546,7 +1546,7 @@ try {
                                             </button>
                                         </form>
                                     </div>
-                                </div>
+                                </div> -->
 
                                 <div class="form-section">
                                     <h4>Account Security</h4>

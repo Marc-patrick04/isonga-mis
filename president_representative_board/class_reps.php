@@ -45,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_class_rep'])) {
         }
         
         // Update student to class representative
-        $stmt = $pdo->prepare("UPDATE users SET is_class_rep = 1, updated_at = NOW() WHERE id = ?");
+        $stmt = $pdo->prepare("UPDATE users SET is_class_rep = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         $stmt->execute([$student_id]);
         
         $message = "Class representative added successfully!";
@@ -63,7 +63,7 @@ if ($action === 'remove' && isset($_GET['id'])) {
         $rep_id = $_GET['id'];
         
         // Update user to remove class representative status
-        $stmt = $pdo->prepare("UPDATE users SET is_class_rep = 0, updated_at = NOW() WHERE id = ?");
+        $stmt = $pdo->prepare("UPDATE users SET is_class_rep = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
         $stmt->execute([$rep_id]);
         
         $message = "Class representative removed successfully!";
@@ -85,7 +85,7 @@ try {
         FROM users u
         LEFT JOIN departments d ON u.department_id = d.id
         LEFT JOIN programs p ON u.program_id = p.id
-        WHERE u.is_class_rep = 1 AND u.status = 'active'
+        WHERE u.is_class_rep = true AND u.status = 'active'
         ORDER BY u.full_name
     ");
     $class_reps = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -99,7 +99,7 @@ try {
         FROM users u
         LEFT JOIN departments d ON u.department_id = d.id
         LEFT JOIN programs p ON u.program_id = p.id
-        WHERE u.role = 'student' AND u.status = 'active' AND u.is_class_rep = 0
+        WHERE u.role = 'student' AND u.status = 'active' AND u.is_class_rep = false
         ORDER BY u.full_name
     ");
     $available_students = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -108,8 +108,8 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as total_students FROM users WHERE role = 'student' AND status = 'active'");
     $total_students = $stmt->fetch(PDO::FETCH_ASSOC)['total_students'] ?? 0;
     
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
-    $total_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps_count'] ?? 0;
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
+    $total_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     // Department-wise statistics
     $stmt = $pdo->query("
@@ -118,7 +118,7 @@ try {
             COUNT(u.id) as rep_count
         FROM users u
         JOIN departments d ON u.department_id = d.id
-        WHERE u.is_class_rep = 1 AND u.status = 'active'
+        WHERE u.is_class_rep = true AND u.status = 'active'
         GROUP BY d.id, d.name
         ORDER BY rep_count DESC
     ");
@@ -127,6 +127,8 @@ try {
 } catch (PDOException $e) {
     $class_reps = [];
     $available_students = [];
+    $total_reps = 0;
+    $total_students = 0;
     $total_reps_count = 0;
     $dept_stats = [];
     error_log("Class representatives data error: " . $e->getMessage());
@@ -134,24 +136,39 @@ try {
 
 // Get dashboard statistics for sidebar
 try {
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
     $sidebar_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
     $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
+    // Fix: PostgreSQL uses CURRENT_DATE instead of CURDATE()
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
     $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
     
-    $stmt = $pdo->prepare("SELECT COUNT(*) as unread_messages FROM conversation_messages cm JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)");
+    // Fix conversation messages query for PostgreSQL
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm 
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id 
+        WHERE cp.user_id = ? 
+        AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
     $stmt->execute([$user_id]);
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     
 } catch (PDOException $e) {
-    $sidebar_reps_count = $pending_reports = $upcoming_meetings = $unread_messages = 0;
+    $sidebar_reps_count = 0;
+    $pending_reports = 0;
+    $upcoming_meetings = 0;
+    $unread_messages = 0;
+    error_log("Sidebar stats error: " . $e->getMessage());
 }
-$total_reps =0;
- $total_students = 0;
+
+// Ensure variables are defined even if queries fail
+$total_reps = $total_reps ?? 0;
+$total_students = $total_students ?? 0;
+$dept_stats = $dept_stats ?? [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -692,6 +709,16 @@ $total_reps =0;
             transform: translateY(-1px);
         }
 
+        .btn-info {
+            background: var(--info);
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #138496;
+            transform: translateY(-1px);
+        }
+
         /* Forms */
         .form-group {
             margin-bottom: 1rem;
@@ -963,11 +990,10 @@ $total_reps =0;
     <!-- Dashboard Container -->
     <div class="dashboard-container">
         <!-- Sidebar -->
-        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -996,16 +1022,7 @@ $total_reps =0;
                         <?php endif; ?>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
-                    </a>
-                </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
-                
+         
                 <li class="menu-item">
                     <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
@@ -1033,8 +1050,8 @@ $total_reps =0;
                         <span>Messages</span>
                     </a>
                 </li>
-                 <li class="menu-item">
-                    <a href="tickets_analysis.php" >
+                <li class="menu-item">
+                    <a href="tickets_analysis.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Tickets Analysis</span>
                     </a>
@@ -1089,6 +1106,7 @@ $total_reps =0;
                     </div>
                 </div>
             </div>
+            
             <!-- Content Grid -->
             <div class="content-grid">
                 <!-- Left Column -->
@@ -1247,14 +1265,12 @@ $total_reps =0;
                                 <a href="class_rep_reports.php" class="btn btn-success">
                                     <i class="fas fa-file-alt"></i> View Reports
                                 </a>
-                                <a href="messages.php" class="btn btn-info" style="background: var(--info);">
+                                <a href="messages.php" class="btn btn-info">
                                     <i class="fas fa-envelope"></i> Send Message
                                 </a>
                             </div>
                         </div>
                     </div>
-
-                    
                 </div>
             </div>
         </main>
@@ -1295,12 +1311,6 @@ $total_reps =0;
                 document.body.style.overflow = '';
             }
         });
-
-        // Auto-refresh page every 5 minutes
-        setInterval(() => {
-            // You can add auto-refresh logic here if needed
-            console.log('Class representatives page auto-refresh triggered');
-        }, 300000);
     </script>
 </body>
 </html>

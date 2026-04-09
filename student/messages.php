@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
@@ -49,7 +49,7 @@ if (isset($_GET['mark_read']) && is_numeric($_GET['mark_read'])) {
             ");
             $stmt->execute([$message_id, $conversation_id, $student_id, $message_id]);
         }
-        header('Location: messages');
+        header('Location: messages.php');
         exit();
     } catch (PDOException $e) {
         error_log("Failed to mark message as read: " . $e->getMessage());
@@ -973,7 +973,7 @@ function getRoleDisplayName($role) {
                 </div>
             </div>
             <div class="user-menu">
-                <a href="messages" class="icon-btn" title="Messages" style="position: relative;">
+                <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                     <i class="fas fa-envelope"></i>
                     <?php if ($unread_messages > 0): ?>
                         <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -988,7 +988,7 @@ function getRoleDisplayName($role) {
                         <div class="user-role">Student</div>
                     </div>
                 </div>
-                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
@@ -1004,49 +1004,49 @@ function getRoleDisplayName($role) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard">
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets">
+                    <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>My Tickets</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="financial_aid">
+                    <a href="financial_aid.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Financial Aid</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="announcements">
+                    <a href="announcements.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="events">
+                    <a href="events.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="news">
+                    <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="gallery">
+                    <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="messages" class="active">
+                    <a href="messages.php" class="active">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1055,14 +1055,14 @@ function getRoleDisplayName($role) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="profile">
+                    <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="menu-item">
-                    <a href="class_rep_dashboard">
+                    <a href="class_rep_dashboard.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Dashboard</span>
                     </a>
@@ -1103,7 +1103,7 @@ function getRoleDisplayName($role) {
                             </div>
                         <?php else: ?>
                             <?php foreach ($conversations as $conv): ?>
-                                <a href="messages?conversation=<?php echo $conv['conversation_id']; ?>" 
+                                <a href="messages.php?conversation=<?php echo $conv['conversation_id']; ?>" 
                                    class="conversation-item <?php echo (isset($_GET['conversation']) && $_GET['conversation'] == $conv['conversation_id']) ? 'active' : ''; ?>">
                                     <div class="conversation-avatar">
                                         <i class="fas fa-users"></i>

@@ -69,10 +69,12 @@ try {
         LEFT JOIN report_templates rt ON r.template_id = rt.id
         LEFT JOIN users u ON r.reviewed_by = u.id
         LEFT JOIN committee_members cm ON r.user_id = cm.id
-        WHERE r.user_id = ? OR (r.is_team_report = 1 AND r.team_role = 'combined' AND r.user_id IN (
-            SELECT id FROM committee_members 
-            WHERE role IN ('president_arbitration', 'vice_president_arbitration', 'secretary_arbitration', 'advisor_arbitration')
-        ))
+        WHERE r.user_id = ? 
+           OR (r.is_team_report = true AND r.user_id IN (
+                SELECT user_id FROM committee_members 
+                WHERE role IN ('president_arbitration', 'vice_president_arbitration', 'secretary_arbitration', 'advisor_arbitration')
+                AND user_id IS NOT NULL
+           ))
         ORDER BY r.created_at DESC
     ");
     $stmt->execute([$user_id]);
@@ -335,7 +337,7 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
     }
 }
 
-// Get report statistics
+// Get report statistics - fix: use same logic as submitted_reports query
 try {
     $stmt = $pdo->prepare("
         SELECT 
@@ -344,16 +346,30 @@ try {
             SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_reports,
             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
             SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_reports,
-            SUM(CASE WHEN is_team_report = 1 THEN 1 ELSE 0 END) as team_reports
+            SUM(CASE WHEN is_team_report = true THEN 1 ELSE 0 END) as team_reports
         FROM reports 
-        WHERE user_id = ? OR (is_team_report = 1 AND team_role = 'combined' AND user_id IN (
-            SELECT id FROM committee_members 
-            WHERE role IN ('president_arbitration', 'vice_president_arbitration', 'secretary_arbitration', 'advisor_arbitration')
-        ))
+        WHERE user_id = ? 
+           OR (is_team_report = true AND user_id IN (
+                SELECT user_id FROM committee_members 
+                WHERE role IN ('president_arbitration', 'vice_president_arbitration', 'secretary_arbitration', 'advisor_arbitration')
+                AND user_id IS NOT NULL
+           ))
     ");
     $stmt->execute([$user_id]);
     $report_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$report_stats) {
+        $report_stats = [
+            'total_reports' => 0,
+            'submitted_reports' => 0,
+            'reviewed_reports' => 0,
+            'approved_reports' => 0,
+            'draft_reports' => 0,
+            'team_reports' => 0
+        ];
+    }
 } catch (PDOException $e) {
+    error_log("Statistics query error: " . $e->getMessage());
     $report_stats = [
         'total_reports' => 0,
         'submitted_reports' => 0,
@@ -364,220 +380,64 @@ try {
     ];
 }
 
-// Insert arbitration specific templates if they don't exist
+// Insert president arbitration specific templates if they don't exist
 try {
-    $arbitration_templates = [
+    $president_templates = [
         [
-            'name' => 'Monthly Arbitration Committee Report',
-            'description' => 'Comprehensive monthly report covering all arbitration committee activities, case resolutions, and election oversight',
+            'name' => 'Monthly President Arbitration Report',
+            'description' => 'Monthly report covering case management, hearing coordination, and support activities',
             'role_specific' => 'president_arbitration',
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Case Resolution Summary',
-                        'required' => true,
-                        'description' => 'Summary of arbitration cases resolved this month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Pending Cases Overview',
-                        'required' => true,
-                        'description' => 'Status update on ongoing arbitration cases'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Hearings Conducted',
-                        'required' => true,
-                        'description' => 'Details of arbitration hearings and proceedings'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Election Oversight Activities',
-                        'required' => true,
-                        'description' => 'Oversight of RPSU elections and electoral processes'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Committee Coordination',
-                        'required' => true,
-                        'description' => 'Coordination with arbitration committee members'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges and Resolutions',
-                        'required' => false,
-                        'description' => 'Challenges faced in arbitration processes and their resolutions'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Next Month Plans',
-                        'required' => true,
-                        'description' => 'Planned arbitration activities for the coming month'
-                    ]
+                    ['type' => 'textarea', 'title' => 'Introduction', 'required' => true, 'description' => 'Brief introduction and overview of the reporting period'],
+                    ['type' => 'textarea', 'title' => 'Activities Done', 'required' => true, 'description' => 'Detailed description of all activities conducted during the reporting period'],
+                    ['type' => 'textarea', 'title' => 'Cases Managed', 'required' => true, 'description' => 'Summary of arbitration cases managed, including status and outcomes'],
+                    ['type' => 'textarea', 'title' => 'Achievements', 'required' => true, 'description' => 'Key achievements and milestones reached during the period'],
+                    ['type' => 'textarea', 'title' => 'Challenges', 'required' => true, 'description' => 'Challenges faced and obstacles encountered'],
+                    ['type' => 'textarea', 'title' => 'Recommendations', 'required' => true, 'description' => 'Recommendations for improvement and future actions'],
+                    ['type' => 'textarea', 'title' => 'Conclusion', 'required' => true, 'description' => 'Concluding remarks and summary of the report']
                 ]
             ])
         ],
         [
-            'name' => 'Arbitration Case Resolution Report',
-            'description' => 'Detailed report on specific arbitration case resolution',
+            'name' => 'Hearing Coordination Report',
+            'description' => 'Detailed report on arbitration hearing coordination and proceedings',
             'role_specific' => 'president_arbitration',
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Case Number',
-                        'required' => true,
-                        'description' => 'Official case reference number'
-                    ],
-                    [
-                        'type' => 'text',
-                        'title' => 'Case Title',
-                        'required' => true,
-                        'description' => 'Title of the arbitration case'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Case Filing Date',
-                        'required' => true,
-                        'description' => 'Date when the case was filed'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Resolution Date',
-                        'required' => true,
-                        'description' => 'Date when the case was resolved'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Case Background',
-                        'required' => true,
-                        'description' => 'Detailed background of the dispute'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Resolution Process',
-                        'required' => true,
-                        'description' => 'Steps taken to resolve the case'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Final Decision',
-                        'required' => true,
-                        'description' => 'Final arbitration decision and reasoning'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Lessons Learned',
-                        'required' => false,
-                        'description' => 'Key learnings from this case'
-                    ]
+                    ['type' => 'text', 'title' => 'Case Number', 'required' => true, 'description' => 'Official case reference number'],
+                    ['type' => 'text', 'title' => 'Case Title', 'required' => true, 'description' => 'Title of the arbitration case'],
+                    ['type' => 'date', 'title' => 'Hearing Date', 'required' => true, 'description' => 'Date when hearing was conducted'],
+                    ['type' => 'text', 'title' => 'Hearing Location', 'required' => true, 'description' => 'Location where hearing took place'],
+                    ['type' => 'textarea', 'title' => 'Hearing Preparation', 'required' => true, 'description' => 'Preparation activities before the hearing'],
+                    ['type' => 'textarea', 'title' => 'Hearing Proceedings', 'required' => true, 'description' => 'Summary of hearing proceedings'],
+                    ['type' => 'textarea', 'title' => 'Outcome and Next Steps', 'required' => true, 'description' => 'Hearing outcome and next steps'],
+                    ['type' => 'textarea', 'title' => 'Observations', 'required' => false, 'description' => 'Observations and recommendations']
                 ]
             ])
         ],
         [
-            'name' => 'Election Oversight Report',
-            'description' => 'Report on RPSU election oversight and management',
+            'name' => 'Election Support Report',
+            'description' => 'Report on support provided in RPSU election oversight',
             'role_specific' => 'president_arbitration',
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Election Type',
-                        'required' => true,
-                        'description' => 'Type of election (Guild President, Executive Committee, etc.)'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Election Date',
-                        'required' => true,
-                        'description' => 'Date when election was conducted'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Total Voters',
-                        'required' => true,
-                        'description' => 'Total number of eligible voters'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Actual Voters',
-                        'required' => true,
-                        'description' => 'Number of students who actually voted'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Election Process',
-                        'required' => true,
-                        'description' => 'Description of election process and procedures'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Issues Encountered',
-                        'required' => false,
-                        'description' => 'Any issues or challenges during the election'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Resolution of Complaints',
-                        'required' => true,
-                        'description' => 'How election complaints were resolved'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Recommendations',
-                        'required' => true,
-                        'description' => 'Recommendations for future elections'
-                    ]
-                ]
-            ])
-        ],
-        [
-            'name' => 'Committee Performance Review',
-            'description' => 'Review of arbitration committee member performance and effectiveness',
-            'role_specific' => 'president_arbitration',
-            'report_type' => 'monthly',
-            'fields' => json_encode([
-                'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Committee Performance Overview',
-                        'required' => true,
-                        'description' => 'Overall assessment of committee performance'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Member Contributions',
-                        'required' => true,
-                        'description' => 'Individual contributions of committee members'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Training and Development',
-                        'required' => true,
-                        'description' => 'Training provided to committee members'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Areas for Improvement',
-                        'required' => true,
-                        'description' => 'Areas where committee can improve'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Success Stories',
-                        'required' => false,
-                        'description' => 'Notable successes and achievements'
-                    ]
+                    ['type' => 'text', 'title' => 'Election Type', 'required' => true, 'description' => 'Type of election supported'],
+                    ['type' => 'date', 'title' => 'Election Date', 'required' => true, 'description' => 'Date when election was conducted'],
+                    ['type' => 'textarea', 'title' => 'Support Activities', 'required' => true, 'description' => 'Specific support activities performed'],
+                    ['type' => 'textarea', 'title' => 'Logistics Coordination', 'required' => true, 'description' => 'Logistics and coordination support provided'],
+                    ['type' => 'textarea', 'title' => 'Issue Resolution Support', 'required' => false, 'description' => 'Support in resolving election issues'],
+                    ['type' => 'textarea', 'title' => 'Committee Support', 'required' => true, 'description' => 'Support provided to election committee'],
+                    ['type' => 'textarea', 'title' => 'Recommendations', 'required' => true, 'description' => 'Recommendations for future elections']
                 ]
             ])
         ]
     ];
 
-    foreach ($arbitration_templates as $template_data) {
+    foreach ($president_templates as $template_data) {
         $check_stmt = $pdo->prepare("SELECT id FROM report_templates WHERE name = ? AND role_specific = 'president_arbitration'");
         $check_stmt->execute([$template_data['name']]);
         
@@ -597,17 +457,17 @@ try {
     }
     
     // Refresh templates list
-    $stmt = $pdo->prepare("
-        SELECT * FROM report_templates 
-        WHERE role_specific = 'president_arbitration' OR role_specific IS NULL
-        AND is_active = 1
-        ORDER BY name
-    ");
+   $stmt = $pdo->prepare("
+    SELECT * FROM report_templates 
+    WHERE (role_specific = 'president_arbitration' OR role_specific IS NULL)
+    AND is_active = 1
+    ORDER BY name
+");
     $stmt->execute();
     $templates = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
 } catch (PDOException $e) {
-    error_log("Arbitration templates setup error: " . $e->getMessage());
+    error_log("President templates setup error: " . $e->getMessage());
 }
 
 // Get specific report for editing if requested

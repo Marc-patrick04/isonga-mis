@@ -51,8 +51,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Insert meeting
             $stmt = $pdo->prepare("
                 INSERT INTO rep_meetings 
-                (title, description, meeting_type, organizer_id, location, meeting_date, start_time, end_time, agenda, required_attendees, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (title, description, meeting_type, organizer_id, location, meeting_date, start_time, end_time, agenda, required_attendees, created_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $stmt->execute([
                 $title, $description, $meeting_type, $user_id, $location, $meeting_date, 
@@ -63,14 +63,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Add agenda items if provided
             if (isset($_POST['agenda_items']) && is_array($_POST['agenda_items'])) {
-                foreach ($_POST['agenda_items'] as $agenda_item) {
+                foreach ($_POST['agenda_items'] as $index => $agenda_item) {
                     if (!empty(trim($agenda_item))) {
                         $stmt = $pdo->prepare("
                             INSERT INTO rep_meeting_agenda_items 
-                            (meeting_id, title, order_index) 
-                            VALUES (?, ?, ?)
+                            (meeting_id, title, order_index, created_at) 
+                            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                         ");
-                        $stmt->execute([$meeting_id, trim($agenda_item), 0]);
+                        $stmt->execute([$meeting_id, trim($agenda_item), $index]);
                     }
                 }
             }
@@ -82,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $meeting_id = $_POST['meeting_id'];
             $status = $_POST['status'];
 
-            $stmt = $pdo->prepare("UPDATE rep_meetings SET status = ? WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE rep_meetings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$status, $meeting_id]);
 
             $message = "Meeting status updated successfully!";
@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Update existing
                     $stmt = $pdo->prepare("
                         UPDATE rep_meeting_attendance 
-                        SET attendance_status = ?, recorded_by = ?, updated_at = NOW() 
+                        SET attendance_status = ?, recorded_by = ?, updated_at = CURRENT_TIMESTAMP 
                         WHERE meeting_id = ? AND user_id = ?
                     ");
                     $stmt->execute([$status, $user_id, $meeting_id, $user_id_att]);
@@ -110,8 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Insert new
                     $stmt = $pdo->prepare("
                         INSERT INTO rep_meeting_attendance 
-                        (meeting_id, user_id, attendance_status, recorded_by) 
-                        VALUES (?, ?, ?, ?)
+                        (meeting_id, user_id, attendance_status, recorded_by, created_at, updated_at) 
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$meeting_id, $user_id_att, $status, $user_id]);
                 }
@@ -162,7 +162,7 @@ try {
         FROM rep_meetings rm
         JOIN users u ON rm.organizer_id = u.id
         LEFT JOIN rep_meeting_attendance rma ON rm.id = rma.meeting_id
-        GROUP BY rm.id
+        GROUP BY rm.id, u.full_name
         ORDER BY rm.meeting_date DESC, rm.start_time DESC
     ");
     $meetings = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -173,7 +173,7 @@ try {
         FROM users u
         LEFT JOIN departments d ON u.department_id = d.id
         LEFT JOIN programs p ON u.program_id = p.id
-        WHERE u.is_class_rep = 1 AND u.status = 'active'
+        WHERE u.is_class_rep = true AND u.status = 'active'
         ORDER BY u.full_name
     ");
     $class_reps = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -182,7 +182,8 @@ try {
     $stmt = $pdo->query("SELECT COUNT(*) as total_meetings FROM rep_meetings");
     $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['total_meetings'] ?? 0;
 
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
+    // Fix: PostgreSQL uses CURRENT_DATE instead of CURDATE()
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
     $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
 
     $stmt = $pdo->query("SELECT COUNT(*) as completed_meetings FROM rep_meetings WHERE status = 'completed'");
@@ -190,6 +191,9 @@ try {
 
     // Get specific meeting details for edit/view
     $edit_meeting = null;
+    $agenda_items = [];
+    $attendance = [];
+    
     if (isset($_GET['id']) && ($action === 'edit' || $action === 'view' || $action === 'attendance')) {
         $meeting_id = $_GET['id'];
         $stmt = $pdo->prepare("
@@ -224,27 +228,41 @@ try {
 } catch (PDOException $e) {
     $meetings = [];
     $class_reps = [];
-    $total_meetings = $upcoming_meetings = $completed_meetings = 0;
+    $total_meetings = 0;
+    $upcoming_meetings = 0;
+    $completed_meetings = 0;
     error_log("Class rep meetings data error: " . $e->getMessage());
 }
 
 // Get dashboard statistics for sidebar
 try {
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
     $sidebar_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
     $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
+    // Fix: PostgreSQL uses CURRENT_DATE
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
     $sidebar_upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
     
-    $stmt = $pdo->prepare("SELECT COUNT(*) as unread_messages FROM conversation_messages cm JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)");
+    // Fix conversation messages query for PostgreSQL
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm 
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id 
+        WHERE cp.user_id = ? 
+        AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
     $stmt->execute([$user_id]);
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     
 } catch (PDOException $e) {
-    $sidebar_reps_count = $pending_reports = $sidebar_upcoming_meetings = $unread_messages = 0;
+    $sidebar_reps_count = 0;
+    $pending_reports = 0;
+    $sidebar_upcoming_meetings = 0;
+    $unread_messages = 0;
+    error_log("Sidebar stats error: " . $e->getMessage());
 }
 ?>
 <!DOCTYPE html>
@@ -257,7 +275,7 @@ try {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
- :root {
+        :root {
             --primary-blue: #007bff;
             --secondary-blue: #0056b3;
             --accent-blue: #0069d9;
@@ -556,22 +574,6 @@ try {
             height: calc(100vh - 80px);
         }
 
-        .dashboard-header {
-            margin-bottom: 1.5rem;
-        }
-
-        .welcome-section h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-            color: var(--text-dark);
-        }
-
-        .welcome-section p {
-            color: var(--dark-gray);
-            font-size: 0.9rem;
-        }
-
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -745,34 +747,14 @@ try {
             text-transform: uppercase;
         }
 
-        .status-draft {
+        .status-scheduled {
             background: #cce7ff;
             color: var(--info);
         }
 
-        .status-submitted {
+        .status-ongoing {
             background: #fff3cd;
             color: var(--warning);
-        }
-
-        .status-reviewed {
-            background: #d4edda;
-            color: var(--success);
-        }
-
-        .status-approved {
-            background: #d1f2eb;
-            color: var(--primary-blue);
-        }
-
-        .status-pending {
-            background: #fff3cd;
-            color: var(--warning);
-        }
-
-        .status-in_progress {
-            background: #cce7ff;
-            color: var(--info);
         }
 
         .status-completed {
@@ -780,90 +762,145 @@ try {
             color: var(--success);
         }
 
-        /* Activity List */
-        .activity-list {
-            list-style: none;
+        .status-cancelled {
+            background: #f8d7da;
+            color: var(--danger);
         }
 
-        .activity-item {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .activity-item:last-child {
-            border-bottom: none;
-        }
-
-        .activity-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--gradient-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 0.7rem;
-            flex-shrink: 0;
-        }
-
-        .activity-content {
-            flex: 1;
-        }
-
-        .activity-text {
-            font-size: 0.8rem;
-            color: var(--text-dark);
-            margin-bottom: 0.25rem;
-        }
-
-        .activity-time {
-            font-size: 0.7rem;
+        .status-postponed {
+            background: #e2e3e5;
             color: var(--dark-gray);
         }
 
-        /* Quick Actions */
-        .quick-actions {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 0.75rem;
-            margin-top: 1.5rem;
+        /* Form Styles */
+        .form-group {
+            margin-bottom: 1rem;
         }
 
-        .action-btn {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-            background: var(--white);
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.8rem;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 0.75rem;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
-            text-decoration: none;
-            color: var(--text-dark);
+            font-size: 0.85rem;
             transition: var(--transition);
-            text-align: center;
+            background: var(--white);
+            color: var(--text-dark);
         }
 
-        .action-btn:hover {
+        .form-control:focus {
+            outline: none;
             border-color: var(--primary-blue);
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
         }
 
-        .action-btn i {
-            font-size: 1.25rem;
-            margin-bottom: 0.5rem;
-            color: var(--primary-blue);
+        textarea.form-control {
+            resize: vertical;
+            min-height: 100px;
         }
 
-        .action-label {
+        select.form-control {
+            cursor: pointer;
+        }
+
+        /* Button Styles */
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: var(--border-radius);
+            font-size: 0.8rem;
             font-weight: 600;
-            font-size: 0.75rem;
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--primary-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--secondary-blue);
+            transform: translateY(-1px);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #218838;
+            transform: translateY(-1px);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            transform: translateY(-1px);
+        }
+
+        .btn-info {
+            background: var(--info);
+            color: white;
+        }
+
+        .btn-info:hover {
+            background: #138496;
+            transform: translateY(-1px);
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+        }
+
+        /* Attendee List */
+        .attendee-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--medium-gray);
+            border-radius: var(--border-radius);
+            padding: 0.75rem;
+        }
+
+        .attendee-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--medium-gray);
+        }
+
+        .attendee-item:last-child {
+            border-bottom: none;
+        }
+
+        .attendee-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .attendee-item label {
+            flex: 1;
+            cursor: pointer;
         }
 
         /* Alert */
@@ -875,131 +912,35 @@ try {
             font-size: 0.8rem;
         }
 
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border-left-color: var(--success);
         }
 
-        .alert-info {
-            background: #cce7ff;
-            color: #004085;
-            border-left-color: var(--info);
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: var(--danger);
         }
 
-        .alert a {
-            color: inherit;
-            font-weight: 600;
-            text-decoration: none;
-        }
-
-        .alert a:hover {
-            text-decoration: underline;
-        }
-
-        /* Department Stats */
-        .department-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 0.75rem;
-            margin-top: 1rem;
-        }
-
-        .department-stat {
-            background: var(--light-gray);
-            padding: 0.75rem;
-            border-radius: var(--border-radius);
+        /* Empty State */
+        .empty-state {
             text-align: center;
-        }
-
-        .department-name {
-            font-size: 0.7rem;
+            padding: 3rem 2rem;
             color: var(--dark-gray);
-            margin-bottom: 0.25rem;
         }
 
-        .department-count {
-            font-size: 1.1rem;
-            font-weight: 700;
-            color: var(--primary-blue);
-        }
-
-        /* Collaboration Section */
-        .collaboration-card {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-sm);
-            padding: 1.25rem;
-            margin-bottom: 1.5rem;
-            border-left: 4px solid var(--success);
-        }
-
-        .collaboration-header {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
+        .empty-state i {
+            font-size: 3rem;
             margin-bottom: 1rem;
+            opacity: 0.5;
         }
 
-        .collaboration-avatar {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: var(--gradient-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
+        .empty-state h4 {
             font-size: 1.1rem;
-            overflow: hidden;
-        }
-
-        .collaboration-avatar img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .collaboration-info h4 {
-            font-size: 0.9rem;
-            font-weight: 600;
-            margin-bottom: 0.25rem;
-        }
-
-        .collaboration-info p {
-            font-size: 0.75rem;
-            color: var(--dark-gray);
-        }
-
-        .collaboration-actions {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 1rem;
-        }
-
-        .collaboration-btn {
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            text-decoration: none;
-            font-size: 0.75rem;
-            font-weight: 600;
-            transition: var(--transition);
-        }
-
-        .collaboration-btn.primary {
-            background: var(--primary-blue);
-            color: white;
-        }
-
-        .collaboration-btn.secondary {
-            background: var(--light-gray);
+            margin-bottom: 0.5rem;
             color: var(--text-dark);
-        }
-
-        .collaboration-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: var(--shadow-sm);
         }
 
         /* Overlay for mobile */
@@ -1016,6 +957,17 @@ try {
             display: block;
         }
 
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .dashboard-container {
+                grid-template-columns: 200px 1fr;
+            }
+        }
+
         @media (max-width: 992px) {
             .sidebar {
                 transform: translateX(-100%);
@@ -1028,10 +980,6 @@ try {
 
             .sidebar.mobile-open {
                 transform: translateX(0);
-            }
-
-            .main-content {
-                margin-left: 0 !important;
             }
 
             .mobile-menu-toggle {
@@ -1048,16 +996,6 @@ try {
             .mobile-menu-toggle:hover {
                 background: var(--primary-blue);
                 color: white;
-            }
-        }
-
-        @media (max-width: 1024px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .dashboard-container {
-                grid-template-columns: 200px 1fr;
             }
         }
 
@@ -1078,10 +1016,6 @@ try {
                 grid-template-columns: 1fr 1fr;
             }
             
-            .quick-actions {
-                grid-template-columns: 1fr;
-            }
-            
             .nav-container {
                 padding: 0 1rem;
                 gap: 0.5rem;
@@ -1097,6 +1031,14 @@ try {
 
             .brand-text h1 {
                 font-size: 1rem;
+            }
+            
+            .table {
+                font-size: 0.7rem;
+            }
+            
+            .table th, .table td {
+                padding: 0.5rem;
             }
         }
 
@@ -1116,241 +1058,6 @@ try {
             .brand-text h1 {
                 font-size: 0.9rem;
             }
-
-            .welcome-section h1 {
-                font-size: 1.2rem;
-            }
-        }
-        /* Add to existing styles */
-        .user-avatar-sm {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--gradient-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 0.7rem;
-            overflow: hidden;
-        }
-
-        .user-avatar-sm img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .btn {
-            padding: 0.5rem 1rem;
-            border: none;
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: var(--transition);
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .btn-primary {
-            background: var(--primary-blue);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--secondary-blue);
-            transform: translateY(-1px);
-        }
-
-        .btn-outline {
-            background: transparent;
-            border: 1px solid var(--medium-gray);
-            color: var(--text-dark);
-        }
-
-        .btn-outline:hover {
-            background: var(--light-gray);
-        }
-
-        .btn-sm {
-            padding: 0.25rem 0.5rem;
-            font-size: 0.7rem;
-        }
-
-        .search-filters {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .form-label {
-            font-weight: 500;
-            font-size: 0.8rem;
-            color: var(--text-dark);
-        }
-
-        .form-control {
-            padding: 0.5rem 0.75rem;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            font-size: 0.8rem;
-            transition: var(--transition);
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary-blue);
-            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.1);
-        }
-
-        .form-select {
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
-            background-position: right 0.5rem center;
-            background-repeat: no-repeat;
-            background-size: 1.5em 1.5em;
-            padding-right: 2.5rem;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            appearance: none;
-        }
-
-        .table-responsive {
-            overflow-x: auto;
-        }
-
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .modal-content {
-            background: var(--white);
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow-lg);
-            width: 90%;
-            max-width: 500px;
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            padding: 1.25rem;
-            border-bottom: 1px solid var(--medium-gray);
-            display: flex;
-            justify-content: between;
-            align-items: center;
-        }
-
-        .modal-header h3 {
-            margin: 0;
-            font-size: 1.1rem;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: var(--dark-gray);
-        }
-
-        .modal-body {
-            padding: 1.25rem;
-        }
-
-        .alert {
-            padding: 0.75rem 1rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 1rem;
-            border-left: 4px solid;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left-color: var(--success);
-        }
-
-        .alert-danger {
-            background: #f8d7da;
-            color: #721c24;
-            border-left-color: var(--danger);
-        }
-
-        .alert-warning {
-            background: #fff3cd;
-            color: #856404;
-            border-left-color: var(--warning);
-        }
-
-        .meeting-type-general { border-left-color: var(--primary-blue); }
-        .meeting-type-emergency { border-left-color: var(--danger); }
-        .meeting-type-planning { border-left-color: var(--info); }
-        .meeting-type-review { border-left-color: var(--warning); }
-        .meeting-type-training { border-left-color: var(--success); }
-
-        .status-scheduled { background: #cce7ff; color: var(--info); }
-        .status-ongoing { background: #fff3cd; color: var(--warning); }
-        .status-completed { background: #d4edda; color: var(--success); }
-        .status-cancelled { background: #f8d7da; color: var(--danger); }
-        .status-postponed { background: #e2e3e5; color: var(--dark-gray); }
-
-        .attendance-present { background: #d4edda; color: var(--success); }
-        .attendance-absent { background: #f8d7da; color: var(--danger); }
-        .attendance-excused { background: #fff3cd; color: var(--warning); }
-        .attendance-late { background: #cce7ff; color: var(--info); }
-
-        .agenda-items {
-            margin-top: 1rem;
-        }
-
-        .agenda-item {
-            background: var(--light-gray);
-            padding: 0.75rem;
-            border-radius: var(--border-radius);
-            margin-bottom: 0.5rem;
-            display: flex;
-            justify-content: between;
-            align-items: center;
-        }
-
-        .attendee-list {
-            max-height: 200px;
-            overflow-y: auto;
-            border: 1px solid var(--medium-gray);
-            border-radius: var(--border-radius);
-            padding: 0.75rem;
-        }
-
-        .attendee-item {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--medium-gray);
-        }
-
-        .attendee-item:last-child {
-            border-bottom: none;
         }
     </style>
 </head>
@@ -1407,7 +1114,7 @@ try {
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1433,15 +1140,6 @@ try {
                         <?php endif; ?>
                     </a>
                 </li>
-                <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
-                    </a>
-                </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
                 
                 <li class="menu-item">
                     <a href="committee_budget_requests.php">
@@ -1459,8 +1157,8 @@ try {
                     <a href="meetings.php">
                         <i class="fas fa-handshake"></i>
                         <span>Meetings</span>
-                        <?php if ($upcoming_meetings > 0): ?>
-                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php if ($sidebar_upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $sidebar_upcoming_meetings; ?></span>
                         <?php endif; ?>
                     </a>
                 </li>
@@ -1470,7 +1168,7 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
-                 <li class="menu-item">
+                <li class="menu-item">
                     <a href="tickets_analysis.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>Tickets Analysis</span>
@@ -1487,7 +1185,6 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-           
             <!-- Message Alert -->
             <?php if ($message): ?>
                 <div class="alert alert-<?php echo $message_type === 'success' ? 'success' : 'error'; ?>">
@@ -1557,23 +1254,23 @@ try {
                                         <div class="form-group">
                                             <label class="form-label" for="title">Meeting Title *</label>
                                             <input type="text" class="form-control" id="title" name="title" 
-                                                   value="<?php echo $edit_meeting['title'] ?? ''; ?>" required>
+                                                   value="<?php echo htmlspecialchars($edit_meeting['title'] ?? ''); ?>" required>
                                         </div>
                                         <div class="form-group">
                                             <label class="form-label" for="meeting_type">Meeting Type *</label>
                                             <select class="form-control" id="meeting_type" name="meeting_type" required>
-                                                <option value="general" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'general' ? 'selected' : ''; ?>>General</option>
-                                                <option value="emergency" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'emergency' ? 'selected' : ''; ?>>Emergency</option>
-                                                <option value="planning" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'planning' ? 'selected' : ''; ?>>Planning</option>
-                                                <option value="review" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'review' ? 'selected' : ''; ?>>Review</option>
-                                                <option value="training" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'training' ? 'selected' : ''; ?>>Training</option>
+                                                <option value="general" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'general') ? 'selected' : ''; ?>>General</option>
+                                                <option value="emergency" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'emergency') ? 'selected' : ''; ?>>Emergency</option>
+                                                <option value="planning" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'planning') ? 'selected' : ''; ?>>Planning</option>
+                                                <option value="review" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'review') ? 'selected' : ''; ?>>Review</option>
+                                                <option value="training" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'training') ? 'selected' : ''; ?>>Training</option>
                                             </select>
                                         </div>
                                     </div>
 
                                     <div class="form-group">
                                         <label class="form-label" for="description">Description</label>
-                                        <textarea class="form-control" id="description" name="description" rows="3"><?php echo $edit_meeting['description'] ?? ''; ?></textarea>
+                                        <textarea class="form-control" id="description" name="description" rows="3"><?php echo htmlspecialchars($edit_meeting['description'] ?? ''); ?></textarea>
                                     </div>
 
                                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
@@ -1597,12 +1294,12 @@ try {
                                     <div class="form-group">
                                         <label class="form-label" for="location">Location *</label>
                                         <input type="text" class="form-control" id="location" name="location" 
-                                               value="<?php echo $edit_meeting['location'] ?? ''; ?>" required>
+                                               value="<?php echo htmlspecialchars($edit_meeting['location'] ?? ''); ?>" required>
                                     </div>
 
                                     <div class="form-group">
                                         <label class="form-label" for="agenda">Agenda</label>
-                                        <textarea class="form-control" id="agenda" name="agenda" rows="3"><?php echo $edit_meeting['agenda'] ?? ''; ?></textarea>
+                                        <textarea class="form-control" id="agenda" name="agenda" rows="3"><?php echo htmlspecialchars($edit_meeting['agenda'] ?? ''); ?></textarea>
                                     </div>
 
                                     <div class="form-group">
@@ -1619,7 +1316,7 @@ try {
                                                                    echo 'checked';
                                                                }
                                                            } else {
-                                                               echo 'checked'; // Default: all reps are required
+                                                               echo 'checked';
                                                            }
                                                            ?>>
                                                     <label for="attendee_<?php echo $rep['id']; ?>">
@@ -1728,6 +1425,58 @@ try {
                             </div>
                         </div>
 
+                    <?php elseif ($action === 'view' && $edit_meeting): ?>
+                        <!-- View Meeting Details -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Meeting Details - <?php echo htmlspecialchars($edit_meeting['title']); ?></h3>
+                                <div class="card-header-actions">
+                                    <a href="class_rep_meetings.php" class="card-header-btn" title="Back to Meetings">
+                                        <i class="fas fa-arrow-left"></i>
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Description:</strong>
+                                    <p><?php echo nl2br(htmlspecialchars($edit_meeting['description'] ?? 'No description')); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Date & Time:</strong>
+                                    <p><?php echo date('F j, Y', strtotime($edit_meeting['meeting_date'])); ?> | 
+                                       <?php echo date('g:i A', strtotime($edit_meeting['start_time'])); ?> - 
+                                       <?php echo date('g:i A', strtotime($edit_meeting['end_time'])); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Location:</strong>
+                                    <p><?php echo htmlspecialchars($edit_meeting['location']); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Organizer:</strong>
+                                    <p><?php echo htmlspecialchars($edit_meeting['organizer_name']); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Status:</strong>
+                                    <p><span class="status-badge status-<?php echo $edit_meeting['status']; ?>"><?php echo ucfirst($edit_meeting['status']); ?></span></p>
+                                </div>
+                                <?php if (!empty($agenda_items)): ?>
+                                    <div style="margin-bottom: 1rem;">
+                                        <strong>Agenda Items:</strong>
+                                        <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                                            <?php foreach ($agenda_items as $item): ?>
+                                                <li><?php echo htmlspecialchars($item['title']); ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    </div>
+                                <?php endif; ?>
+                                <div style="margin-top: 1rem;">
+                                    <a href="?action=attendance&id=<?php echo $edit_meeting['id']; ?>" class="btn btn-primary">
+                                        <i class="fas fa-clipboard-check"></i> Record Attendance
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
                     <?php else: ?>
                         <!-- Meetings List -->
                         <div class="card">
@@ -1773,7 +1522,7 @@ try {
                                                             <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
                                                             <?php if ($meeting['description']): ?>
                                                                 <br>
-                                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($meeting['description']); ?></small>
+                                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)) . (strlen($meeting['description']) > 50 ? '...' : ''); ?></small>
                                                             <?php endif; ?>
                                                         </td>
                                                         <td>
@@ -1787,7 +1536,7 @@ try {
                                                         <td><?php echo htmlspecialchars($meeting['location']); ?></td>
                                                         <td>
                                                             <span class="status-badge" style="text-transform: capitalize;">
-                                                                <?php echo $meeting['meeting_type']; ?>
+                                                                <?php echo ucfirst($meeting['meeting_type']); ?>
                                                             </span>
                                                         </td>
                                                         <td>
@@ -1804,10 +1553,10 @@ try {
                                                         </td>
                                                         <td>
                                                             <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
-                                                                <a href="?action=view&id=<?php echo $meeting['id']; ?>" class="btn btn-sm" title="View">
+                                                                <a href="?action=view&id=<?php echo $meeting['id']; ?>" class="btn btn-sm btn-primary" title="View">
                                                                     <i class="fas fa-eye"></i>
                                                                 </a>
-                                                                <a href="?action=attendance&id=<?php echo $meeting['id']; ?>" class="btn btn-sm" title="Attendance">
+                                                                <a href="?action=attendance&id=<?php echo $meeting['id']; ?>" class="btn btn-sm btn-info" title="Attendance">
                                                                     <i class="fas fa-clipboard-check"></i>
                                                                 </a>
                                                                 <?php if ($meeting['status'] === 'scheduled'): ?>
@@ -1857,7 +1606,7 @@ try {
                                 <a href="class_reps.php" class="btn btn-success">
                                     <i class="fas fa-users"></i> Manage Representatives
                                 </a>
-                                <a href="class_rep_reports.php" class="btn btn-info" style="background: var(--info);">
+                                <a href="class_rep_reports.php" class="btn btn-info">
                                     <i class="fas fa-file-alt"></i> View Reports
                                 </a>
                             </div>
@@ -1961,17 +1710,17 @@ try {
             const meetingForm = document.querySelector('form');
             if (meetingForm) {
                 meetingForm.addEventListener('submit', function(e) {
-                    const meetingDate = document.getElementById('meeting_date').value;
-                    const startTime = document.getElementById('start_time').value;
-                    const endTime = document.getElementById('end_time').value;
+                    const meetingDate = document.getElementById('meeting_date');
+                    const startTime = document.getElementById('start_time');
+                    const endTime = document.getElementById('end_time');
                     
-                    if (meetingDate && new Date(meetingDate) < new Date().setHours(0,0,0,0)) {
+                    if (meetingDate && meetingDate.value && new Date(meetingDate.value) < new Date().setHours(0,0,0,0)) {
                         e.preventDefault();
                         alert('Meeting date cannot be in the past.');
                         return false;
                     }
                     
-                    if (startTime && endTime && startTime >= endTime) {
+                    if (startTime && endTime && startTime.value && endTime.value && startTime.value >= endTime.value) {
                         e.preventDefault();
                         alert('End time must be after start time.');
                         return false;

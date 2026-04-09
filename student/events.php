@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
@@ -954,7 +954,7 @@ function safe_display($data) {
                 </div>
             </div>
             <div class="user-menu">
-                <a href="messages" class="icon-btn" title="Messages" style="position: relative;">
+                <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                     <i class="fas fa-envelope"></i>
                     <?php if ($unread_messages > 0): ?>
                         <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -969,7 +969,7 @@ function safe_display($data) {
                         <div class="user-role">Student</div>
                     </div>
                 </div>
-                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
@@ -985,31 +985,31 @@ function safe_display($data) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard">
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets">
+                    <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>My Tickets</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="financial_aid">
+                    <a href="financial_aid.php">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Financial Aid</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="announcements">
+                    <a href="announcements.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="events" class="active">
+                    <a href="events.php" class="active">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
                         <?php if ($upcoming_count > 0): ?>
@@ -1018,19 +1018,19 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="news">
+                    <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="gallery">
+                    <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="messages">
+                    <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1039,14 +1039,14 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="profile">
+                    <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="menu-item">
-                    <a href="class_rep_dashboard">
+                    <a href="class_rep_dashboard.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Dashboard</span>
                     </a>
@@ -1068,21 +1068,21 @@ function safe_display($data) {
 
             <!-- Event Statistics -->
             <div class="stats-grid">
-                <div class="stat-card <?php echo $status_filter === 'upcoming' ? 'active' : ''; ?>" onclick="window.location.href='events?status=upcoming&category=<?php echo $category_filter; ?>&search=<?php echo urlencode($search_query); ?>'">
+                <div class="stat-card <?php echo $status_filter === 'upcoming' ? 'active' : ''; ?>" onclick="window.location.href='events.php?status=upcoming&category=<?php echo $category_filter; ?>&search=<?php echo urlencode($search_query); ?>'">
                     <div class="stat-icon upcoming">
                         <i class="fas fa-calendar-plus"></i>
                     </div>
                     <div class="stat-number"><?php echo $upcoming_count; ?></div>
                     <div class="stat-label">Upcoming Events</div>
                 </div>
-                <div class="stat-card <?php echo $status_filter === 'today' ? 'active' : ''; ?>" onclick="window.location.href='events?status=today&category=<?php echo $category_filter; ?>&search=<?php echo urlencode($search_query); ?>'">
+                <div class="stat-card <?php echo $status_filter === 'today' ? 'active' : ''; ?>" onclick="window.location.href='events.php?status=today&category=<?php echo $category_filter; ?>&search=<?php echo urlencode($search_query); ?>'">
                     <div class="stat-icon today">
                         <i class="fas fa-calendar-day"></i>
                     </div>
                     <div class="stat-number"><?php echo $today_count; ?></div>
                     <div class="stat-label">Today's Events</div>
                 </div>
-                <div class="stat-card <?php echo $status_filter === 'past' ? 'active' : ''; ?>" onclick="window.location.href='events?status=past&category=<?php echo $category_filter; ?>&search=<?php echo urlencode($search_query); ?>'">
+                <div class="stat-card <?php echo $status_filter === 'past' ? 'active' : ''; ?>" onclick="window.location.href='events.php?status=past&category=<?php echo $category_filter; ?>&search=<?php echo urlencode($search_query); ?>'">
                     <div class="stat-icon past">
                         <i class="fas fa-history"></i>
                     </div>
@@ -1100,7 +1100,7 @@ function safe_display($data) {
 
             <!-- Filter Section -->
             <div class="filter-section">
-                <form method="GET" action="events">
+                <form method="GET" action="events.php">
                     <div class="filter-grid">
                         <div class="form-group search-box">
                             <label class="form-label">Search</label>
@@ -1131,7 +1131,7 @@ function safe_display($data) {
                             <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-filter"></i> Apply
                             </button>
-                            <a href="events" class="btn btn-secondary">
+                            <a href="events.php" class="btn btn-secondary">
                                 <i class="fas fa-times"></i> Reset
                             </a>
                         </div>

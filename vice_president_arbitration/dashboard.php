@@ -1035,8 +1035,8 @@ try {
         <main class="main-content">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Welcome, Arbitration Vice President <?php echo htmlspecialchars($_SESSION['full_name']); ?>! ⚖️</h1>
-                    <p>Assist in dispute resolution and oversee RPSU elections</p>
+                    <h1>Welcome, Arbitration Vice President <?php echo htmlspecialchars($_SESSION['full_name']); ?>!</h1>
+                
                 </div>
             </div>
 
@@ -1076,15 +1076,7 @@ try {
                         <div class="stat-label">Resolved Cases</div>
                     </div>
                 </div>
-                <div class="stat-card">
-                    <div class="stat-icon">
-                        <i class="fas fa-gavel"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $upcoming_hearings; ?></div>
-                        <div class="stat-label">Upcoming Hearings</div>
-                    </div>
-                </div>
+               
             </div>
 
             <!-- Additional Stats Grid -->
@@ -1188,50 +1180,7 @@ try {
                         </div>
                     </div>
 
-                    <!-- Upcoming Hearings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming Hearings</h3>
-                            <div class="card-header-actions">
-                                <a href="hearings.php" class="card-header-btn" title="View All">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_hearings_list)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 2rem;">
-                                    <i class="fas fa-calendar-check" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.5;"></i>
-                                    <p>No upcoming hearings</p>
-                                </div>
-                            <?php else: ?>
-                                <div class="table-wrapper">
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Case</th>
-                                            <th>Date & Time</th>
-                                            <th>Location</th>
-                                            <th>Purpose</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <?php foreach ($upcoming_hearings_list as $hearing): ?>
-                                            <tr>
-                                                <td><?php echo htmlspecialchars($hearing['case_number']); ?></td>
-                                                <td><?php echo date('M j, g:i A', strtotime($hearing['hearing_date'])); ?></td>
-                                                <td><?php echo htmlspecialchars($hearing['location']); ?></td>
-                                                <td style="max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                                    <?php echo htmlspecialchars($hearing['purpose'] ?? 'N/A'); ?>
-                                                </td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    
 
                     <!-- Quick Actions -->
                     <div class="quick-actions">
@@ -1288,35 +1237,8 @@ try {
                         </div>
                     </div>
 
-                    <!-- Quick Stats -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Arbitration Overview</h3>
-                        </div>
-                        <div class="card-body">
-                            <div style="display: grid; gap: 1rem;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Case Resolution Rate</span>
-                                    <strong style="color: var(--text-dark);">
-                                        <?php echo $total_cases > 0 ? round(($resolved_cases / $total_cases) * 100) : 0; ?>%
-                                    </strong>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Avg. Resolution Time</span>
-                                    <strong style="color: var(--text-dark);">14 days</strong>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">Committee Members</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $committee_members; ?></strong>
-                                </div>
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="color: var(--dark-gray); font-size: 0.8rem;">This Month Cases</span>
-                                    <strong style="color: var(--text-dark);"><?php echo $total_cases; ?></strong>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                    
+                
             </div>
         </main>
     </div>

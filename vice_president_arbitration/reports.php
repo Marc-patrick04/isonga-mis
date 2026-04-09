@@ -10,6 +10,40 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'vice_president_arbitr
 
 $user_id = $_SESSION['user_id'];
 
+// Helper function to get committee_member_id from user_id
+function getCommitteeMemberId($pdo, $user_id) {
+    try {
+        $stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ? AND status = 'active'");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result ? $result['id'] : null;
+    } catch (PDOException $e) {
+        error_log("Error getting committee member ID: " . $e->getMessage());
+        return null;
+    }
+}
+
+// Get committee_member_id for the current user
+$committee_member_id = getCommitteeMemberId($pdo, $user_id);
+
+// If not found, try to get by user's name or email as fallback
+if (!$committee_member_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT cm.id FROM committee_members cm 
+            JOIN users u ON u.email = cm.email OR u.full_name = cm.name
+            WHERE u.id = ?
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        $committee_member_id = $result ? $result['id'] : null;
+    } catch (PDOException $e) {
+        error_log("Fallback committee member lookup error: " . $e->getMessage());
+    }
+}
+
+error_log("User ID: $user_id maps to Committee Member ID: " . ($committee_member_id ?? 'NULL'));
+
 // Get user profile data
 try {
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
@@ -60,7 +94,14 @@ try {
 }
 
 // Get submitted reports (both individual and team reports)
+
 try {
+    // First get the committee_member_id
+    $committee_member_id_val = getCommitteeMemberId($pdo, $user_id);
+    if (!$committee_member_id_val) {
+        $committee_member_id_val = $user_id;
+    }
+    
     $stmt = $pdo->prepare("
         SELECT r.*, rt.name as template_name, rt.report_type,
                u.full_name as reviewer_name,
@@ -69,14 +110,14 @@ try {
         LEFT JOIN report_templates rt ON r.template_id = rt.id
         LEFT JOIN users u ON r.reviewed_by = u.id
         LEFT JOIN committee_members cm ON r.user_id = cm.id
-        WHERE (r.user_id = ? OR (r.is_team_report = 1 AND r.team_role = 'combined' AND r.user_id IN (
-            SELECT id FROM committee_members 
-            WHERE role IN ('president_arbitration', 'vice_president_arbitration', 'secretary_arbitration', 'advisor_arbitration')
-        )))
+        WHERE r.user_id = ?
         ORDER BY r.created_at DESC
     ");
-    $stmt->execute([$user_id]);
+    $stmt->execute([$committee_member_id_val]);
     $submitted_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    error_log("Found " . count($submitted_reports) . " reports for committee_member_id: " . $committee_member_id_val);
+    
 } catch (PDOException $e) {
     $submitted_reports = [];
     error_log("Reports query error: " . $e->getMessage());
@@ -108,12 +149,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $template_id = $_POST['template_id'] ?? null;
         $title = $_POST['title'] ?? '';
         $report_type = $_POST['report_type'] ?? 'monthly';
+        
         $report_period = $_POST['report_period'] ?? null;
+        if (!empty($report_period)) {
+            if (preg_match('/^\d{4}-\d{2}$/', $report_period)) {
+                $report_period = $report_period . '-01';
+            }
+        }
+        
         $activity_date = $_POST['activity_date'] ?? null;
-        $is_team_report = isset($_POST['is_team_report']) ? 1 : 0;
+        if (!empty($activity_date)) {
+            $activity_date = date('Y-m-d', strtotime($activity_date));
+        }
+        
+        $is_team_report = isset($_POST['is_team_report']) ? true : false;
         $team_role = $_POST['team_role'] ?? 'combined';
         
-        // Get template to validate fields
         $selected_template = null;
         foreach ($templates as $template) {
             if ($template['id'] == $template_id) {
@@ -126,7 +177,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $content_data = [];
             $template_fields = json_decode($selected_template['fields'], true);
             
-            // Collect form data based on template fields
             foreach ($template_fields['sections'] as $section) {
                 $field_name = strtolower(str_replace(' ', '_', $section['title']));
                 $content_data[$field_name] = $_POST[$field_name] ?? '';
@@ -134,13 +184,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             try {
                 if ($is_team_report) {
-                    // Start transaction for team report
                     $pdo->beginTransaction();
                     
-                    // Create main team report
                     $stmt = $pdo->prepare("
                         INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, is_team_report, team_role, submitted_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, NOW())
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', true, ?, NOW())
                     ");
                     
                     $stmt->execute([
@@ -156,7 +204,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     
                     $report_id = $pdo->lastInsertId();
                     
-                    // Create report sections for team members if not combined report
                     if ($team_role !== 'combined') {
                         $sections = [];
                         foreach ($team_members as $member) {
@@ -172,7 +219,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                         }
                         
-                        // Update assigned sections
                         $stmt = $pdo->prepare("UPDATE reports SET assigned_sections = ? WHERE id = ?");
                         $stmt->execute([json_encode($sections), $report_id]);
                     }
@@ -181,7 +227,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Team report created successfully! Arbitration committee members can now collaborate.";
                     
                 } else {
-                    // Create individual report
                     $stmt = $pdo->prepare("
                         INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', NOW())
@@ -201,7 +246,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['success_message'] = "Individual report submitted successfully!";
                 }
                 
-                // Handle file uploads if any
                 if (!empty($_FILES['report_files']['name'][0])) {
                     $upload_dir = "../assets/uploads/reports/";
                     if (!is_dir($upload_dir)) {
@@ -247,7 +291,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // Handle team report submission
     if (isset($_POST['action']) && $_POST['action'] === 'submit_team_report') {
         $report_id = $_POST['report_id'];
         
@@ -262,7 +305,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
-    // Handle section save
     if (isset($_POST['action']) && $_POST['action'] === 'save_section') {
         $section_id = $_POST['section_id'];
         $content = $_POST['content'] ?? '';
@@ -279,84 +321,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Handle export request
-if (isset($_GET['export']) && isset($_GET['id'])) {
-    $report_id = (int)$_GET['id'];
-    
-    try {
-        $stmt = $pdo->prepare("
-            SELECT r.*, rt.name as template_name, cm.name as author_name, cm.role as author_role
-            FROM reports r 
-            LEFT JOIN report_templates rt ON r.template_id = rt.id
-            JOIN committee_members cm ON r.user_id = cm.id
-            WHERE r.id = ? AND (r.user_id = ? OR r.is_team_report = 1)
-        ");
-        $stmt->execute([$report_id, $user_id]);
-        $report = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if ($report) {
-            // Get team sections if team report
-            $team_sections = [];
-            if ($report['is_team_report']) {
-                $stmt = $pdo->prepare("
-                    SELECT rs.*, cm.name as assigned_name, cm.role as assigned_role
-                    FROM report_sections rs
-                    JOIN committee_members cm ON rs.assigned_to = cm.id
-                    WHERE rs.report_id = ?
-                    ORDER BY rs.order_index
-                ");
-                $stmt->execute([$report_id]);
-                $team_sections = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            }
-            
-            // Generate CSV export
-            header('Content-Type: text/csv');
-            header('Content-Disposition: attachment; filename="arbitration_report_' . $report_id . '_' . date('Y-m-d') . '.csv"');
-            
-            $output = fopen('php://output', 'w');
-            
-            // CSV header
-            fputcsv($output, ['Arbitration Committee Report - ' . $report['title']]);
-            fputcsv($output, []); // Empty row
-            fputcsv($output, ['Template:', $report['template_name']]);
-            fputcsv($output, ['Author:', $report['author_name'] . ' (' . $report['author_role'] . ')']);
-            fputcsv($output, ['Report Type:', $report['report_type']]);
-            fputcsv($output, ['Team Report:', $report['is_team_report'] ? 'Yes' : 'No']);
-            fputcsv($output, ['Status:', $report['status']]);
-            fputcsv($output, ['Submitted:', $report['submitted_at']]);
-            fputcsv($output, []); // Empty row
-            
-            // Main report content
-            $content = json_decode($report['content'], true);
-            foreach ($content as $key => $value) {
-                $label = ucwords(str_replace('_', ' ', $key));
-                fputcsv($output, [$label . ':', $value]);
-            }
-            
-            // Team sections
-            if (!empty($team_sections)) {
-                fputcsv($output, []); // Empty row
-                fputcsv($output, ['ARBITRATION COMMITTEE SECTIONS']);
-                foreach ($team_sections as $section) {
-                    fputcsv($output, []); // Empty row
-                    fputcsv($output, [$section['section_title'] . ' - ' . $section['assigned_name']]);
-                    fputcsv($output, ['Content:', $section['content']]);
-                    fputcsv($output, ['Status:', $section['status']]);
-                }
-            }
-            
-            fclose($output);
-            exit();
-        }
-    } catch (PDOException $e) {
-        $_SESSION['error_message'] = "Error exporting report: " . $e->getMessage();
-        header("Location: reports.php");
-        exit();
-    }
-}
-
 // Get report statistics
 try {
+    // First get committee_member_id properly
+    $committee_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ?");
+    $committee_stmt->execute([$user_id]);
+    $committee_member = $committee_stmt->fetch(PDO::FETCH_ASSOC);
+    $committee_member_id_val = $committee_member ? $committee_member['id'] : $user_id;
+    
     $stmt = $pdo->prepare("
         SELECT 
             COUNT(*) as total_reports,
@@ -364,16 +336,25 @@ try {
             SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_reports,
             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
             SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_reports,
-            SUM(CASE WHEN is_team_report = 1 THEN 1 ELSE 0 END) as team_reports
+            SUM(CASE WHEN is_team_report = true THEN 1 ELSE 0 END) as team_reports
         FROM reports 
-        WHERE user_id = ? OR (is_team_report = 1 AND team_role = 'combined' AND user_id IN (
-            SELECT id FROM committee_members 
-            WHERE role IN ('president_arbitration', 'vice_president_arbitration', 'secretary_arbitration', 'advisor_arbitration')
-        ))
+        WHERE user_id = ?
     ");
-    $stmt->execute([$user_id]);
+    $stmt->execute([$committee_member_id_val]);
     $report_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$report_stats) {
+        $report_stats = [
+            'total_reports' => 0,
+            'submitted_reports' => 0,
+            'reviewed_reports' => 0,
+            'approved_reports' => 0,
+            'draft_reports' => 0,
+            'team_reports' => 0
+        ];
+    }
 } catch (PDOException $e) {
+    error_log("Statistics query error: " . $e->getMessage());
     $report_stats = [
         'total_reports' => 0,
         'submitted_reports' => 0,
@@ -394,48 +375,13 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Case Management Summary',
-                        'required' => true,
-                        'description' => 'Overview of cases managed and coordinated this month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Hearing Coordination',
-                        'required' => true,
-                        'description' => 'Details of hearings scheduled, coordinated, and conducted'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Case Resolution Support',
-                        'required' => true,
-                        'description' => 'Support provided to the President in case resolution'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Election Support Activities',
-                        'required' => true,
-                        'description' => 'Support provided in election oversight and management'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Committee Coordination',
-                        'required' => true,
-                        'description' => 'Coordination with committee members and stakeholders'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges and Solutions',
-                        'required' => false,
-                        'description' => 'Challenges faced and solutions implemented'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Next Month Priorities',
-                        'required' => true,
-                        'description' => 'Priority activities for the coming month'
-                    ]
+                    ['type' => 'textarea', 'title' => 'Introduction', 'required' => true, 'description' => 'Brief introduction and overview of the reporting period'],
+                    ['type' => 'textarea', 'title' => 'Activities Done', 'required' => true, 'description' => 'Detailed description of all activities conducted during the reporting period'],
+                    ['type' => 'textarea', 'title' => 'Cases Managed', 'required' => true, 'description' => 'Summary of arbitration cases managed, including status and outcomes'],
+                    ['type' => 'textarea', 'title' => 'Achievements', 'required' => true, 'description' => 'Key achievements and milestones reached during the period'],
+                    ['type' => 'textarea', 'title' => 'Challenges', 'required' => true, 'description' => 'Challenges faced and obstacles encountered'],
+                    ['type' => 'textarea', 'title' => 'Recommendations', 'required' => true, 'description' => 'Recommendations for improvement and future actions'],
+                    ['type' => 'textarea', 'title' => 'Conclusion', 'required' => true, 'description' => 'Concluding remarks and summary of the report']
                 ]
             ])
         ],
@@ -446,54 +392,14 @@ try {
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Case Number',
-                        'required' => true,
-                        'description' => 'Official case reference number'
-                    ],
-                    [
-                        'type' => 'text',
-                        'title' => 'Case Title',
-                        'required' => true,
-                        'description' => 'Title of the arbitration case'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Hearing Date',
-                        'required' => true,
-                        'description' => 'Date when hearing was conducted'
-                    ],
-                    [
-                        'type' => 'text',
-                        'title' => 'Hearing Location',
-                        'required' => true,
-                        'description' => 'Location where hearing took place'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Hearing Preparation',
-                        'required' => true,
-                        'description' => 'Preparation activities before the hearing'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Hearing Proceedings',
-                        'required' => true,
-                        'description' => 'Summary of hearing proceedings'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Outcome and Next Steps',
-                        'required' => true,
-                        'description' => 'Hearing outcome and next steps'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Observations',
-                        'required' => false,
-                        'description' => 'Observations and recommendations'
-                    ]
+                    ['type' => 'text', 'title' => 'Case Number', 'required' => true, 'description' => 'Official case reference number'],
+                    ['type' => 'text', 'title' => 'Case Title', 'required' => true, 'description' => 'Title of the arbitration case'],
+                    ['type' => 'date', 'title' => 'Hearing Date', 'required' => true, 'description' => 'Date when hearing was conducted'],
+                    ['type' => 'text', 'title' => 'Hearing Location', 'required' => true, 'description' => 'Location where hearing took place'],
+                    ['type' => 'textarea', 'title' => 'Hearing Preparation', 'required' => true, 'description' => 'Preparation activities before the hearing'],
+                    ['type' => 'textarea', 'title' => 'Hearing Proceedings', 'required' => true, 'description' => 'Summary of hearing proceedings'],
+                    ['type' => 'textarea', 'title' => 'Outcome and Next Steps', 'required' => true, 'description' => 'Hearing outcome and next steps'],
+                    ['type' => 'textarea', 'title' => 'Observations', 'required' => false, 'description' => 'Observations and recommendations']
                 ]
             ])
         ],
@@ -504,48 +410,13 @@ try {
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'text',
-                        'title' => 'Election Type',
-                        'required' => true,
-                        'description' => 'Type of election supported'
-                    ],
-                    [
-                        'type' => 'date',
-                        'title' => 'Election Date',
-                        'required' => true,
-                        'description' => 'Date when election was conducted'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Support Activities',
-                        'required' => true,
-                        'description' => 'Specific support activities performed'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Logistics Coordination',
-                        'required' => true,
-                        'description' => 'Logistics and coordination support provided'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Issue Resolution Support',
-                        'required' => false,
-                        'description' => 'Support in resolving election issues'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Committee Support',
-                        'required' => true,
-                        'description' => 'Support provided to election committee'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Recommendations',
-                        'required' => true,
-                        'description' => 'Recommendations for future elections'
-                    ]
+                    ['type' => 'text', 'title' => 'Election Type', 'required' => true, 'description' => 'Type of election supported'],
+                    ['type' => 'date', 'title' => 'Election Date', 'required' => true, 'description' => 'Date when election was conducted'],
+                    ['type' => 'textarea', 'title' => 'Support Activities', 'required' => true, 'description' => 'Specific support activities performed'],
+                    ['type' => 'textarea', 'title' => 'Logistics Coordination', 'required' => true, 'description' => 'Logistics and coordination support provided'],
+                    ['type' => 'textarea', 'title' => 'Issue Resolution Support', 'required' => false, 'description' => 'Support in resolving election issues'],
+                    ['type' => 'textarea', 'title' => 'Committee Support', 'required' => true, 'description' => 'Support provided to election committee'],
+                    ['type' => 'textarea', 'title' => 'Recommendations', 'required' => true, 'description' => 'Recommendations for future elections']
                 ]
             ])
         ]
@@ -570,10 +441,9 @@ try {
         }
     }
     
-    // Refresh templates list
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'vice_president_arbitration' OR role_specific IS NULL
+        WHERE (role_specific = 'vice_president_arbitration' OR role_specific IS NULL)
         AND is_active = 1
         ORDER BY name
     ");
@@ -591,7 +461,6 @@ $current_section = null;
 
 if (isset($_GET['action']) && isset($_GET['id'])) {
     if ($_GET['action'] === 'edit' && isset($_GET['id'])) {
-        // Edit entire report
         try {
             $stmt = $pdo->prepare("
                 SELECT r.*, rt.name as template_name, rt.fields as template_fields
@@ -603,7 +472,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             $current_report = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if ($current_report && $current_report['is_team_report']) {
-                // Get report sections for team report
                 $stmt = $pdo->prepare("
                     SELECT rs.*, cm.name as assigned_name, cm.role as assigned_role
                     FROM report_sections rs
@@ -618,7 +486,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             error_log("Report editing error: " . $e->getMessage());
         }
     } elseif ($_GET['action'] === 'edit_section' && isset($_GET['id'])) {
-        // Edit specific section assigned to vice president
         try {
             $stmt = $pdo->prepare("
                 SELECT rs.*, r.title as report_title, r.status as report_status,
@@ -646,7 +513,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* Use the same CSS as the arbitration dashboard */
         :root {
             --primary-blue: #0056b3;
             --secondary-blue: #1e88e5;
@@ -668,9 +534,9 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
+            --sidebar-width: 260px;
+            --sidebar-collapsed-width: 70px;
         }
-
-        
 
         * {
             margin: 0;
@@ -827,22 +693,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             color: white;
             border-color: var(--primary-blue);
             transform: translateY(-1px);
-        }
-
-        .notification-badge {
-            position: absolute;
-            top: -2px;
-            right: -2px;
-            background: var(--danger);
-            color: white;
-            border-radius: 50%;
-            width: 18px;
-            height: 18px;
-            font-size: 0.6rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
         }
 
         .logout-btn {
@@ -1599,11 +1449,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             display: block;
         }
 
-        :root {
-            --sidebar-width: 260px;
-            --sidebar-collapsed-width: 70px;
-        }
-
         /* Responsive */
         @media (max-width: 992px) {
             .sidebar {
@@ -1789,15 +1634,14 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
 
     <!-- Dashboard Container -->
     <div class="dashboard-container">
-               <!-- Sidebar -->
-          <!-- Sidebar -->
+        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <button class="sidebar-toggle" id="sidebarToggle">
                 <i class="fas fa-chevron-left"></i>
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1857,8 +1701,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         <main class="main-content">
             <div class="dashboard-header">
                 <div class="welcome-section">
-                    <h1>Arbitration Vice President Reports ⚖️</h1>
-                    <p>Create reports and collaborate with the arbitration committee on comprehensive reporting</p>
+                    <h1>Arbitration Vice President Reports</h1>
                 </div>
             </div>
 
@@ -2140,7 +1983,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                     <button class="tab active" data-tab="create">Create New Report</button>
                     <button class="tab" data-tab="submitted">Submitted Reports (<?php echo count($submitted_reports); ?>)</button>
                     <button class="tab" data-tab="assignments">My Assignments (<?php echo count($assigned_sections); ?>)</button>
-                    <button class="tab" data-tab="team">Committee Collaboration</button>
                 </div>
 
                 <!-- Create Report Tab -->
@@ -2300,7 +2142,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                         <?php if ($report['report_period']): ?>
                                                             <br><small class="text-muted"><?php echo date('F Y', strtotime($report['report_period'])); ?></small>
                                                         <?php endif; ?>
-                                                    </td>
+                                                    </td
                                                     <td><?php echo htmlspecialchars($report['template_name'] ?? 'Custom'); ?></td>
                                                     <td>
                                                         <span class="template-type"><?php echo ucfirst($report['report_type']); ?></span>
@@ -2323,9 +2165,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                                                     <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td>
                                                     <td>
                                                         <div style="display: flex; gap: 0.25rem;">
-                                                            <a href="reports.php?export=1&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Export">
-                                                                <i class="fas fa-download"></i>
-                                                            </a>
                                                             <?php if ($report['status'] === 'draft' || $report['is_team_report']): ?>
                                                                 <a href="reports.php?action=edit&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Edit">
                                                                     <i class="fas fa-edit"></i>
@@ -2404,55 +2243,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         </div>
                     </div>
                 </div>
-
-                <!-- Committee Collaboration Tab -->
-                <div class="tab-content" id="team-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Committee Collaboration</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="alert alert-info">
-                                <i class="fas fa-info-circle"></i>
-                                <strong>Vice President Role:</strong> As Vice President of the Arbitration Committee, you play a crucial role in supporting the President and coordinating committee activities.
-                            </div>
-                            
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1.5rem;">
-                                <div style="background: var(--light-blue); padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--primary-blue);">
-                                    <h4><i class="fas fa-user-tie"></i> President Role</h4>
-                                    <p>Overall coordination, case oversight, and final report compilation.</p>
-                                </div>
-                                
-                                <div style="background: #e8f5e8; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--success);">
-                                    <h4><i class="fas fa-user-check"></i> Your Role (Vice President)</h4>
-                                    <p>Case management, hearing coordination, and dispute resolution support.</p>
-                                </div>
-                                
-                                <div style="background: #fff3cd; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid var(--warning);">
-                                    <h4><i class="fas fa-user-graduate"></i> Advisor Role</h4>
-                                    <p>Legal guidance, policy compliance, and complex case consultation.</p>
-                                </div>
-
-                                <div style="background: #f0e6ff; padding: 1.5rem; border-radius: var(--border-radius); border-left: 4px solid #6f42c1;">
-                                    <h4><i class="fas fa-clipboard-list"></i> Secretary Role</h4>
-                                    <p>Documentation, record keeping, and hearing minutes.</p>
-                                </div>
-                            </div>
-                            
-                            <div style="margin-top: 2rem;">
-                                <h4>Your Responsibilities in Committee Reporting</h4>
-                                <ul style="margin-left: 1.5rem; color: var(--text-dark);">
-                                    <li>Support the President in report compilation</li>
-                                    <li>Provide detailed case management information</li>
-                                    <li>Document hearing coordination activities</li>
-                                    <li>Collaborate on team reports with other members</li>
-                                    <li>Complete assigned sections in collaborative reports</li>
-                                    <li>Review and provide feedback on committee reports</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             <?php endif; ?>
         </main>
     </div>
@@ -2460,7 +2250,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <!-- Report View Modal -->
     <div id="reportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
         <div style="background: var(--white); border-radius: var(--border-radius); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: between; align-items: center;">
+            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: space-between; align-items: center;">
                 <h3 id="modalTitle">Report Details</h3>
                 <button onclick="closeModal()" style="background: none; border: none; font-size: 1.25rem; color: var(--dark-gray); cursor: pointer;">&times;</button>
             </div>
@@ -2473,7 +2263,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <script>
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
-        const mainContent = document.getElementById('mainContent');
+        const mainContent = document.querySelector('.main-content');
         const sidebarToggle = document.getElementById('sidebarToggle');
         const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
         
@@ -2532,6 +2322,39 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             }
         });
 
+        // Tab Switching Functionality
+        const tabButtons = document.querySelectorAll('.tab');
+        const tabContents = document.querySelectorAll('.tab-content');
+        
+        function switchTab(tabId) {
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            tabContents.forEach(content => content.classList.remove('active'));
+            
+            const selectedTab = document.querySelector(`.tab[data-tab="${tabId}"]`);
+            if (selectedTab) {
+                selectedTab.classList.add('active');
+            }
+            
+            const selectedContent = document.getElementById(`${tabId}-tab`);
+            if (selectedContent) {
+                selectedContent.classList.add('active');
+            }
+        }
+        
+        tabButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const tabId = this.getAttribute('data-tab');
+                switchTab(tabId);
+            });
+        });
+        
+        if (window.location.hash) {
+            const hashTab = window.location.hash.substring(1);
+            if (['create', 'submitted', 'assignments'].includes(hashTab)) {
+                switchTab(hashTab);
+            }
+        }
+
         // Template selection
         const templateCards = document.querySelectorAll('.template-card');
         templateCards.forEach(card => {
@@ -2541,33 +2364,26 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             });
         });
 
-        // Template selection function
         function selectTemplate(templateId) {
-            // Update UI
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
             });
             document.querySelector(`[data-template-id="${templateId}"]`).classList.add('selected');
             
-            // Show form
             document.getElementById('reportForm').style.display = 'block';
             document.getElementById('selectedTemplateId').value = templateId;
             
-            // Scroll to form
             document.getElementById('reportForm').scrollIntoView({ behavior: 'smooth' });
             
-            // Load template fields
             loadTemplateFields(templateId);
         }
 
-        // Toggle team options
         function toggleTeamOptions() {
             const teamOptions = document.getElementById('team_options');
             const isTeamReport = document.getElementById('is_team_report').checked;
             teamOptions.style.display = isTeamReport ? 'block' : 'none';
         }
 
-        // Load template fields via AJAX
         async function loadTemplateFields(templateId) {
             try {
                 const response = await fetch(`../api/get_template_fields.php?template_id=${templateId}`);
@@ -2631,7 +2447,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             }
         }
 
-        // File handling
         function handleFileSelect(input) {
             const fileList = document.getElementById('fileList');
             fileList.innerHTML = '';
@@ -2654,7 +2469,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             fileItem.remove();
         }
 
-        // Form reset
         function resetForm() {
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
@@ -2666,7 +2480,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             document.getElementById('is_team_report').checked = false;
         }
 
-        // View report in modal
         async function viewReport(reportId) {
             try {
                 const response = await fetch(`../api/get_report.php?id=${reportId}`);
@@ -2724,7 +2537,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
             document.getElementById('reportModal').style.display = 'none';
         }
 
-        // Close modal when clicking outside
         document.getElementById('reportModal').addEventListener('click', function(e) {
             if (e.target === this) {
                 closeModal();

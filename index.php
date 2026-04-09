@@ -21,7 +21,7 @@ $announcements = safeQuery($pdo,
      ORDER BY created_at DESC LIMIT 3"
 );
 
-// Get news from database
+// Get news from database (with image for background)
 $news = safeQuery($pdo,
     "SELECT * FROM news 
      WHERE status = 'published' 
@@ -35,13 +35,25 @@ $committee_members = safeQuery($pdo,
      ORDER BY role_order, name ASC LIMIT 4"
 );
 
-// Get upcoming events - PostgreSQL compatible
+// Get upcoming events - PostgreSQL compatible (with image for background)
 $events = safeQuery($pdo,
     "SELECT * FROM events 
      WHERE event_date >= CURRENT_DATE 
      AND status = 'published' 
      ORDER BY event_date ASC LIMIT 3"
 );
+
+// Get hero section images from hero table for Quick Links
+try {
+    $hero_items = $pdo->query("SELECT * FROM hero WHERE is_active = TRUE ORDER BY display_order ASC")->fetchAll(PDO::FETCH_ASSOC);
+    // Create associative array keyed by slug for easy access
+    $hero_map = [];
+    foreach ($hero_items as $hero_item) {
+        $hero_map[$hero_item['slug']] = $hero_item;
+    }
+} catch (PDOException $e) {
+    $hero_map = [];
+}
 
 // Get statistics with caching consideration
 $student_count = 0;
@@ -963,7 +975,7 @@ foreach ($stat_queries as $key => $query) {
         .link-card {
             background: var(--white);
             border-radius: var(--border-radius);
-            padding: 1.25rem;
+            padding: 0;
             text-align: center;
             transition: var(--transition);
             box-shadow: var(--shadow-sm);
@@ -973,35 +985,78 @@ foreach ($stat_queries as $key => $query) {
             position: relative;
             overflow: hidden;
             height: 100%;
+            display: flex;
+            flex-direction: column;
         }
 
         @media (min-width: 768px) {
             .link-card {
-                padding: 2rem;
+                padding: 0;
                 border-radius: var(--border-radius-lg);
             }
         }
 
+        .link-card-image {
+            width: 100%;
+            height: 160px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        @media (min-width: 768px) {
+            .link-card-image {
+                height: 180px;
+            }
+        }
+
+        .link-card-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: var(--transition);
+        }
+
+        .link-card:hover .link-card-image img {
+            transform: scale(1.05);
+        }
+
+        .link-card-image-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 2rem;
+        }
+
+        @media (min-width: 768px) {
+            .link-card-image-placeholder {
+                font-size: 2.5rem;
+            }
+        }
+
         .link-icon {
-            width: 45px;
-            height: 45px;
+            width: 50px;
+            height: 50px;
             background: var(--gradient-primary);
             border-radius: var(--border-radius);
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 0 auto 0.75rem;
+            margin: 1rem auto 0.75rem;
             color: white;
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             transition: var(--transition);
         }
 
         @media (min-width: 768px) {
             .link-icon {
-                width: 60px;
-                height: 60px;
-                font-size: 1.5rem;
-                margin-bottom: 1.25rem;
+                width: 56px;
+                height: 56px;
+                font-size: 1.25rem;
+                margin-top: 1.25rem;
+                margin-bottom: 1rem;
                 border-radius: var(--border-radius-lg);
             }
         }
@@ -1011,6 +1066,7 @@ foreach ($stat_queries as $key => $query) {
             font-weight: 700;
             margin-bottom: 0.5rem;
             color: var(--gray-900);
+            padding: 0 0.5rem;
         }
 
         @media (min-width: 768px) {
@@ -1024,6 +1080,7 @@ foreach ($stat_queries as $key => $query) {
             color: var(--gray-600);
             line-height: 1.4;
             font-size: 0.75rem;
+            padding: 0 0.5rem;
         }
 
         @media (min-width: 768px) {
@@ -1036,7 +1093,7 @@ foreach ($stat_queries as $key => $query) {
         /* Highlights Section */
         .highlights {
             padding: var(--space-lg) var(--space-sm);
-            background: var(--white);
+            background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
         }
 
         @media (min-width: 768px) {
@@ -1063,8 +1120,8 @@ foreach ($stat_queries as $key => $query) {
             border-radius: var(--border-radius);
             overflow: hidden;
             transition: var(--transition);
-            box-shadow: var(--shadow-sm);
-            border: 1px solid var(--gray-200);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(0, 0, 0, 0.06);
             height: 100%;
             display: flex;
             flex-direction: column;
@@ -1073,19 +1130,34 @@ foreach ($stat_queries as $key => $query) {
         @media (min-width: 768px) {
             .highlight-card {
                 border-radius: var(--border-radius-lg);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             }
         }
 
         .highlight-image {
-            height: 100px;
+            height: 120px;
             position: relative;
             overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         @media (min-width: 768px) {
             .highlight-image {
                 height: 160px;
             }
+        }
+
+        .highlight-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: var(--transition);
+        }
+
+        .highlight-card:hover .highlight-image img {
+            transform: scale(1.05);
         }
 
         .highlight-image-placeholder {
@@ -1105,7 +1177,7 @@ foreach ($stat_queries as $key => $query) {
         }
 
         .highlight-content {
-            padding: 1rem;
+            padding: 1.25rem;
             flex: 1;
             display: flex;
             flex-direction: column;
@@ -1118,16 +1190,19 @@ foreach ($stat_queries as $key => $query) {
         }
 
         .highlight-title {
-            font-size: 1rem;
+            font-size: 1.1rem;
             font-weight: 700;
-            margin-bottom: 0.75rem;
+            margin-bottom: 1rem;
             color: var(--gray-900);
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--primary);
+            display: inline-block;
         }
 
         @media (min-width: 768px) {
             .highlight-title {
-                font-size: 1.2rem;
-                margin-bottom: 1rem;
+                font-size: 1.25rem;
+                margin-bottom: 1.25rem;
             }
         }
 
@@ -1136,26 +1211,32 @@ foreach ($stat_queries as $key => $query) {
         }
 
         .highlight-item {
-            margin-bottom: 0.75rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 1px solid var(--gray-200);
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            border-radius: 8px;
+            background: var(--gray-100);
+            border-left: 3px solid var(--primary);
         }
 
         @media (min-width: 768px) {
             .highlight-item {
                 margin-bottom: 1rem;
-                padding-bottom: 1rem;
+                padding: 1rem;
             }
         }
 
         .highlight-date {
             color: var(--primary);
             font-weight: 600;
-            font-size: 0.7rem;
-            margin-bottom: 0.35rem;
+            font-size: 0.75rem;
+            margin-bottom: 0.4rem;
             display: flex;
             align-items: center;
-            gap: 0.35rem;
+            gap: 0.4rem;
+            background: rgba(0, 86, 179, 0.08);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            width: fit-content;
         }
 
         @media (min-width: 768px) {
@@ -1167,27 +1248,29 @@ foreach ($stat_queries as $key => $query) {
         }
 
         .highlight-item-title {
-            font-weight: 600;
-            margin-bottom: 0.35rem;
-            font-size: 0.85rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+            font-size: 0.9rem;
+            color: var(--gray-900);
+            line-height: 1.3;
         }
 
         @media (min-width: 768px) {
             .highlight-item-title {
-                font-size: 0.9rem;
+                font-size: 0.95rem;
                 margin-bottom: 0.5rem;
             }
         }
 
         .highlight-excerpt {
             color: var(--gray-600);
-            font-size: 0.75rem;
-            line-height: 1.4;
+            font-size: 0.8rem;
+            line-height: 1.5;
         }
 
         @media (min-width: 768px) {
             .highlight-excerpt {
-                font-size: 0.8rem;
+                font-size: 0.85rem;
                 line-height: 1.5;
             }
         }
@@ -1200,14 +1283,21 @@ foreach ($stat_queries as $key => $query) {
             align-items: center;
             gap: 0.5rem;
             transition: var(--transition);
-            font-size: 0.8rem;
+            font-size: 0.85rem;
             margin-top: auto;
             padding-top: 0.75rem;
+            padding-left: 0.5rem;
+            border-left: 3px solid var(--primary);
+        }
+
+        .read-more:hover {
+            color: var(--primary-dark);
+            padding-left: 0.75rem;
         }
 
         @media (min-width: 768px) {
             .read-more {
-                font-size: 0.875rem;
+                font-size: 0.9rem;
                 padding-top: 1rem;
             }
         }
@@ -1895,41 +1985,79 @@ foreach ($stat_queries as $key => $query) {
                     <p class="section-subtitle">Everything you need to stay connected and informed about campus life</p>
                 </div>
                 <div class="links-grid">
-                    <?php 
-                    $quick_links = [
+                    <?php
+                    // Define default colors for each slug
+                    $default_colors = [
+                        'announcements' => 'linear-gradient(135deg, #ff6b6b, #ee5a24)',
+                        'news' => 'linear-gradient(135deg, #1e88e5, #0d47a1)',
+                        'events' => 'linear-gradient(135deg, #4caf50, #2e7d32)',
+                        'committee' => 'linear-gradient(135deg, #9c27b0, #6a1b9a)'
+                    ];
+                    
+                    // Default items in case hero table is empty
+                    $default_items = [
                         [
-                            'href' => 'announcements',
-                            'icon' => 'fas fa-bullhorn',
                             'title' => 'Announcements',
-                            'description' => 'Official communications from RPSU leadership and college administration'
+                            'slug' => 'announcements',
+                            'icon' => 'fa-bullhorn',
+                            'link_url' => 'announcements.php',
+                            'description' => 'Official communications from RPSU leadership and college administration',
+                            'image_url' => '',
+                            'is_active' => true
                         ],
                         [
-                            'href' => 'news',
-                            'icon' => 'fas fa-newspaper',
                             'title' => 'Campus News',
-                            'description' => 'Latest happenings, achievements, and stories from around campus'
+                            'slug' => 'news',
+                            'icon' => 'fa-newspaper',
+                            'link_url' => 'news.php',
+                            'description' => 'Latest happenings, achievements, and stories from around campus',
+                            'image_url' => '',
+                            'is_active' => true
                         ],
                         [
-                            'href' => 'events',
-                            'icon' => 'fas fa-calendar-alt',
                             'title' => 'Events',
-                            'description' => 'Upcoming academic, cultural, and social events calendar'
+                            'slug' => 'events',
+                            'icon' => 'fa-calendar-alt',
+                            'link_url' => 'events.php',
+                            'description' => 'Upcoming academic, cultural, and social events calendar',
+                            'image_url' => '',
+                            'is_active' => true
                         ],
                         [
-                            'href' => 'committee',
-                            'icon' => 'fas fa-users',
                             'title' => 'Committee',
-                            'description' => 'Meet your dedicated student representatives and leaders'
+                            'slug' => 'committee',
+                            'icon' => 'fa-users',
+                            'link_url' => 'committee.php',
+                            'description' => 'Meet your dedicated student representatives and leaders',
+                            'image_url' => '',
+                            'is_active' => true
                         ]
                     ];
                     
-                    foreach ($quick_links as $index => $link): ?>
-                        <a href="<?= $link['href'] ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-                            <div class="link-icon">
-                                <i class="<?= $link['icon'] ?>"></i>
+                    // Use hero items if available, otherwise use defaults
+                    $link_items = !empty($hero_map) ? $hero_items : $default_items;
+                    
+                    foreach ($link_items as $index => $item):
+                        $slug = $item['slug'];
+                        $image_url = $item['image_url'] ?? '';
+                        $icon = $item['icon'] ?? 'fa-link';
+                        $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
+                    ?>
+                        <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                            <div class="link-card-image">
+                                <?php if (!empty($image_url)): ?>
+                                    <img src="<?= htmlspecialchars($image_url) ?>" alt="<?= htmlspecialchars($item['title']) ?>">
+                                <?php else: ?>
+                                    <div class="link-card-image-placeholder" style="background: <?= $bg_color ?>;">
+                                        <i class="fas <?= htmlspecialchars($icon) ?>"></i>
+                                    </div>
+                                <?php endif; ?>
                             </div>
-                            <h3 class="link-title"><?= htmlspecialchars($link['title']) ?></h3>
-                            <p class="link-description"><?= htmlspecialchars($link['description']) ?></p>
+                            <div class="link-icon">
+                                <i class="fas <?= htmlspecialchars($icon) ?>"></i>
+                            </div>
+                            <h3 class="link-title"><?= htmlspecialchars($item['title']) ?></h3>
+                            <p class="link-description"><?= htmlspecialchars($item['description']) ?></p>
                         </a>
                     <?php endforeach; ?>
                 </div>

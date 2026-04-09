@@ -20,12 +20,12 @@ try {
     error_log("User profile error: " . $e->getMessage());
 }
 
-// Get available templates for Vice Guild Academic
+// Get available templates for Vice Guild Academic - FIXED QUERY
 try {
     $stmt = $pdo->prepare("
         SELECT * FROM report_templates 
-        WHERE role_specific = 'vice_guild_academic' OR role_specific IS NULL
-        AND is_active = TRUE
+        WHERE (role_specific = 'vice_guild_academic' OR role_specific IS NULL)
+        AND is_active = true
         ORDER BY name
     ");
     $stmt->execute();
@@ -76,15 +76,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $template_fields = json_decode($selected_template['fields'], true);
             
             // Collect form data based on template fields
-            foreach ($template_fields['sections'] as $section) {
-                $field_name = strtolower(str_replace(' ', '_', $section['title']));
-                $content_data[$field_name] = $_POST[$field_name] ?? '';
+            if (isset($template_fields['sections']) && is_array($template_fields['sections'])) {
+                foreach ($template_fields['sections'] as $section) {
+                    $field_name = strtolower(preg_replace('/[^a-z0-9]/', '_', $section['title']));
+                    $content_data[$field_name] = $_POST[$field_name] ?? '';
+                }
             }
             
             try {
                 $stmt = $pdo->prepare("
-                    INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP)
+                    INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     RETURNING id
                 ");
                 
@@ -117,8 +119,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             
                             if (move_uploaded_file($file_tmp, $file_path)) {
                                 $stmt = $pdo->prepare("
-                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by)
-                                    VALUES (?, ?, ?, ?, ?, ?)
+                                    INSERT INTO report_media (report_id, file_name, file_path, file_type, file_size, uploaded_by, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                                 ");
                                 $stmt->execute([
                                     $report_id,
@@ -166,24 +168,21 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
             $stmt->execute([$report_id]);
             $media_files = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            // Generate PDF export
-            require_once '../vendor/autoload.php'; // You'll need to install TCPDF or similar
-            
-            // For now, we'll create a simple CSV export as a fallback
+            // Generate CSV export
             header('Content-Type: text/csv');
-            header('Content-Disposition: attachment; filename="report_' . $report_id . '_' . date('Y-m-d') . '.csv"');
+            header('Content-Disposition: attachment; filename="academic_report_' . $report_id . '_' . date('Y-m-d') . '.csv"');
             
             $output = fopen('php://output', 'w');
             
             // CSV header
-            fputcsv($output, ['Report Export - ' . $report['title']]);
-            fputcsv($output, []); // Empty row
+            fputcsv($output, ['Academic Report Export - ' . $report['title']]);
+            fputcsv($output, []);
             fputcsv($output, ['Template:', $report['template_name']]);
             fputcsv($output, ['Author:', $report['author_name']]);
             fputcsv($output, ['Report Type:', $report['report_type']]);
             fputcsv($output, ['Status:', $report['status']]);
             fputcsv($output, ['Submitted:', $report['submitted_at']]);
-            fputcsv($output, []); // Empty row
+            fputcsv($output, []);
             
             // Report content
             $content = json_decode($report['content'], true);
@@ -225,6 +224,28 @@ try {
         'draft_reports' => 0
     ];
 }
+
+// Get upcoming meetings count for sidebar badge
+try {
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as upcoming_meetings 
+        FROM meeting_attendees ma 
+        JOIN meetings m ON ma.meeting_id = m.id 
+        WHERE ma.user_id = ? 
+        AND m.meeting_date >= CURRENT_DATE 
+        AND m.status = 'scheduled'
+        AND ma.attendance_status = 'invited'
+    ");
+    $stmt->execute([$user_id]);
+    $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
+} catch (PDOException $e) {
+    $upcoming_meetings = 0;
+}
+
+// Debug: Check if templates were found
+if (empty($templates)) {
+    error_log("No templates found for role: vice_guild_academic");
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -234,7 +255,7 @@ try {
     <title>Academic Reports - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-                <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/logo.png">
     <style>
         :root {
             --primary-blue: #0056b3;
@@ -260,26 +281,6 @@ try {
             --border-radius: 8px;
             --border-radius-lg: 12px;
             --transition: all 0.2s ease;
-        }
-
-        .dark-mode {
-            --primary-blue: #1e88e5;
-            --secondary-blue: #64b5f6;
-            --accent-blue: #1565c0;
-            --light-blue: #0d1b2a;
-            --white: #1a1a1a;
-            --light-gray: #2d2d2d;
-            --medium-gray: #3d3d3d;
-            --dark-gray: #b0b0b0;
-            --text-dark: #e0e0e0;
-            --success: #4caf50;
-            --warning: #ffb74d;
-            --danger: #f44336;
-            --academic-primary: #4CAF50;
-            --academic-secondary: #66BB6A;
-            --academic-accent: #2E7D32;
-            --academic-light: #1B3E1B;
-            --gradient-primary: linear-gradient(135deg, var(--academic-primary) 0%, var(--academic-accent) 100%);
         }
 
         * {
@@ -483,8 +484,8 @@ try {
             border-right: 1px solid var(--medium-gray);
             padding: 1.5rem 0;
             position: sticky;
-            top: 60px;
-            height: calc(100vh - 60px);
+            top: 80px;
+            height: calc(100vh - 80px);
             overflow-y: auto;
         }
 
@@ -1043,162 +1044,70 @@ try {
             padding: 0.25rem;
         }
 
-        /* =============================================
-           RESPONSIVE — mobile-first breakpoints
-        ============================================= */
-
-        /* Hamburger button (hidden on desktop) */
-        .hamburger {
-            display: none;
-            flex-direction: column;
-            justify-content: center;
-            gap: 5px;
-            width: 44px;
-            height: 44px;
-            background: var(--light-gray);
-            border: none;
-            border-radius: 50%;
-            cursor: pointer;
-            padding: 10px;
-            transition: var(--transition);
-            flex-shrink: 0;
+        /* Table Responsive */
+        .table-responsive {
+            overflow-x: auto;
         }
-        .hamburger span {
-            display: block;
-            height: 2px;
-            background: var(--text-dark);
-            border-radius: 2px;
-            transition: var(--transition);
-        }
-        .hamburger:hover { background: var(--academic-primary); }
-        .hamburger:hover span { background: #fff; }
 
-        /* Sidebar overlay */
-        .sidebar-overlay {
+        /* Modal */
+        #reportModal {
             display: none;
             position: fixed;
-            inset: 0;
-            background: rgba(0,0,0,0.45);
-            z-index: 199;
-        }
-        .sidebar-overlay.active { display: block; }
-
-        /* Scrollable table wrapper */
-        .table-responsive {
+            top: 0;
+            left: 0;
             width: 100%;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
         }
 
-        /* ── 1280 px ── */
-        @media (max-width: 1280px) {
+        #reportModal.show {
+            display: flex;
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .template-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-
-        /* ── 1024 px ── */
-        @media (max-width: 1024px) {
             .dashboard-container { grid-template-columns: 200px 1fr; }
             .brand-text h1 { font-size: 1.05rem; }
         }
 
-        /* ── 768 px ── tablet */
         @media (max-width: 768px) {
-            .hamburger { display: flex; }
-
             .dashboard-container { grid-template-columns: 1fr; }
-
-            /* Sidebar becomes slide-in drawer */
-            .sidebar {
-                position: fixed;
-                top: 80px;
-                left: 0;
-                width: 260px;
-                height: calc(100vh - 80px);
-                z-index: 200;
-                transform: translateX(-100%);
-                transition: transform 0.3s ease;
-                box-shadow: var(--shadow-lg);
-            }
-            .sidebar.open { transform: translateX(0); }
-
-            .main-content { height: auto; overflow-y: visible; }
-
-            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .sidebar { display: none; }
+            .main-content { padding: 1rem; }
+            .stats-grid { grid-template-columns: 1fr 1fr; }
             .template-grid { grid-template-columns: 1fr; }
-
             .nav-container { padding: 0 1rem; }
             .user-details { display: none; }
-
-            /* Tabs scroll horizontally */
-            .tabs {
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                flex-wrap: nowrap;
-                padding-bottom: 2px;
-            }
-            .tab { white-space: nowrap; flex-shrink: 0; }
-
-            /* Modal full-width */
-            #reportModal > div {
-                width: 95% !important;
-                max-width: 95% !important;
-                margin: 1rem;
-            }
-
             .header { height: 70px; }
             .dashboard-container { min-height: calc(100vh - 70px); }
-            .sidebar { top: 70px; height: calc(100vh - 70px); }
+            .tabs { overflow-x: auto; flex-wrap: nowrap; }
+            .tab { white-space: nowrap; flex-shrink: 0; }
         }
 
-        /* ── 480 px ── large phone */
         @media (max-width: 480px) {
-            .header { height: 64px; }
-            .dashboard-container { min-height: calc(100vh - 64px); }
-            .sidebar { top: 64px; height: calc(100vh - 64px); }
-
-            .stats-grid { grid-template-columns: 1fr 1fr; }
-            .main-content { padding: 0.875rem; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .main-content { padding: 0.75rem; }
             .brand-text h1 { font-size: 0.9rem; }
-
             .welcome-section h1 { font-size: 1.15rem; }
-
             .stat-card { padding: 0.75rem; gap: 0.75rem; }
             .stat-number { font-size: 1.25rem; }
-
             .template-card { padding: 1rem; }
-
-            /* Table compact */
             .table th, .table td { padding: 0.6rem 0.5rem; font-size: 0.75rem; }
-
-            /* Report form submit buttons stack */
-            #reportForm .form-group:last-child { display: flex; flex-direction: column; gap: 0.5rem; }
-            #reportForm .form-group:last-child .btn { width: 100%; justify-content: center; }
-
-            /* File upload smaller padding */
-            .file-upload { padding: 1.25rem; }
-        }
-
-        /* ── 360 px ── small phone */
-        @media (max-width: 360px) {
-            .stats-grid { grid-template-columns: 1fr; }
-            .brand-text h1 { display: none; }
         }
     </style>
 </head>
 <body>
-    <!-- Sidebar overlay for mobile -->
-    <div class="sidebar-overlay" id="sidebarOverlay"></div>
-
     <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
-                <button class="hamburger" id="hamburgerBtn" aria-label="Toggle menu">
-                    <span></span><span></span><span></span>
-                </button>
                 <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
                 <div class="brand-text">
                     <h1>Isonga - Academic Reports</h1>
@@ -1206,7 +1115,6 @@ try {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    
                     <a href="messages.php" class="icon-btn" title="Messages">
                         <i class="fas fa-envelope"></i>
                     </a>
@@ -1224,8 +1132,8 @@ try {
                         <div class="user-role">Vice Guild Academic</div>
                     </div>
                 </div>
-                <a href="../auth/logout.php" class="logout-btn">
-                    <i class="fas fa-sign-out-alt"></i>
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                    <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
         </div>
@@ -1243,32 +1151,14 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
-    <a href="academic_meetings.php">
-        <i class="fas fa-calendar-check"></i>
-        <span>Meetings</span>
-        <?php
-        // Count upcoming meetings where user is invited
-        try {
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) as upcoming_meetings 
-                FROM meeting_attendees ma 
-                JOIN meetings m ON ma.meeting_id = m.id 
-                WHERE ma.user_id = ? 
-                AND m.meeting_date >= CURRENT_DATE 
-                AND m.status = 'scheduled'
-                AND ma.attendance_status = 'invited'
-            ");
-            $stmt->execute([$user_id]);
-            $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'];
-        } catch (PDOException $e) {
-            $upcoming_meetings = 0;
-        }
-        ?>
-        <?php if ($upcoming_meetings > 0): ?>
-            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
-        <?php endif; ?>
-    </a>
-</li>
+                    <a href="academic_meetings.php">
+                        <i class="fas fa-calendar-check"></i>
+                        <span>Meetings</span>
+                        <?php if ($upcoming_meetings > 0): ?>
+                            <span class="menu-badge"><?php echo $upcoming_meetings; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="academic_tickets.php">
                         <i class="fas fa-graduation-cap"></i>
@@ -1279,7 +1169,6 @@ try {
                     <a href="academic_reports.php" class="active">
                         <i class="fas fa-file-alt"></i>
                         <span>Academic Reports</span>
-                      
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1289,12 +1178,11 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="committee_budget_requests.php" >
+                    <a href="committee_budget_requests.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Action Funding</span>
                     </a>
                 </li>
-            
                 <li class="menu-item">
                     <a href="innovation_projects.php">
                         <i class="fas fa-lightbulb"></i>
@@ -1324,7 +1212,6 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-           
             <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
@@ -1395,7 +1282,8 @@ try {
                     <div class="card-body">
                         <?php if (empty($templates)): ?>
                             <div class="alert alert-warning">
-                                <i class="fas fa-exclamation-triangle"></i> No templates available at the moment.
+                                <i class="fas fa-exclamation-triangle"></i> No templates available at the moment. 
+                                <?php if (isset($error_message)) echo " " . $error_message; ?>
                             </div>
                         <?php else: ?>
                             <div class="template-grid" id="templateGrid">
@@ -1547,9 +1435,9 @@ try {
     </div>
 
     <!-- Report View Modal -->
-    <div id="reportModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div id="reportModal">
         <div style="background: var(--white); border-radius: var(--border-radius); width: 90%; max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: between; align-items: center;">
+            <div style="padding: 1.5rem; border-bottom: 1px solid var(--medium-gray); display: flex; justify-content: space-between; align-items: center;">
                 <h3 id="modalTitle">Report Details</h3>
                 <button onclick="closeModal()" style="background: none; border: none; font-size: 1.25rem; color: var(--dark-gray); cursor: pointer;">&times;</button>
             </div>
@@ -1560,42 +1448,7 @@ try {
     </div>
 
     <script>
-       
-
-        // ── Hamburger / Sidebar Toggle (mobile) ───────────────────
-        const hamburgerBtn   = document.getElementById('hamburgerBtn');
-        const sidebar        = document.querySelector('.sidebar');
-        const sidebarOverlay = document.getElementById('sidebarOverlay');
-
-        function openSidebar() {
-            sidebar.classList.add('open');
-            sidebarOverlay.classList.add('active');
-            document.body.style.overflow = 'hidden';
-        }
-        function closeSidebar() {
-            sidebar.classList.remove('open');
-            sidebarOverlay.classList.remove('active');
-            document.body.style.overflow = '';
-        }
-
-        if (hamburgerBtn) hamburgerBtn.addEventListener('click', () =>
-            sidebar.classList.contains('open') ? closeSidebar() : openSidebar()
-        );
-        if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
-
-        document.querySelectorAll('.sidebar .menu-item a').forEach(link =>
-            link.addEventListener('click', () => { if (window.innerWidth <= 768) closeSidebar(); })
-        );
-
-        window.addEventListener('resize', () => {
-            if (window.innerWidth > 768) {
-                sidebar.classList.remove('open');
-                sidebarOverlay.classList.remove('active');
-                document.body.style.overflow = '';
-            }
-        });
-
-        // ── Tab functionality ─────────────────────────────────────
+        // Tab functionality
         document.addEventListener('DOMContentLoaded', function() {
             const tabs = document.querySelectorAll('.tab');
             const tabContents = document.querySelectorAll('.tab-content');
@@ -1652,21 +1505,21 @@ try {
                 
                 if (data.fields && data.fields.sections) {
                     data.fields.sections.forEach(section => {
-                        const fieldName = section.title.toLowerCase().replace(/ /g, '_');
+                        const fieldName = section.title.toLowerCase().replace(/[^a-z0-9]/g, '_');
                         const fieldId = `field_${fieldName}`;
                         
                         const fieldGroup = document.createElement('div');
                         fieldGroup.className = 'form-group';
                         
                         let fieldHtml = `
-                            <label class="form-label" for="${fieldId}">${section.title} ${section.required ? '*' : ''}</label>
+                            <label class="form-label" for="${fieldId}">${escapeHtml(section.title)} ${section.required ? '*' : ''}</label>
                         `;
                         
                         if (section.type === 'textarea' || section.type === 'richtext') {
                             fieldHtml += `
                                 <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
                                           ${section.required ? 'required' : ''} 
-                                          placeholder="${section.description || ''}"
+                                          placeholder="${escapeHtml(section.description || '')}"
                                           rows="6"></textarea>
                             `;
                         } else if (section.type === 'date') {
@@ -1677,18 +1530,18 @@ try {
                         } else if (section.type === 'number') {
                             fieldHtml += `
                                 <input type="number" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}>
+                                       ${section.required ? 'required' : ''} step="0.01">
                             `;
                         } else {
                             fieldHtml += `
                                 <input type="text" class="form-control" id="${fieldId}" name="${fieldName}" 
                                        ${section.required ? 'required' : ''}
-                                       placeholder="${section.description || ''}">
+                                       placeholder="${escapeHtml(section.description || '')}">
                             `;
                         }
                         
                         if (section.description) {
-                            fieldHtml += `<div class="form-text">${section.description}</div>`;
+                            fieldHtml += `<div class="form-text">${escapeHtml(section.description)}</div>`;
                         }
                         
                         fieldGroup.innerHTML = fieldHtml;
@@ -1705,6 +1558,14 @@ try {
             }
         }
 
+        // Escape HTML helper
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // File handling
         function handleFileSelect(input) {
             const fileList = document.getElementById('fileList');
@@ -1714,7 +1575,7 @@ try {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
                 fileItem.innerHTML = `
-                    <span class="file-name">${file.name}</span>
+                    <span class="file-name">${escapeHtml(file.name)}</span>
                     <button type="button" class="file-remove" onclick="removeFile(this)">
                         <i class="fas fa-times"></i>
                     </button>
@@ -1749,11 +1610,11 @@ try {
                 let content = `
                     <div class="form-group">
                         <label class="form-label">Template</label>
-                        <div>${report.template_name || 'Custom'}</div>
+                        <div>${escapeHtml(report.template_name || 'Custom')}</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Report Type</label>
-                        <div>${report.report_type}</div>
+                        <div>${escapeHtml(report.report_type)}</div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Status</label>
@@ -1766,25 +1627,38 @@ try {
                 `;
                 
                 if (report.content) {
-                    const reportContent = JSON.parse(report.content);
-                    Object.keys(reportContent).forEach(key => {
-                        if (reportContent[key]) {
-                            const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                            content += `
-                                <div class="form-group">
-                                    <label class="form-label">${label}</label>
-                                    <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${reportContent[key]}</div>
-                                </div>
-                            `;
-                        }
-                    });
+                    let reportContent;
+                    if (typeof report.content === 'string') {
+                        reportContent = JSON.parse(report.content);
+                    } else {
+                        reportContent = report.content;
+                    }
+                    
+                    if (reportContent && typeof reportContent === 'object') {
+                        Object.keys(reportContent).forEach(key => {
+                            if (reportContent[key]) {
+                                const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                content += `
+                                    <div class="form-group">
+                                        <label class="form-label">${escapeHtml(label)}</label>
+                                        <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${escapeHtml(reportContent[key])}</div>
+                                    </div>
+                                `;
+                            }
+                        });
+                    }
                 }
                 
                 document.getElementById('modalContent').innerHTML = content;
                 document.getElementById('reportModal').style.display = 'flex';
             } catch (error) {
                 console.error('Error loading report:', error);
-                alert('Error loading report details');
+                document.getElementById('modalContent').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle"></i> Error loading report details.
+                    </div>
+                `;
+                document.getElementById('reportModal').style.display = 'flex';
             }
         }
 
@@ -1795,6 +1669,13 @@ try {
         // Close modal when clicking outside
         document.getElementById('reportModal').addEventListener('click', function(e) {
             if (e.target === this) {
+                closeModal();
+            }
+        });
+
+        // Escape key to close modal
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && document.getElementById('reportModal').style.display === 'flex') {
                 closeModal();
             }
         });

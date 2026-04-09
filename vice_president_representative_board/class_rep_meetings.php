@@ -48,11 +48,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception("End time must be after start time.");
             }
 
-            // Insert meeting
+            // Insert meeting (PostgreSQL uses CURRENT_TIMESTAMP)
             $stmt = $pdo->prepare("
                 INSERT INTO rep_meetings 
-                (title, description, meeting_type, organizer_id, location, meeting_date, start_time, end_time, agenda, required_attendees, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (title, description, meeting_type, organizer_id, location, meeting_date, start_time, end_time, agenda, required_attendees, created_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $stmt->execute([
                 $title, $description, $meeting_type, $user_id, $location, $meeting_date, 
@@ -63,14 +63,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Add agenda items if provided
             if (isset($_POST['agenda_items']) && is_array($_POST['agenda_items'])) {
-                foreach ($_POST['agenda_items'] as $agenda_item) {
+                foreach ($_POST['agenda_items'] as $index => $agenda_item) {
                     if (!empty(trim($agenda_item))) {
                         $stmt = $pdo->prepare("
                             INSERT INTO rep_meeting_agenda_items 
-                            (meeting_id, title, order_index) 
-                            VALUES (?, ?, ?)
+                            (meeting_id, title, order_index, created_at) 
+                            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                         ");
-                        $stmt->execute([$meeting_id, trim($agenda_item), 0]);
+                        $stmt->execute([$meeting_id, trim($agenda_item), $index]);
                     }
                 }
             }
@@ -82,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $meeting_id = $_POST['meeting_id'];
             $status = $_POST['status'];
 
-            $stmt = $pdo->prepare("UPDATE rep_meetings SET status = ? WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE rep_meetings SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute([$status, $meeting_id]);
 
             $message = "Meeting status updated successfully!";
@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Update existing
                     $stmt = $pdo->prepare("
                         UPDATE rep_meeting_attendance 
-                        SET attendance_status = ?, recorded_by = ?, updated_at = NOW() 
+                        SET attendance_status = ?, recorded_by = ?, updated_at = CURRENT_TIMESTAMP 
                         WHERE meeting_id = ? AND user_id = ?
                     ");
                     $stmt->execute([$status, $user_id, $meeting_id, $user_id_att]);
@@ -110,8 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Insert new
                     $stmt = $pdo->prepare("
                         INSERT INTO rep_meeting_attendance 
-                        (meeting_id, user_id, attendance_status, recorded_by) 
-                        VALUES (?, ?, ?, ?)
+                        (meeting_id, user_id, attendance_status, recorded_by, created_at, updated_at) 
+                        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ");
                     $stmt->execute([$meeting_id, $user_id_att, $status, $user_id]);
                 }
@@ -152,7 +152,7 @@ if ($action === 'delete' && isset($_GET['id'])) {
 
 // Get all class representative meetings
 try {
-    // Main meetings query
+    // Main meetings query (PostgreSQL requires GROUP BY with all non-aggregated columns)
     $stmt = $pdo->query("
         SELECT 
             rm.*,
@@ -162,27 +162,27 @@ try {
         FROM rep_meetings rm
         JOIN users u ON rm.organizer_id = u.id
         LEFT JOIN rep_meeting_attendance rma ON rm.id = rma.meeting_id
-        GROUP BY rm.id
+        GROUP BY rm.id, u.full_name
         ORDER BY rm.meeting_date DESC, rm.start_time DESC
     ");
     $meetings = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Get class representatives for attendee selection
+    // Get class representatives for attendee selection (PostgreSQL uses true for boolean)
     $stmt = $pdo->query("
         SELECT u.id, u.full_name, u.reg_number, d.name as department_name, p.name as program_name
         FROM users u
         LEFT JOIN departments d ON u.department_id = d.id
         LEFT JOIN programs p ON u.program_id = p.id
-        WHERE u.is_class_rep = 1 AND u.status = 'active'
+        WHERE u.is_class_rep = true AND u.status = 'active'
         ORDER BY u.full_name
     ");
     $class_reps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Statistics
+    // Statistics (PostgreSQL uses CURRENT_DATE instead of CURDATE())
     $stmt = $pdo->query("SELECT COUNT(*) as total_meetings FROM rep_meetings");
     $total_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['total_meetings'] ?? 0;
 
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
     $upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
 
     $stmt = $pdo->query("SELECT COUNT(*) as completed_meetings FROM rep_meetings WHERE status = 'completed'");
@@ -190,6 +190,9 @@ try {
 
     // Get specific meeting details for edit/view
     $edit_meeting = null;
+    $agenda_items = [];
+    $attendance = [];
+    
     if (isset($_GET['id']) && ($action === 'edit' || $action === 'view' || $action === 'attendance')) {
         $meeting_id = $_GET['id'];
         $stmt = $pdo->prepare("
@@ -230,22 +233,36 @@ try {
 
 // Get dashboard statistics for sidebar
 try {
-    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = 1 AND status = 'active'");
+    $stmt = $pdo->query("SELECT COUNT(*) as total_reps FROM users WHERE is_class_rep = true AND status = 'active'");
     $sidebar_reps_count = $stmt->fetch(PDO::FETCH_ASSOC)['total_reps'] ?? 0;
     
     $stmt = $pdo->query("SELECT COUNT(*) as pending_reports FROM class_rep_reports WHERE status = 'submitted'");
     $pending_reports = $stmt->fetch(PDO::FETCH_ASSOC)['pending_reports'] ?? 0;
     
-    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURDATE() AND status = 'scheduled'");
+    // PostgreSQL uses CURRENT_DATE instead of CURDATE()
+    $stmt = $pdo->query("SELECT COUNT(*) as upcoming_meetings FROM rep_meetings WHERE meeting_date >= CURRENT_DATE AND status = 'scheduled'");
     $sidebar_upcoming_meetings = $stmt->fetch(PDO::FETCH_ASSOC)['upcoming_meetings'] ?? 0;
     
-    $stmt = $pdo->prepare("SELECT COUNT(*) as unread_messages FROM conversation_messages cm JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id WHERE cp.user_id = ? AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)");
+    // Fix conversation messages query for PostgreSQL
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as unread_messages 
+        FROM conversation_messages cm 
+        JOIN conversation_participants cp ON cm.conversation_id = cp.conversation_id 
+        WHERE cp.user_id = ? 
+        AND (cp.last_read_message_id IS NULL OR cm.id > cp.last_read_message_id)
+    ");
     $stmt->execute([$user_id]);
     $unread_messages = $stmt->fetch(PDO::FETCH_ASSOC)['unread_messages'] ?? 0;
     
 } catch (PDOException $e) {
     $sidebar_reps_count = $pending_reports = $sidebar_upcoming_meetings = $unread_messages = 0;
+    error_log("Sidebar stats error: " . $e->getMessage());
 }
+
+// Ensure variables are defined
+$total_reps = $sidebar_reps_count;
+$pending_reports = $pending_reports ?? 0;
+$upcoming_meetings = $upcoming_meetings ?? 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -255,7 +272,7 @@ try {
     <title>Class Representative Meetings - Isonga RPSU</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="icon" href="../assets/images/logo.png">
+    <link rel="icon" href="../assets/images/rp_logo.png">
     <style>
         :root {
             --primary-blue: #007bff;
@@ -883,7 +900,7 @@ try {
 
         /* Attendee List */
         .attendee-list {
-            max-height: 200px;
+            max-height: 300px;
             overflow-y: auto;
             border: 1px solid var(--medium-gray);
             border-radius: var(--border-radius);
@@ -904,11 +921,19 @@ try {
 
         .attendee-item input[type="checkbox"] {
             margin-right: 0.5rem;
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
         }
 
         .attendee-item label {
             flex: 1;
             cursor: pointer;
+        }
+
+        /* Table Responsive */
+        .table-responsive {
+            overflow-x: auto;
         }
 
         /* Overlay for mobile */
@@ -1040,7 +1065,7 @@ try {
                     <i class="fas fa-bars"></i>
                 </button>
                 <div class="logos">
-                    <img src="../assets/images/logo.png" alt="RP Musanze College" class="logo">
+                    <img src="../assets/images/rp_logo.png" alt="RP Musanze College" class="logo">
                 </div>
                 <div class="brand-text">
                     <h1>Isonga - Class Representative Meetings</h1>
@@ -1081,7 +1106,7 @@ try {
         <nav class="sidebar" id="sidebar">
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php" >
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1090,7 +1115,6 @@ try {
                     <a href="class_reps.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Management</span>
-
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1107,17 +1131,14 @@ try {
                             <span class="menu-badge"><?php echo $pending_reports; ?></span>
                         <?php endif; ?>
                     </a>
-                </li>
+                </li>     
+                           
                 <li class="menu-item">
-                    <a href="class_rep_performance.php">
-                        <i class="fas fa-chart-line"></i>
-                        <span>Class Rep Performance</span>
+                    <a href="committee_budget_requests.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Action Funding</span>
                     </a>
                 </li>
-                
-                <li class="menu-divider"></li>
-                <li class="menu-section">Other Features</li>
-                
                 <li class="menu-item">
                     <a href="reports.php">
                         <i class="fas fa-chart-bar"></i>
@@ -1139,6 +1160,7 @@ try {
                         <span>Messages</span>
                     </a>
                 </li>
+               
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
@@ -1150,7 +1172,7 @@ try {
 
         <!-- Main Content -->
         <main class="main-content">
-                        <!-- Message Alert -->
+            <!-- Message Alert -->
             <?php if ($message): ?>
                 <div class="alert alert-<?php echo $message_type === 'success' ? 'success' : 'error'; ?>">
                     <i class="fas fa-<?php echo $message_type === 'success' ? 'check-circle' : 'exclamation-triangle'; ?>"></i> 
@@ -1219,23 +1241,23 @@ try {
                                         <div class="form-group">
                                             <label class="form-label" for="title">Meeting Title *</label>
                                             <input type="text" class="form-control" id="title" name="title" 
-                                                   value="<?php echo $edit_meeting['title'] ?? ''; ?>" required>
+                                                   value="<?php echo htmlspecialchars($edit_meeting['title'] ?? ''); ?>" required>
                                         </div>
                                         <div class="form-group">
                                             <label class="form-label" for="meeting_type">Meeting Type *</label>
                                             <select class="form-control" id="meeting_type" name="meeting_type" required>
-                                                <option value="general" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'general' ? 'selected' : ''; ?>>General</option>
-                                                <option value="emergency" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'emergency' ? 'selected' : ''; ?>>Emergency</option>
-                                                <option value="planning" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'planning' ? 'selected' : ''; ?>>Planning</option>
-                                                <option value="review" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'review' ? 'selected' : ''; ?>>Review</option>
-                                                <option value="training" <?php echo ($edit_meeting['meeting_type'] ?? '') === 'training' ? 'selected' : ''; ?>>Training</option>
+                                                <option value="general" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'general') ? 'selected' : ''; ?>>General</option>
+                                                <option value="emergency" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'emergency') ? 'selected' : ''; ?>>Emergency</option>
+                                                <option value="planning" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'planning') ? 'selected' : ''; ?>>Planning</option>
+                                                <option value="review" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'review') ? 'selected' : ''; ?>>Review</option>
+                                                <option value="training" <?php echo (($edit_meeting['meeting_type'] ?? '') === 'training') ? 'selected' : ''; ?>>Training</option>
                                             </select>
                                         </div>
                                     </div>
 
                                     <div class="form-group">
                                         <label class="form-label" for="description">Description</label>
-                                        <textarea class="form-control" id="description" name="description" rows="3"><?php echo $edit_meeting['description'] ?? ''; ?></textarea>
+                                        <textarea class="form-control" id="description" name="description" rows="3"><?php echo htmlspecialchars($edit_meeting['description'] ?? ''); ?></textarea>
                                     </div>
 
                                     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
@@ -1259,12 +1281,12 @@ try {
                                     <div class="form-group">
                                         <label class="form-label" for="location">Location *</label>
                                         <input type="text" class="form-control" id="location" name="location" 
-                                               value="<?php echo $edit_meeting['location'] ?? ''; ?>" required>
+                                               value="<?php echo htmlspecialchars($edit_meeting['location'] ?? ''); ?>" required>
                                     </div>
 
                                     <div class="form-group">
                                         <label class="form-label" for="agenda">Agenda</label>
-                                        <textarea class="form-control" id="agenda" name="agenda" rows="3"><?php echo $edit_meeting['agenda'] ?? ''; ?></textarea>
+                                        <textarea class="form-control" id="agenda" name="agenda" rows="3"><?php echo htmlspecialchars($edit_meeting['agenda'] ?? ''); ?></textarea>
                                     </div>
 
                                     <div class="form-group">
@@ -1281,7 +1303,7 @@ try {
                                                                    echo 'checked';
                                                                }
                                                            } else {
-                                                               echo 'checked'; // Default: all reps are required
+                                                               echo 'checked';
                                                            }
                                                            ?>>
                                                     <label for="attendee_<?php echo $rep['id']; ?>">
@@ -1337,7 +1359,7 @@ try {
                                 <form method="POST" action="">
                                     <input type="hidden" name="meeting_id" value="<?php echo $edit_meeting['id']; ?>">
                                     
-                                    <div style="overflow-x: auto;">
+                                    <div class="table-responsive">
                                         <table class="table">
                                             <thead>
                                                 <tr>
@@ -1390,6 +1412,58 @@ try {
                             </div>
                         </div>
 
+                    <?php elseif ($action === 'view' && $edit_meeting): ?>
+                        <!-- View Meeting Details -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Meeting Details - <?php echo htmlspecialchars($edit_meeting['title']); ?></h3>
+                                <div class="card-header-actions">
+                                    <a href="class_rep_meetings.php" class="card-header-btn" title="Back to Meetings">
+                                        <i class="fas fa-arrow-left"></i>
+                                    </a>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Description:</strong>
+                                    <p><?php echo nl2br(htmlspecialchars($edit_meeting['description'] ?? 'No description')); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Date & Time:</strong>
+                                    <p><?php echo date('F j, Y', strtotime($edit_meeting['meeting_date'])); ?> | 
+                                       <?php echo date('g:i A', strtotime($edit_meeting['start_time'])); ?> - 
+                                       <?php echo date('g:i A', strtotime($edit_meeting['end_time'])); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Location:</strong>
+                                    <p><?php echo htmlspecialchars($edit_meeting['location']); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Organizer:</strong>
+                                    <p><?php echo htmlspecialchars($edit_meeting['organizer_name']); ?></p>
+                                </div>
+                                <div style="margin-bottom: 1rem;">
+                                    <strong>Status:</strong>
+                                    <p><span class="status-badge status-<?php echo $edit_meeting['status']; ?>"><?php echo ucfirst($edit_meeting['status']); ?></span></p>
+                                </div>
+                                <?php if (!empty($agenda_items)): ?>
+                                    <div style="margin-bottom: 1rem;">
+                                        <strong>Agenda Items:</strong>
+                                        <ul style="margin-top: 0.5rem; padding-left: 1.5rem;">
+                                            <?php foreach ($agenda_items as $item): ?>
+                                                <li><?php echo htmlspecialchars($item['title']); ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    </div>
+                                <?php endif; ?>
+                                <div style="margin-top: 1rem;">
+                                    <a href="?action=attendance&id=<?php echo $edit_meeting['id']; ?>" class="btn btn-primary">
+                                        <i class="fas fa-clipboard-check"></i> Record Attendance
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
                     <?php else: ?>
                         <!-- Meetings List -->
                         <div class="card">
@@ -1415,7 +1489,7 @@ try {
                                         </a>
                                     </div>
                                 <?php else: ?>
-                                    <div style="overflow-x: auto;">
+                                    <div class="table-responsive">
                                         <table class="table">
                                             <thead>
                                                 <tr>
@@ -1435,7 +1509,7 @@ try {
                                                             <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
                                                             <?php if ($meeting['description']): ?>
                                                                 <br>
-                                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars($meeting['description']); ?></small>
+                                                                <small style="color: var(--dark-gray);"><?php echo htmlspecialchars(substr($meeting['description'], 0, 50)) . (strlen($meeting['description']) > 50 ? '...' : ''); ?></small>
                                                             <?php endif; ?>
                                                         </td>
                                                         <td>
@@ -1449,7 +1523,7 @@ try {
                                                         <td><?php echo htmlspecialchars($meeting['location']); ?></td>
                                                         <td>
                                                             <span class="status-badge" style="text-transform: capitalize;">
-                                                                <?php echo $meeting['meeting_type']; ?>
+                                                                <?php echo ucfirst($meeting['meeting_type']); ?>
                                                             </span>
                                                         </td>
                                                         <td>
@@ -1466,10 +1540,10 @@ try {
                                                         </td>
                                                         <td>
                                                             <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
-                                                                <a href="?action=view&id=<?php echo $meeting['id']; ?>" class="btn btn-sm" title="View">
+                                                                <a href="?action=view&id=<?php echo $meeting['id']; ?>" class="btn btn-sm btn-primary" title="View">
                                                                     <i class="fas fa-eye"></i>
                                                                 </a>
-                                                                <a href="?action=attendance&id=<?php echo $meeting['id']; ?>" class="btn btn-sm" title="Attendance">
+                                                                <a href="?action=attendance&id=<?php echo $meeting['id']; ?>" class="btn btn-sm btn-info" title="Attendance">
                                                                     <i class="fas fa-clipboard-check"></i>
                                                                 </a>
                                                                 <?php if ($meeting['status'] === 'scheduled'): ?>
@@ -1526,7 +1600,45 @@ try {
                         </div>
                     </div>
 
-                    
+                    <!-- Upcoming Meetings -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Upcoming Meetings</h3>
+                        </div>
+                        <div class="card-body">
+                            <?php 
+                            $upcoming = array_filter($meetings, function($meeting) {
+                                return $meeting['status'] === 'scheduled' && strtotime($meeting['meeting_date']) >= strtotime(date('Y-m-d'));
+                            });
+                            $upcoming = array_slice($upcoming, 0, 5);
+                            ?>
+                            
+                            <?php if (empty($upcoming)): ?>
+                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
+                                    <p>No upcoming meetings</p>
+                                </div>
+                            <?php else: ?>
+                                <?php foreach ($upcoming as $meeting): ?>
+                                    <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--medium-gray);">
+                                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
+                                            <strong style="font-size: 0.8rem;"><?php echo htmlspecialchars($meeting['title']); ?></strong>
+                                            <span class="status-badge status-scheduled" style="font-size: 0.6rem;">
+                                                <?php echo ucfirst($meeting['status']); ?>
+                                            </span>
+                                        </div>
+                                        <div style="font-size: 0.7rem; color: var(--dark-gray);">
+                                            <?php echo date('M j, Y', strtotime($meeting['meeting_date'])); ?>
+                                            <br>
+                                            <?php echo date('g:i A', strtotime($meeting['start_time'])); ?> - 
+                                            <?php echo date('g:i A', strtotime($meeting['end_time'])); ?>
+                                            <br>
+                                            <small><i class="fas fa-map-marker-alt"></i> <?php echo htmlspecialchars($meeting['location']); ?></small>
+                                        </div>
+                                    </div>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>
@@ -1585,17 +1697,17 @@ try {
             const meetingForm = document.querySelector('form');
             if (meetingForm) {
                 meetingForm.addEventListener('submit', function(e) {
-                    const meetingDate = document.getElementById('meeting_date').value;
-                    const startTime = document.getElementById('start_time').value;
-                    const endTime = document.getElementById('end_time').value;
+                    const meetingDate = document.getElementById('meeting_date');
+                    const startTime = document.getElementById('start_time');
+                    const endTime = document.getElementById('end_time');
                     
-                    if (meetingDate && new Date(meetingDate) < new Date().setHours(0,0,0,0)) {
+                    if (meetingDate && meetingDate.value && new Date(meetingDate.value) < new Date().setHours(0,0,0,0)) {
                         e.preventDefault();
                         alert('Meeting date cannot be in the past.');
                         return false;
                     }
                     
-                    if (startTime && endTime && startTime >= endTime) {
+                    if (startTime && endTime && startTime.value && endTime.value && startTime.value >= endTime.value) {
                         e.preventDefault();
                         alert('End time must be after start time.');
                         return false;

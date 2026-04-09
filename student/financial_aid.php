@@ -9,13 +9,13 @@ require_once '../config/email_config_base.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
 // Redirect class representatives to their dedicated dashboard
 if ($_SESSION['is_class_rep'] ?? 0) {
-    header('Location: class_rep_dashboard');
+    header('Location: class_rep_dashboard.php');
     exit();
 }
 
@@ -35,7 +35,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: financial_aid');
+    header('Location: financial_aid.php');
     exit();
 }
 
@@ -1368,7 +1368,7 @@ function safe_display($data) {
                         <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
                     </button>
                 </form>
-                <a href="messages" class="icon-btn" title="Messages" style="position: relative;">
+                <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                     <i class="fas fa-envelope"></i>
                     <?php if ($unread_messages > 0): ?>
                         <span class="notification-badge"><?php echo $unread_messages; ?></span>
@@ -1383,7 +1383,7 @@ function safe_display($data) {
                         <div class="user-role">Student</div>
                     </div>
                 </div>
-                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
@@ -1399,19 +1399,19 @@ function safe_display($data) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard">
+                    <a href="dashboard.php">
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets">
+                    <a href="tickets.php">
                         <i class="fas fa-ticket-alt"></i>
                         <span>My Tickets</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="financial_aid" class="active">
+                    <a href="financial_aid.php" class="active">
                         <i class="fas fa-hand-holding-usd"></i>
                         <span>Financial Aid</span>
                         <?php if (($financial_stats['submitted'] ?? 0) > 0): ?>
@@ -1420,31 +1420,31 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="announcements">
+                    <a href="announcements.php">
                         <i class="fas fa-bullhorn"></i>
                         <span>Announcements</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="events">
+                    <a href="events.php">
                         <i class="fas fa-calendar-alt"></i>
                         <span>Events</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="news">
+                    <a href="news.php">
                         <i class="fas fa-newspaper"></i>
                         <span>News</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="gallery">
+                    <a href="gallery.php">
                         <i class="fas fa-images"></i>
                         <span>Gallery</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="messages">
+                    <a href="messages.php">
                         <i class="fas fa-comments"></i>
                         <span>Messages</span>
                         <?php if ($unread_messages > 0): ?>
@@ -1453,14 +1453,14 @@ function safe_display($data) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="profile">
+                    <a href="profile.php">
                         <i class="fas fa-user-cog"></i>
                         <span>Profile & Settings</span>
                     </a>
                 </li>
                 <?php if ($is_class_rep): ?>
                 <li class="menu-item">
-                    <a href="class_rep_dashboard">
+                    <a href="class_rep_dashboard.php">
                         <i class="fas fa-users"></i>
                         <span>Class Rep Dashboard</span>
                     </a>
@@ -1508,7 +1508,7 @@ function safe_display($data) {
             <?php if (empty($student_email)): ?>
                 <div class="alert alert-info">
                     <i class="fas fa-envelope"></i>
-                    <div>Please <a href="profile" style="color: var(--primary-blue);">update your email address</a> to receive notifications about your financial aid requests.</div>
+                    <div>Please <a href="profile.php" style="color: var(--primary-blue);">update your email address</a> to receive notifications about your financial aid requests.</div>
                 </div>
             <?php endif; ?>
 
@@ -1576,9 +1576,9 @@ function safe_display($data) {
                                             <?php endif; ?>
                                         </div>
                                         <div class="request-actions">
-                                            <a href="view_financial_aid?id=<?php echo $request['id']; ?>" class="btn btn-secondary btn-sm"><i class="fas fa-eye"></i> View Details</a>
+                                            <a href="view_financial_aid.php?id=<?php echo $request['id']; ?>" class="btn btn-secondary btn-sm"><i class="fas fa-eye"></i> View Details</a>
                                             <?php if ($request['status'] === 'approved'): ?>
-                                                <a href="generate_approval_letter?id=<?php echo $request['id']; ?>" class="btn btn-success btn-sm"><i class="fas fa-download"></i> Approval Letter</a>
+                                                <a href="generate_approval_letter.php?id=<?php echo $request['id']; ?>" class="btn btn-success btn-sm"><i class="fas fa-download"></i> Approval Letter</a>
                                             <?php endif; ?>
                                         </div>
                                     </div>

@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student and is class rep
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? 0)) {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
@@ -15,16 +15,6 @@ $department = $_SESSION['department'];
 $program = $_SESSION['program'];
 $academic_year = $_SESSION['academic_year'];
 
-// Get theme preference
-$theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
-
-// Handle theme toggle
-if (isset($_POST['toggle_theme'])) {
-    $new_theme = $theme === 'light' ? 'dark' : 'light';
-    setcookie('theme', $new_theme, time() + (86400 * 30), "/");
-    header('Location: class_rep_financial_aid');
-    exit();
-}
 
 // Handle financial aid request submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'])) {
@@ -144,7 +134,7 @@ function getUrgencyBadge($urgency) {
 ?>
 
 <!DOCTYPE html>
-<html lang="en" data-theme="<?php echo $theme; ?>">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -159,87 +149,90 @@ function getUrgencyBadge($urgency) {
             --shadow: 0 4px 12px rgba(0,0,0,0.1); --radius: 8px; 
             --transition: all 0.3s ease;
         }
-        [data-theme="dark"] {
-            --white: #1a1a1a; --light: #2d2d2d; --gray: #3d3d3d;
-            --dark-gray: #a0a0a0; --text: #e9ecef;
-            --shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); }
-        .container { display: grid; grid-template-columns: 250px 1fr; min-height: 100vh; }
+        body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--light); color: var(--text); transition: var(--transition); font-size: 0.875rem; }
+        .container { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
         
         /* Sidebar */
-        .sidebar { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 1.5rem; position: fixed; width: 250px; height: 100vh; z-index: 1000; }
+        .sidebar { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 1.5rem; position: fixed; width: 260px; height: 100vh; z-index: 1000; overflow-y: auto; }
         .brand { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.2); }
-        .brand-logo { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; }
+        .brand-logo { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
         .brand-text h1 { font-size: 1.2rem; font-weight: 700; }
         .nav-links { list-style: none; }
-        .nav-links li { margin-bottom: 0.5rem; }
-        .nav-links a { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem 1rem; color: white; text-decoration: none; border-radius: var(--radius); transition: var(--transition); }
+        .nav-links li { margin-bottom: 0.25rem; }
+        .nav-links a { display: flex; align-items: center; gap: 0.8rem; padding: 0.75rem 1rem; color: white; text-decoration: none; border-radius: var(--radius); transition: var(--transition); font-size: 0.85rem; }
         .nav-links a:hover, .nav-links a.active { background: rgba(255,255,255,0.15); }
+        .nav-links i { width: 20px; text-align: center; }
         
         /* Main Content */
-        .main { grid-column: 2; padding: 2rem; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; background: var(--white); padding: 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
-        .welcome h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .main { grid-column: 2; padding: 1.5rem; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; background: var(--white); padding: 1.25rem 1.5rem; border-radius: var(--radius); box-shadow: var(--shadow); }
+        .welcome h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
+        .welcome p { font-size: 0.85rem; color: var(--dark-gray); }
         .actions { display: flex; gap: 1rem; }
-        .btn { padding: 0.8rem 1.5rem; border: none; border-radius: 50px; cursor: pointer; transition: var(--transition); text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+        .btn { padding: 0.75rem 1.5rem; border: none; border-radius: 50px; cursor: pointer; transition: var(--transition); text-decoration: none; display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.85rem; }
         .btn-primary { background: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%); color: white; }
         .btn-success { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; }
         .btn-secondary { background: var(--gray); color: var(--text); }
-        .icon-btn { background: var(--white); border: 2px solid var(--gray); border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .icon-btn { background: var(--white); border: 2px solid var(--gray); border-radius: 50%; width: 45px; height: 45px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: var(--transition); }
+        .icon-btn:hover { background: var(--gray); }
         
         /* Stats Grid */
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
-        .stat-card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; text-align: center; box-shadow: var(--shadow); transition: var(--transition); }
-        .stat-card:hover { transform: translateY(-3px); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .stat-card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; text-align: center; box-shadow: var(--shadow); transition: var(--transition); }
+        .stat-card:hover { transform: translateY(-2px); }
         .stat-icon { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.2rem; }
-        .stat-number { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.5rem; }
-        .stat-label { font-size: 0.9rem; color: var(--dark-gray); }
+        .stat-number { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.25rem; }
+        .stat-label { font-size: 0.8rem; color: var(--dark-gray); }
         
         /* Dashboard Grid */
-        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
-        .card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; box-shadow: var(--shadow); }
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-        .card-title { font-size: 1.2rem; font-weight: 600; }
-        .link { color: var(--secondary); text-decoration: none; font-size: 0.9rem; }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+        .card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; box-shadow: var(--shadow); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+        .card-title { font-size: 1rem; font-weight: 600; }
+        .link { color: var(--secondary); text-decoration: none; font-size: 0.8rem; }
+        .link:hover { text-decoration: underline; }
         
         /* Class Rep Badge */
-        .class-rep-badge { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 1rem; }
+        .class-rep-badge { background: linear-gradient(135deg, var(--success) 0%, #20c997 100%); color: white; padding: 0.3rem 1rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; margin-left: 0.75rem; }
         
         /* Request Cards */
-        .request-card { background: var(--white); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1rem; box-shadow: var(--shadow); }
+        .request-card { background: var(--white); border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1rem; box-shadow: var(--shadow); }
         .request-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-        .request-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.5rem; }
-        .request-meta { display: flex; gap: 1rem; font-size: 0.9rem; color: var(--dark-gray); }
+        .request-title { font-size: 1rem; font-weight: 600; margin-bottom: 0.5rem; }
+        .request-meta { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--dark-gray); }
         .request-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
         .amount { font-weight: 700; font-size: 1.1rem; }
         .amount-requested { color: var(--warning); }
         .amount-approved { color: var(--success); }
         
         /* Status badges */
-        .status { padding: 0.3rem 0.8rem; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .status { padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; }
         .status-success { background: rgba(40,167,69,0.1); color: var(--success); }
         .status-error { background: rgba(220,53,69,0.1); color: var(--danger); }
+        .status-open { background: rgba(40,167,69,0.1); color: var(--success); }
+        .status-progress { background: rgba(255,193,7,0.1); color: var(--warning); }
+        .status-resolved { background: rgba(108,117,125,0.1); color: var(--dark-gray); }
         
         /* Modal */
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; align-items: center; justify-content: center; }
         .modal-content { background: var(--white); border-radius: var(--radius); width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
-        .modal-header { padding: 1.5rem; border-bottom: 1px solid var(--gray); display: flex; justify-content: space-between; align-items: center; }
-        .modal-body { padding: 1.5rem; }
+        .modal-header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--gray); display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h3 { font-size: 1.1rem; font-weight: 600; }
+        .modal-body { padding: 1.25rem; }
         .form-group { margin-bottom: 1rem; }
-        .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 600; }
-        .form-control { width: 100%; padding: 0.8rem; border: 2px solid var(--gray); border-radius: var(--radius); background: var(--white); color: var(--text); }
+        .form-group label { display: block; margin-bottom: 0.5rem; font-weight: 600; font-size: 0.85rem; }
+        .form-control { width: 100%; padding: 0.75rem; border: 2px solid var(--gray); border-radius: var(--radius); background: var(--white); color: var(--text); font-size: 0.85rem; }
         .form-control:focus { outline: none; border-color: var(--secondary); }
         textarea.form-control { min-height: 100px; resize: vertical; }
         
         /* File Upload */
-        .file-upload { border: 2px dashed var(--gray); border-radius: var(--radius); padding: 1.5rem; text-align: center; margin-bottom: 1rem; }
+        .file-upload { border: 2px dashed var(--gray); border-radius: var(--radius); padding: 1.25rem; text-align: center; margin-bottom: 1rem; }
         .file-upload:hover { border-color: var(--secondary); }
-        .file-list { margin-top: 0.5rem; font-size: 0.9rem; color: var(--dark-gray); }
+        .file-list { margin-top: 0.5rem; font-size: 0.8rem; color: var(--dark-gray); }
         
         /* Alert */
-        .alert { padding: 1rem; border-radius: var(--radius); margin-bottom: 1.5rem; border-left: 4px solid; }
+        .alert { padding: 0.75rem 1rem; border-radius: var(--radius); margin-bottom: 1.5rem; border-left: 4px solid; display: flex; align-items: center; gap: 0.75rem; font-size: 0.8rem; }
         .alert-success { background: rgba(40,167,69,0.1); color: var(--success); border-left-color: var(--success); }
         .alert-error { background: rgba(220,53,69,0.1); color: var(--danger); border-left-color: var(--danger); }
         .alert-info { background: rgba(23,162,184,0.1); color: var(--info); border-left-color: var(--info); }
@@ -251,10 +244,12 @@ function getUrgencyBadge($urgency) {
         
         @media (max-width: 768px) {
             .container { grid-template-columns: 1fr; }
-            .sidebar { transform: translateX(-100%); }
+            .sidebar { transform: translateX(-100%); transition: transform 0.3s ease; }
+            .sidebar.mobile-open { transform: translateX(0); }
             .main { grid-column: 1; padding: 1rem; }
             .header { flex-direction: column; gap: 1rem; text-align: center; }
             .stats-grid { grid-template-columns: 1fr 1fr; }
+            .quick-actions { grid-template-columns: 1fr; }
         }
         
         @media (max-width: 480px) {
@@ -265,19 +260,19 @@ function getUrgencyBadge($urgency) {
 <body>
     <div class="container">
         <!-- Sidebar -->
-        <div class="sidebar">
+        <div class="sidebar" id="sidebar">
             <div class="brand">
                 <div class="brand-logo"><i class="fas fa-user-shield"></i></div>
                 <div class="brand-text"><h1>Class Rep Panel</h1></div>
             </div>
             <ul class="nav-links">
-                <li><a href="class_rep_dashboard"><i class="fas fa-tachometer-alt"></i> Dashboard</a></li>
-                <li><a href="class_tickets"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
-                <li><a href="class_students"><i class="fas fa-users"></i> Class Students</a></li>
-                <li><a href="class_rep_financial_aid" class="active"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
-                <li><a href="rep_meetings"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
-                <li><a href="rep_reports"><i class="fas fa-file-alt"></i> Reports</a></li>
-                <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                <li><a href="class_rep_dashboard.php"><i class="fas fa-tachometer-alt"></i> Class Rep Dashboard</a></li>
+                <li><a href="class_tickets.php"><i class="fas fa-ticket-alt"></i> Class Tickets</a></li>
+                <li><a href="class_rep_financial_aid.php" class="active"><i class="fas fa-hand-holding-usd"></i> Financial Aid</a></li>
+                <li><a href="class_students.php"><i class="fas fa-users"></i> Class Students</a></li>
+                <li><a href="rep_meetings.php"><i class="fas fa-calendar-alt"></i> Meetings</a></li>
+                <li><a href="rep_reports.php"><i class="fas fa-file-alt"></i> Reports</a></li>
+                <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
             </ul>
         </div>
 
@@ -292,11 +287,9 @@ function getUrgencyBadge($urgency) {
                     <p><?php echo safe_display($student_name); ?> | <?php echo safe_display($program); ?> | <?php echo safe_display($academic_year); ?></p>
                 </div>
                 <div class="actions">
-                    <form method="POST">
-                        <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
-                            <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-                        </button>
-                    </form>
+                    <button class="icon-btn" id="mobileMenuToggle" title="Menu">
+                        <i class="fas fa-bars"></i>
+                    </button>
                     <button class="btn btn-primary" onclick="openRequestModal()"><i class="fas fa-plus"></i> New Request</button>
                 </div>
             </div>
@@ -392,11 +385,11 @@ function getUrgencyBadge($urgency) {
                                 </div>
                                 
                                 <div class="request-actions">
-                                    <a href="class_rep_view_financial_aid?id=<?php echo $request['id']; ?>" class="btn btn-secondary">
+                                    <a href="class_rep_view_financial_aid.php?id=<?php echo $request['id']; ?>" class="btn btn-secondary">
                                         <i class="fas fa-eye"></i> View
                                     </a>
                                     <?php if ($request['status'] === 'approved'): ?>
-                                        <a href="../student/generate_approval_letter?id=<?php echo $request['id']; ?>" class="btn btn-success">
+                                        <a href="../student/generate_approval_letter.php?id=<?php echo $request['id']; ?>" class="btn btn-success">
                                             <i class="fas fa-download"></i> Approval Letter
                                         </a>
                                     <?php endif; ?>
@@ -479,29 +472,99 @@ function getUrgencyBadge($urgency) {
     </div>
 
     <script>
-        function openRequestModal() { document.getElementById('requestModal').style.display = 'flex'; }
-        function closeRequestModal() { document.getElementById('requestModal').style.display = 'none'; }
+        // Modal functions
+        function openRequestModal() { 
+            document.getElementById('requestModal').style.display = 'flex'; 
+        }
+        function closeRequestModal() { 
+            document.getElementById('requestModal').style.display = 'none'; 
+        }
         
         // File input display
-        document.getElementById('request_letter').addEventListener('change', function(e) {
-            const fileName = e.target.files[0]?.name || 'No file chosen';
-            document.getElementById('request_letter_name').textContent = fileName;
-        });
-        
-        document.getElementById('supporting_docs').addEventListener('change', function(e) {
-            const fileName = e.target.files[0]?.name || 'No file chosen';
-            document.getElementById('supporting_docs_name').textContent = fileName;
-        });
-        
-        window.onclick = function(event) {
-            if (event.target === document.getElementById('requestModal')) {
-                closeRequestModal();
+        document.addEventListener('DOMContentLoaded', function() {
+            const requestLetterInput = document.getElementById('request_letter');
+            const supportingDocsInput = document.getElementById('supporting_docs');
+            
+            if (requestLetterInput) {
+                requestLetterInput.addEventListener('change', function(e) {
+                    const fileName = e.target.files[0]?.name || 'No file chosen';
+                    document.getElementById('request_letter_name').textContent = fileName;
+                });
             }
+            
+            if (supportingDocsInput) {
+                supportingDocsInput.addEventListener('change', function(e) {
+                    const fileName = e.target.files[0]?.name || 'No file chosen';
+                    document.getElementById('supporting_docs_name').textContent = fileName;
+                });
+            }
+            
+            // Close modal when clicking outside
+            window.onclick = function(event) {
+                if (event.target === document.getElementById('requestModal')) {
+                    closeRequestModal();
+                }
+            }
+
+            <?php if (isset($error_message)): ?>
+                openRequestModal();
+            <?php endif; ?>
+
+            // Add loading animations
+            const cards = document.querySelectorAll('.stat-card, .card');
+            cards.forEach((card, index) => {
+                card.style.animation = 'fadeInUp 0.4s ease forwards';
+                card.style.animationDelay = `${index * 0.05}s`;
+                card.style.opacity = '0';
+            });
+            
+            const style = document.createElement('style');
+            style.textContent = `
+                @keyframes fadeInUp {
+                    from {
+                        opacity: 0;
+                        transform: translateY(10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+            
+            setTimeout(() => {
+                cards.forEach(card => {
+                    card.style.opacity = '1';
+                });
+            }, 500);
+        });
+
+        // Mobile Menu Toggle (outside DOMContentLoaded like dashboard)
+        const sidebar = document.getElementById('sidebar');
+        const mobileMenuToggle = document.getElementById('mobileMenuToggle');
+        
+        if (mobileMenuToggle) {
+            mobileMenuToggle.addEventListener('click', function() {
+                sidebar.classList.toggle('mobile-open');
+            });
         }
 
-        <?php if (isset($error_message)): ?>
-            document.addEventListener('DOMContentLoaded', openRequestModal);
-        <?php endif; ?>
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', function(event) {
+            if (window.innerWidth <= 768) {
+                if (!sidebar.contains(event.target) && !mobileMenuToggle.contains(event.target)) {
+                    sidebar.classList.remove('mobile-open');
+                }
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('mobile-open');
+            }
+        });
     </script>
 </body>
 </html>

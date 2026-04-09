@@ -4,7 +4,7 @@ require_once '../config/database.php';
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
@@ -23,7 +23,7 @@ $theme = isset($_COOKIE['theme']) ? $_COOKIE['theme'] : 'light';
 if (isset($_POST['toggle_theme'])) {
     $new_theme = $theme === 'light' ? 'dark' : 'light';
     setcookie('theme', $new_theme, time() + (86400 * 30), "/"); // 30 days
-    header('Location: clubs');
+    header('Location: clubs.php');
     exit();
 }
 
@@ -868,20 +868,20 @@ $recent_activities = $activities_stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="nav-section">
                 <h3 class="nav-title">Main Navigation</h3>
                 <ul class="nav-links">
-                    <li><a href="dashboard"><i class="fas fa-home"></i> Dashboard</a></li>
-                    <li><a href="tickets"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
-                    <li><a href="events"><i class="fas fa-calendar-alt"></i> Events</a></li>
-                    <li><a href="news"><i class="fas fa-newspaper"></i> News</a></li>
-                    <li><a href="#" class="active"><i class="fas fa-users"></i> Clubs</a></li>
+                    <li><a href="dashboard.php"><i class="fas fa-home"></i> Dashboard</a></li>
+                    <li><a href="tickets.php"><i class="fas fa-ticket-alt"></i> My Tickets</a></li>
+                    <li><a href="events.php"><i class="fas fa-calendar-alt"></i> Events</a></li>
+                    <li><a href="news.php"><i class="fas fa-newspaper"></i> News</a></li>
+                    <li><a href="clubs.php" class="active"><i class="fas fa-users"></i> Clubs</a></li>
                 </ul>
             </div>
 
             <div class="nav-section">
                 <h3 class="nav-title">Account</h3>
                 <ul class="nav-links">
-                    <li><a href="profile"><i class="fas fa-user"></i> My Profile</a></li>
-                    <li><a href="settings"><i class="fas fa-cog"></i> Settings</a></li>
-                    <li><a href="../auth/logout"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
+                    <li><a href="profile.php"><i class="fas fa-user"></i> My Profile</a></li>
+                    <li><a href="settings.php"><i class="fas fa-cog"></i> Settings</a></li>
+                    <li><a href="../auth/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a></li>
                 </ul>
             </div>
         </div>

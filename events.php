@@ -1650,7 +1650,7 @@ $page_title = "Campus Events - RPSU Musanze College";
             </h2>
             <div class="featured-grid">
                 <?php foreach ($featured_events as $featured): ?>
-                    <article class="featured-card" onclick="window.location.href='event_single?id=<?php echo $featured['id']; ?>'">
+                    <article class="featured-card" onclick="window.location.href='event_single.php?id=<?php echo $featured['id']; ?>'">
                         <div class="featured-image">
                             <?php if (!empty($featured['image_url'])): ?>
                                 <img src="<?php echo htmlspecialchars($featured['image_url']); ?>" 
@@ -1720,7 +1720,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                 <?php else: ?>
                     <div class="events-grid">
                         <?php foreach ($events as $event): ?>
-                            <article class="event-card" onclick="window.location.href='event_single?id=<?php echo $event['id']; ?>'">
+                            <article class="event-card" onclick="window.location.href='event_single.php?id=<?php echo $event['id']; ?>'">
                                 <div class="event-image">
                                     <?php if (!empty($event['image_url'])): ?>
                                         <img src="<?php echo htmlspecialchars($event['image_url']); ?>" 
@@ -1742,7 +1742,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                                         <?php echo htmlspecialchars($event['category_name']); ?>
                                     </div>
                                     <h3 class="event-title">
-                                        <a href="event_single?id=<?php echo $event['id']; ?>">
+                                        <a href="event_single.php?id=<?php echo $event['id']; ?>">
                                             <?php echo htmlspecialchars($event['title']); ?>
                                         </a>
                                     </h3>
@@ -2055,7 +2055,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                 if (e.target.tagName === 'A' || e.target.closest('a') || e.target.closest('button')) {
                     return;
                 }
-                const eventLink = this.querySelector('a[href*="event_single"]');
+                const eventLink = this.querySelector('a[href*="event_single.php"]');
                 if (eventLink) {
                     window.location.href = eventLink.href;
                 }

@@ -1283,6 +1283,12 @@ try {
                         <span>Finance</span>
                     </a>
                 </li>
+                 <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Reports</span>
+                    </a>
+                </li>
                 <li class="menu-item">
                     <a href="profile.php">
                         <i class="fas fa-user-cog"></i>

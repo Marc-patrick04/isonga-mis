@@ -575,8 +575,8 @@ if (isset($_SESSION['error'])) {
         /* Toast Messages */
         .toast {
             position: fixed;
-            top: 100px;
-            right: 2rem;
+            top: 80px;
+            right: 1rem;
             padding: 1rem 1.5rem;
             border-radius: var(--border-radius);
             color: white;

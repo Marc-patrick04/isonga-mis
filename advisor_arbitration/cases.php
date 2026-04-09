@@ -1257,8 +1257,8 @@ try {
             <!-- Page Header -->
             <div class="page-header">
                 <div class="page-title">
-                    <h1>My Arbitration Cases ⚖️</h1>
-                    <p>Manage and track cases assigned to you</p>
+                    <h1>My Arbitration Cases </h1>
+                 
                 </div>
             </div>
 

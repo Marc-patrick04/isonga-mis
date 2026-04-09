@@ -1275,15 +1275,8 @@ try {
         <main class="main-content" id="mainContent">
             <div class="page-header">
                 <div class="page-title">
-                    <h1>Committee Meetings 📋</h1>
-                    <p class="page-description">View all committee meetings and track your attendance records</p>
+                    <h1>Committee Meetings</h1>
                 </div>
-            </div>
-
-            <!-- Info Alert -->
-            <div class="alert alert-info">
-                <i class="fas fa-info-circle"></i> 
-                <strong>Note:</strong> As Arbitration Advisor, you can view all committee meeting schedules and track your attendance records.
             </div>
 
             <!-- Statistics Grid -->
@@ -1501,70 +1494,6 @@ try {
                                     <strong style="color: var(--warning);"><?php echo $attendance_stats['excused']; ?></strong>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <!-- Upcoming Important Meetings -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Upcoming This Week</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($upcoming_important)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No upcoming meetings</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($upcoming_important as $meeting): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar" style="background: var(--primary-blue);">
-                                                <i class="fas fa-calendar" style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <strong><?php echo htmlspecialchars($meeting['title']); ?></strong>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, g:i A', strtotime($meeting['meeting_date'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-
-                    <!-- Your Recent Attendance -->
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Recent Attendance</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($user_attendance_history)): ?>
-                                <div style="text-align: center; color: var(--dark-gray); padding: 1rem;">
-                                    <p>No attendance records</p>
-                                </div>
-                            <?php else: ?>
-                                <ul class="activity-list">
-                                    <?php foreach ($user_attendance_history as $attendance): ?>
-                                        <li class="activity-item">
-                                            <div class="activity-avatar attendance-<?php echo $attendance['attendance_status']; ?>">
-                                                <i class="fas fa-<?php echo $attendance['attendance_status'] === 'present' ? 'check' : ($attendance['attendance_status'] === 'absent' ? 'times' : 'user-clock'); ?>" style="font-size: 0.8rem;"></i>
-                                            </div>
-                                            <div class="activity-content">
-                                                <div class="activity-text">
-                                                    <?php echo htmlspecialchars($attendance['title']); ?>
-                                                </div>
-                                                <div class="activity-time">
-                                                    <?php echo date('M j, Y', strtotime($attendance['meeting_date'])); ?>
-                                                </div>
-                                            </div>
-                                        </li>
-                                    <?php endforeach; ?>
-                                </ul>
-                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
