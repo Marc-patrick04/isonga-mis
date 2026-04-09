@@ -47,6 +47,20 @@ try {
     error_log("Error fetching committee members: " . $e->getMessage());
 }
 
+// Get distinct committee roles for category assignment dropdown
+try {
+    $stmt = $pdo->query("
+        SELECT DISTINCT role 
+        FROM committee_members 
+        WHERE status = 'active' AND role IS NOT NULL AND role != ''
+        ORDER BY role ASC
+    ");
+    $committee_roles = $stmt->fetchAll(PDO::FETCH_COLUMN);
+} catch (PDOException $e) {
+    $committee_roles = [];
+    error_log("Error fetching committee roles: " . $e->getMessage());
+}
+
 // Handle Add Ticket (from admin)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'add') {
@@ -232,6 +246,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $name = trim($_POST['name']);
             $description = trim($_POST['description'] ?? '');
             $assigned_role = $_POST['assigned_role'] ?? null;
+            
+            // Validate required assigned_role
+            if (empty($assigned_role)) {
+                throw new Exception("Assigned role is required.");
+            }
+            
             $sla_days = (int)($_POST['sla_days'] ?? 3);
             
             // Check if category exists
@@ -265,6 +285,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $name = trim($_POST['name']);
             $description = trim($_POST['description'] ?? '');
             $assigned_role = $_POST['assigned_role'] ?? null;
+            
+            // Validate required assigned_role
+            if (empty($assigned_role)) {
+                throw new Exception("Assigned role is required.");
+            }
+            
             $sla_days = (int)($_POST['sla_days'] ?? 3);
             
             $stmt = $pdo->prepare("
@@ -277,6 +303,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $message = "Category updated successfully!";
             header("Location: tickets.php?tab=categories&msg=" . urlencode($message));
             exit();
+        } catch (Exception $e) {
+            $error = $e->getMessage();
         } catch (PDOException $e) {
             $error = "Error updating category: " . $e->getMessage();
             error_log("Category update error: " . $e->getMessage());
@@ -2034,7 +2062,8 @@ $preferred_contact_labels = [
                                         <th>Assigned To</th>
                                         <th>Created</th>
                                         <th>Actions</th>
-                                    </thead>
+                                    </tr>
+                                </thead>
                                 <tbody>
                                     <?php if (empty($tickets)): ?>
                                         <tr>
@@ -2264,8 +2293,14 @@ $preferred_contact_labels = [
                     <textarea name="description" id="category_description" rows="3"></textarea>
                 </div>
                 <div class="form-group">
-                    <label>Assigned Role (Optional)</label>
-                    <input type="text" name="assigned_role" id="category_assigned_role" placeholder="e.g., Academic Committee">
+                    <label>Assigned Role *</label>
+                    <select name="assigned_role" id="category_assigned_role" required>
+                        <option value="">Select Committee Role</option>
+                        <?php foreach ($committee_roles as $role): ?>
+                            <option value="<?php echo htmlspecialchars($role); ?>"><?php echo htmlspecialchars($role); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <small>Select the committee role responsible for this category</small>
                 </div>
                 <div class="form-group">
                     <label>SLA Days</label>
