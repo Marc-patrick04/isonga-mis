@@ -14,55 +14,28 @@ function safeQuery($pdo, $sql, $params = []) {
     }
 }
 
-// Helper function to get correct image URL
+// Simple helper function to get correct image URL - NO path manipulation
 function getImageUrl($path) {
     if (empty($path)) {
         return '';
     }
     
-    // If it's already a full URL
-    if (filter_var($path, FILTER_VALIDATE_URL)) {
+    // If it's already a full URL starting with http
+    if (preg_match('/^https?:\/\//', $path)) {
         return $path;
     }
     
-    // Remove leading ../ or ./ if present using str_replace instead of ltrim
-    $path = str_replace(['../', './'], '', $path);
-    
-    // Get base URL
-    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-    $host = $_SERVER['HTTP_HOST'];
-    $base_url = $protocol . $host;
-    
-    // Remove script name from path
-    $script_name = basename($_SERVER['SCRIPT_NAME']);
-    $current_path = str_replace($script_name, '', $_SERVER['SCRIPT_NAME']);
-    
-    return $base_url . $current_path . $path;
-}
-
-// Helper function to check if image exists
-function imageExists($path) {
-    if (empty($path)) {
-        return false;
+    // If path starts with /, use as is (absolute path from root)
+    if (strpos($path, '/') === 0) {
+        return $path;
     }
     
-    // If it's a URL, we can't check server-side reliably
-    if (filter_var($path, FILTER_VALIDATE_URL)) {
-        return true;
-    }
+    // Otherwise, assume it's relative to the site root
+    // Remove any leading ../ or ./
+    $path = preg_replace('/^(\.\.\/|\.\/)+/', '', $path);
     
-    // Clean path for filesystem check using str_replace
-    $clean_path = str_replace(['../', './'], '', $path);
-    
-    // Check in document root
-    $full_path = $_SERVER['DOCUMENT_ROOT'] . '/' . $clean_path;
-    
-    // Also check in current directory
-    if (!file_exists($full_path)) {
-        $full_path = __DIR__ . '/' . $clean_path;
-    }
-    
-    return file_exists($full_path);
+    // For production, use relative path without modifying
+    return $path;
 }
 
 // Get announcements from database
@@ -2135,14 +2108,14 @@ foreach ($stat_queries as $key => $query) {
                     
                     foreach ($link_items as $index => $item):
                         $slug = $item['slug'];
-                        $image_url = !empty($item['image_url']) ? getImageUrl($item['image_url']) : '';
+                        // SIMPLE: Just use the image_url as is, no complex path manipulation
+                        $image_url = !empty($item['image_url']) ? $item['image_url'] : '';
                         $icon = $item['icon'] ?? 'fa-link';
                         $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
-                        $has_image = !empty($image_url) && imageExists($item['image_url']);
                     ?>
                         <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
                             <div class="link-card-image">
-                                <?php if ($has_image): ?>
+                                <?php if (!empty($image_url)): ?>
                                     <img src="<?= htmlspecialchars($image_url) ?>" 
                                          alt="<?= htmlspecialchars($item['title']) ?>"
                                          loading="lazy"
@@ -2298,12 +2271,12 @@ foreach ($stat_queries as $key => $query) {
                         </div>
                     <?php else: ?>
                         <?php foreach ($committee_members as $index => $member): 
-                            $photo_url = !empty($member['photo_url']) ? getImageUrl($member['photo_url']) : '';
-                            $has_photo = !empty($photo_url) && imageExists($member['photo_url']);
+                            // SIMPLE: Use the photo_url as is
+                            $photo_url = !empty($member['photo_url']) ? $member['photo_url'] : '';
                         ?>
                             <div class="member-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
                                 <div class="member-image-container">
-                                    <?php if ($has_photo): ?>
+                                    <?php if (!empty($photo_url)): ?>
                                         <img src="<?= htmlspecialchars($photo_url) ?>" 
                                              alt="<?= htmlspecialchars($member['name']) ?>" 
                                              class="member-image"
@@ -2369,7 +2342,7 @@ foreach ($stat_queries as $key => $query) {
                         <ul class="footer-links">
                             <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                             <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
-                            <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
+                            <li><a href="assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
                             <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                         </ul>
                     </div>
@@ -2400,21 +2373,16 @@ foreach ($stat_queries as $key => $query) {
             const loadingScreen = document.getElementById('loadingScreen');
             const mainContent = document.getElementById('mainContent');
             
-            // Show loading screen for 3 seconds (reduced from 4 for better UX)
+            // Show loading screen for 3 seconds
             setTimeout(function() {
-                // Fade out loading screen
                 loadingScreen.classList.add('fade-out');
-                
-                // Show main content
                 mainContent.classList.add('visible');
                 
-                // Remove loading screen from DOM after animation
                 setTimeout(function() {
                     loadingScreen.style.display = 'none';
                 }, 700);
             }, 3000);
             
-            // Check for reduced motion preference
             const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             
             AOS.init({
@@ -2471,7 +2439,6 @@ foreach ($stat_queries as $key => $query) {
             
             mobileMenuBtn.addEventListener('click', toggleMobileMenu);
             
-            // Close mobile menu when clicking outside
             document.addEventListener('click', function(event) {
                 if (mobileMenu.classList.contains('active') && 
                     !mobileMenu.contains(event.target) && 
@@ -2480,20 +2447,16 @@ foreach ($stat_queries as $key => $query) {
                 }
             });
             
-            // Close mobile menu on escape key
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && mobileMenu.classList.contains('active')) {
                     toggleMobileMenu();
                 }
             });
 
-            // Fix for images on mobile - ensure they load properly
+            // Fix for images on mobile
             const allImages = document.querySelectorAll('img');
             allImages.forEach(img => {
-                // Add error handling for all images
                 img.addEventListener('error', function() {
-                    console.log('Image failed to load:', this.src);
-                    // Find parent container and add placeholder if applicable
                     const container = this.closest('.member-image-container, .link-card-image, .highlight-image');
                     if (container && !container.querySelector('.image-fallback')) {
                         const placeholder = document.createElement('div');
@@ -2504,41 +2467,10 @@ foreach ($stat_queries as $key => $query) {
                     }
                 });
                 
-                // For images that might be loaded but not displayed
                 if (img.complete && img.naturalWidth === 0) {
                     img.dispatchEvent(new Event('error'));
                 }
             });
-
-            // Animated counters (commented out since stats are hidden)
-            const statNumbers = document.querySelectorAll('.stat-number');
-            const observerOptions = {
-                threshold: 0.5,
-                rootMargin: '0px 0px -100px 0px'
-            };
-            
-            const counterObserver = new IntersectionObserver((entries) => {
-                entries.forEach(entry => {
-                    if (entry.isIntersecting && !entry.target.classList.contains('animated')) {
-                        const target = parseInt(entry.target.textContent);
-                        let current = 0;
-                        const increment = target / 30;
-                        
-                        const timer = setInterval(() => {
-                            current += increment;
-                            if (current >= target) {
-                                entry.target.textContent = target;
-                                entry.target.classList.add('animated');
-                                clearInterval(timer);
-                            } else {
-                                entry.target.textContent = Math.floor(current);
-                            }
-                        }, 50);
-                    }
-                });
-            }, observerOptions);
-            
-            statNumbers.forEach(stat => counterObserver.observe(stat));
         });
     </script>
 </body>
