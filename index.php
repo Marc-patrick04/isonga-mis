@@ -14,6 +14,57 @@ function safeQuery($pdo, $sql, $params = []) {
     }
 }
 
+// Helper function to get correct image URL
+function getImageUrl($path) {
+    if (empty($path)) {
+        return '';
+    }
+    
+    // If it's already a full URL
+    if (filter_var($path, FILTER_VALIDATE_URL)) {
+        return $path;
+    }
+    
+    // Remove leading ../ or ./ if present using str_replace instead of ltrim
+    $path = str_replace(['../', './'], '', $path);
+    
+    // Get base URL
+    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
+    $host = $_SERVER['HTTP_HOST'];
+    $base_url = $protocol . $host;
+    
+    // Remove script name from path
+    $script_name = basename($_SERVER['SCRIPT_NAME']);
+    $current_path = str_replace($script_name, '', $_SERVER['SCRIPT_NAME']);
+    
+    return $base_url . $current_path . $path;
+}
+
+// Helper function to check if image exists
+function imageExists($path) {
+    if (empty($path)) {
+        return false;
+    }
+    
+    // If it's a URL, we can't check server-side reliably
+    if (filter_var($path, FILTER_VALIDATE_URL)) {
+        return true;
+    }
+    
+    // Clean path for filesystem check using str_replace
+    $clean_path = str_replace(['../', './'], '', $path);
+    
+    // Check in document root
+    $full_path = $_SERVER['DOCUMENT_ROOT'] . '/' . $clean_path;
+    
+    // Also check in current directory
+    if (!file_exists($full_path)) {
+        $full_path = __DIR__ . '/' . $clean_path;
+    }
+    
+    return file_exists($full_path);
+}
+
 // Get announcements from database
 $announcements = safeQuery($pdo, 
     "SELECT * FROM announcements 
@@ -53,6 +104,7 @@ try {
     }
 } catch (PDOException $e) {
     $hero_map = [];
+    $hero_items = [];
 }
 
 // Get statistics with caching consideration
@@ -83,7 +135,7 @@ foreach ($stat_queries as $key => $query) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
     <meta name="description" content="Isonga - RPSU Management System for Rwanda Polytechnic Musanze College.">
     <title>Isonga - RPSU Management System | RP Musanze College</title>
     
@@ -129,7 +181,7 @@ foreach ($stat_queries as $key => $query) {
             /* Gradients */
             --gradient-primary: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
             --gradient-secondary: linear-gradient(135deg, var(--secondary) 0%, var(--primary) 100%);
-            --gradient-hero: linear-gradient(135deg, rgba(63, 118, 177, 0.76) 0%, rgba(13, 72, 161, 0.62) 100%);
+            --gradient-hero: linear-gradient(135deg, rgba(63, 118, 177, 0.85) 0%, rgba(13, 72, 161, 0.75) 100%);
             
             /* Shadows */
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
@@ -693,9 +745,27 @@ foreach ($stat_queries as $key => $query) {
             display: flex;
             align-items: center;
             position: relative;
-            background: 
-                var(--gradient-hero),
-                url('assets/images/college.jpg') center/cover no-repeat;
+            background-color: var(--primary-dark);
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        /* Fallback if image doesn't load */
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--gradient-hero);
+            z-index: 1;
+        }
+
+        .hero > * {
+            position: relative;
+            z-index: 2;
         }
 
         @media (min-width: 768px) {
@@ -1081,6 +1151,7 @@ foreach ($stat_queries as $key => $query) {
             line-height: 1.4;
             font-size: 0.75rem;
             padding: 0 0.5rem;
+            margin-bottom: 1rem;
         }
 
         @media (min-width: 768px) {
@@ -1731,129 +1802,153 @@ foreach ($stat_queries as $key => $query) {
                 color: #94a3b8;
             }
         }
+        
         /* Mobile Navigation - Fixed visibility */
-.mobile-menu {
-    position: fixed;
-    top: 60px;
-    left: 0;
-    width: 100%;
-    height: calc(100vh - 60px);
-    background: var(--white);
-    z-index: 999;
-    transform: translateX(-100%);
-    transition: transform 0.3s ease;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-}
+        .mobile-menu {
+            position: fixed;
+            top: 60px;
+            left: 0;
+            width: 100%;
+            height: calc(100vh - 60px);
+            background: var(--white);
+            z-index: 999;
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
 
-@media (min-width: 768px) {
-    .mobile-menu {
-        display: none;
-    }
-}
+        @media (min-width: 768px) {
+            .mobile-menu {
+                display: none;
+            }
+        }
 
-.mobile-menu.active {
-    transform: translateX(0);
-}
+        .mobile-menu.active {
+            transform: translateX(0);
+        }
 
-.mobile-nav {
-    padding: var(--space-sm);
-}
+        .mobile-nav {
+            padding: var(--space-sm);
+        }
 
-.mobile-nav .nav-links {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    width: 100%;
-}
+        .mobile-nav .nav-links {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            width: 100%;
+        }
 
-.mobile-nav .nav-links a {
-    display: block;
-    padding: 1rem;
-    color: var(--gray-800);
-    background: transparent;
-    text-decoration: none;
-    font-weight: 500;
-    font-size: 1rem;
-    transition: var(--transition);
-    border-bottom: 1px solid var(--gray-200);
-}
+        .mobile-nav .nav-links a {
+            display: block;
+            padding: 1rem;
+            color: var(--gray-800);
+            background: transparent;
+            text-decoration: none;
+            font-weight: 500;
+            font-size: 1rem;
+            transition: var(--transition);
+            border-bottom: 1px solid var(--gray-200);
+        }
 
-.mobile-nav .nav-links a:last-child {
-    border-bottom: none;
-}
+        .mobile-nav .nav-links a:last-child {
+            border-bottom: none;
+        }
 
-.mobile-nav .nav-links a:hover,
-.mobile-nav .nav-links a:focus,
-.mobile-nav .nav-links a.active {
-    background: var(--primary);
-    color: white;
-    padding-left: 1.5rem;
-}
+        .mobile-nav .nav-links a:hover,
+        .mobile-nav .nav-links a:focus,
+        .mobile-nav .nav-links a.active {
+            background: var(--primary);
+            color: white;
+            padding-left: 1.5rem;
+        }
 
-.mobile-login-buttons {
-    padding: var(--space-md);
-    border-top: 1px solid var(--gray-200);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    margin-top: var(--space-sm);
-}
+        .mobile-login-buttons {
+            padding: var(--space-md);
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            flex-direction: column;
+            gap: var(--space-sm);
+            margin-top: var(--space-sm);
+        }
 
-.mobile-login-buttons .login-btn {
-    width: 100%;
-    justify-content: center;
-    padding: 1rem;
-    font-size: 1rem;
-    text-decoration: none;
-    border-radius: var(--border-radius);
-    font-weight: 600;
-    transition: var(--transition);
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    min-height: 48px;
-}
+        .mobile-login-buttons .login-btn {
+            width: 100%;
+            justify-content: center;
+            padding: 1rem;
+            font-size: 1rem;
+            text-decoration: none;
+            border-radius: var(--border-radius);
+            font-weight: 600;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-height: 48px;
+        }
 
-.mobile-login-buttons .btn-student {
-    background: var(--gradient-secondary);
-    color: white;
-}
+        .mobile-login-buttons .btn-student {
+            background: var(--gradient-secondary);
+            color: white;
+        }
 
-.mobile-login-buttons .btn-committee {
-    background: var(--gradient-primary);
-    color: white;
-}
+        .mobile-login-buttons .btn-committee {
+            background: var(--gradient-primary);
+            color: white;
+        }
 
-.mobile-login-buttons .login-btn:hover,
-.mobile-login-buttons .login-btn:focus {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
+        .mobile-login-buttons .login-btn:hover,
+        .mobile-login-buttons .login-btn:focus {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
 
-/* Dark mode support for mobile menu */
-@media (prefers-color-scheme: dark) {
-    .mobile-menu {
-        background: #1e293b;
-    }
-    
-    .mobile-nav .nav-links a {
-        color: #e2e8f0;
-        border-bottom-color: #334155;
-    }
-    
-    .mobile-nav .nav-links a:hover,
-    .mobile-nav .nav-links a:focus,
-    .mobile-nav .nav-links a.active {
-        background: var(--primary);
-        color: white;
-    }
-    
-    .mobile-login-buttons {
-        border-top-color: #334155;
-    }
-}
+        /* Dark mode support for mobile menu */
+        @media (prefers-color-scheme: dark) {
+            .mobile-menu {
+                background: #1e293b;
+            }
+            
+            .mobile-nav .nav-links a {
+                color: #e2e8f0;
+                border-bottom-color: #334155;
+            }
+            
+            .mobile-nav .nav-links a:hover,
+            .mobile-nav .nav-links a:focus,
+            .mobile-nav .nav-links a.active {
+                background: var(--primary);
+                color: white;
+            }
+            
+            .mobile-login-buttons {
+                border-top-color: #334155;
+            }
+        }
+        
+        /* Additional image handling for mobile */
+        .hero-bg-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+        }
+        
+        /* Ensure images don't overflow on mobile */
+        img {
+            max-width: 100%;
+            height: auto;
+        }
+        
+        /* Fix for broken images */
+        img[src=""],
+        img:not([src]) {
+            opacity: 0;
+        }
     </style>
 </head>
 <body>
@@ -1941,7 +2036,7 @@ foreach ($stat_queries as $key => $query) {
         </header>
 
         <!-- Hero Section -->
-        <section class="hero" aria-labelledby="hero-title">
+        <section class="hero" aria-labelledby="hero-title" style="background-image: url('assets/images/college.jpg');">
             <div class="container hero-content">
                 <div class="hero-text" data-aos="fade-up" data-aos-duration="800">
                     <h2 id="hero-title">RPSU Musanze College</h2>
@@ -1950,17 +2045,18 @@ foreach ($stat_queries as $key => $query) {
                     <div class="hero-stats">
                         <?php 
                         $stats = [
-                            // ['number' => $student_count, 'label' => 'Students'],
-                            // ['number' => $resolved_tickets, 'label' => 'Issues Resolved'],
+                            // Uncomment to show stats
+                            // ['number' => $student_count . '+', 'label' => 'Students'],
+                            // ['number' => $resolved_tickets . '+', 'label' => 'Issues Resolved'],
                             // ['number' => $active_committees, 'label' => 'Committee Members'],
                             // ['number' => $active_clubs, 'label' => 'Active Clubs']
                         ];
                         
                         foreach ($stats as $index => $stat): ?>
-                            <!-- <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-                                <span class="stat-number"><?= htmlspecialchars($stat['number']) ?><?= $stat['label'] === 'Students' || $stat['label'] === 'Issues Resolved' ? '+' : '' ?></span>
+                            <div class="stat-item" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                                <span class="stat-number"><?= htmlspecialchars($stat['number']) ?></span>
                                 <span class="stat-label"><?= htmlspecialchars($stat['label']) ?></span>
-                            </div> -->
+                            </div>
                         <?php endforeach; ?>
                     </div>
 
@@ -2039,14 +2135,18 @@ foreach ($stat_queries as $key => $query) {
                     
                     foreach ($link_items as $index => $item):
                         $slug = $item['slug'];
-                        $image_url = $item['image_url'] ?? '';
+                        $image_url = !empty($item['image_url']) ? getImageUrl($item['image_url']) : '';
                         $icon = $item['icon'] ?? 'fa-link';
                         $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
+                        $has_image = !empty($image_url) && imageExists($item['image_url']);
                     ?>
                         <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
                             <div class="link-card-image">
-                                <?php if (!empty($image_url)): ?>
-                                    <img src="<?= htmlspecialchars($image_url) ?>" alt="<?= htmlspecialchars($item['title']) ?>">
+                                <?php if ($has_image): ?>
+                                    <img src="<?= htmlspecialchars($image_url) ?>" 
+                                         alt="<?= htmlspecialchars($item['title']) ?>"
+                                         loading="lazy"
+                                         onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'link-card-image-placeholder\' style=\'background: <?= $bg_color ?>;\'><i class=\'fas <?= htmlspecialchars($icon) ?>\'></i></div>'">
                                 <?php else: ?>
                                     <div class="link-card-image-placeholder" style="background: <?= $bg_color ?>;">
                                         <i class="fas <?= htmlspecialchars($icon) ?>"></i>
@@ -2130,7 +2230,7 @@ foreach ($stat_queries as $key => $query) {
                                     <?php endforeach; ?>
                                 <?php endif; ?>
                             </div>
-                            <a href="news" class="read-more">
+                            <a href="news.php" class="read-more">
                                 Read More <i class="fas fa-arrow-right"></i>
                             </a>
                         </div>
@@ -2197,14 +2297,18 @@ foreach ($stat_queries as $key => $query) {
                             </div>
                         </div>
                     <?php else: ?>
-                        <?php foreach ($committee_members as $index => $member): ?>
+                        <?php foreach ($committee_members as $index => $member): 
+                            $photo_url = !empty($member['photo_url']) ? getImageUrl($member['photo_url']) : '';
+                            $has_photo = !empty($photo_url) && imageExists($member['photo_url']);
+                        ?>
                             <div class="member-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
                                 <div class="member-image-container">
-                                    <?php if (!empty($member['photo_url'])): ?>
-                                        <img src="<?= htmlspecialchars($member['photo_url']) ?>" 
+                                    <?php if ($has_photo): ?>
+                                        <img src="<?= htmlspecialchars($photo_url) ?>" 
                                              alt="<?= htmlspecialchars($member['name']) ?>" 
                                              class="member-image"
-                                             loading="lazy">
+                                             loading="lazy"
+                                             onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'member-image-placeholder\'><i class=\'fas fa-user\'></i></div>'">
                                     <?php else: ?>
                                         <div class="member-image-placeholder">
                                             <i class="fas fa-user"></i>
@@ -2244,8 +2348,6 @@ foreach ($stat_queries as $key => $query) {
                             <a href="https://twitter.com/MusanzecollegSU" target="_blank" rel="noopener noreferrer" aria-label="Twitter">
                                 <i class="fab fa-twitter"></i>
                             </a>
-                           
-                            
                             <a href="https://www.instagram.com/rpmusanzecollege_su" target="_blank" rel="noopener noreferrer" aria-label="Instagram">
                                 <i class="fab fa-instagram"></i>
                             </a>
@@ -2268,7 +2370,7 @@ foreach ($stat_queries as $key => $query) {
                             <li><a href="https://www.rp.ac.rw/announcement" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Academic Calendar</a></li>
                             <li><a href="https://www.google.com/maps/search/rp+musanze+college" target="_blank" rel="noopener noreferrer"><i class="fas fa-chevron-right"></i> Campus Map</a></li>
                             <li><a href="../assets/rp_handbook.pdf"><i class="fas fa-chevron-right"></i> Student Handbook</a></li>
-                            <li><a href="gallery"><i class="fas fa-chevron-right"></i> Gallery</a></li>
+                            <li><a href="gallery.php"><i class="fas fa-chevron-right"></i> Gallery</a></li>
                         </ul>
                     </div>
                     
@@ -2298,7 +2400,7 @@ foreach ($stat_queries as $key => $query) {
             const loadingScreen = document.getElementById('loadingScreen');
             const mainContent = document.getElementById('mainContent');
             
-            // Show loading screen for 5 seconds
+            // Show loading screen for 3 seconds (reduced from 4 for better UX)
             setTimeout(function() {
                 // Fade out loading screen
                 loadingScreen.classList.add('fade-out');
@@ -2310,7 +2412,7 @@ foreach ($stat_queries as $key => $query) {
                 setTimeout(function() {
                     loadingScreen.style.display = 'none';
                 }, 700);
-            }, 4000);
+            }, 3000);
             
             // Check for reduced motion preference
             const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2369,6 +2471,7 @@ foreach ($stat_queries as $key => $query) {
             
             mobileMenuBtn.addEventListener('click', toggleMobileMenu);
             
+            // Close mobile menu when clicking outside
             document.addEventListener('click', function(event) {
                 if (mobileMenu.classList.contains('active') && 
                     !mobileMenu.contains(event.target) && 
@@ -2377,13 +2480,37 @@ foreach ($stat_queries as $key => $query) {
                 }
             });
             
+            // Close mobile menu on escape key
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && mobileMenu.classList.contains('active')) {
                     toggleMobileMenu();
                 }
             });
 
-            // Animated counters
+            // Fix for images on mobile - ensure they load properly
+            const allImages = document.querySelectorAll('img');
+            allImages.forEach(img => {
+                // Add error handling for all images
+                img.addEventListener('error', function() {
+                    console.log('Image failed to load:', this.src);
+                    // Find parent container and add placeholder if applicable
+                    const container = this.closest('.member-image-container, .link-card-image, .highlight-image');
+                    if (container && !container.querySelector('.image-fallback')) {
+                        const placeholder = document.createElement('div');
+                        placeholder.className = 'member-image-placeholder image-fallback';
+                        placeholder.innerHTML = '<i class="fas fa-user"></i>';
+                        this.style.display = 'none';
+                        container.appendChild(placeholder);
+                    }
+                });
+                
+                // For images that might be loaded but not displayed
+                if (img.complete && img.naturalWidth === 0) {
+                    img.dispatchEvent(new Event('error'));
+                }
+            });
+
+            // Animated counters (commented out since stats are hidden)
             const statNumbers = document.querySelectorAll('.stat-number');
             const observerOptions = {
                 threshold: 0.5,
@@ -2394,18 +2521,17 @@ foreach ($stat_queries as $key => $query) {
                 entries.forEach(entry => {
                     if (entry.isIntersecting && !entry.target.classList.contains('animated')) {
                         const target = parseInt(entry.target.textContent);
-                        const hasPlus = entry.target.textContent.includes('+');
                         let current = 0;
                         const increment = target / 30;
                         
                         const timer = setInterval(() => {
                             current += increment;
                             if (current >= target) {
-                                entry.target.textContent = target + (hasPlus ? '+' : '');
+                                entry.target.textContent = target;
                                 entry.target.classList.add('animated');
                                 clearInterval(timer);
                             } else {
-                                entry.target.textContent = Math.floor(current) + (hasPlus ? '+' : '');
+                                entry.target.textContent = Math.floor(current);
                             }
                         }, 50);
                     }
