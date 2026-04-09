@@ -1443,7 +1443,7 @@ function safe_display($data) {
                         <div class="user-role">Student</div>
                     </div>
                 </div>
-                <a href="../auth/logout" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
+                <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')">
                     <i class="fas fa-sign-out-alt"></i> Logout
                 </a>
             </div>
@@ -1691,7 +1691,7 @@ function safe_display($data) {
                 <button class="modal-close" onclick="closeNewTicketModal()"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
-                <form method="POST" action="tickets" id="newTicketForm">
+                <form method="POST" action="tickets.php" id="newTicketForm">
                     <div class="form-group">
                         <label class="form-label">Issue Category *</label>
                         <select name="category_id" class="form-control" required>
@@ -1715,10 +1715,10 @@ function safe_display($data) {
                     <div class="form-group">
                         <label class="form-label">Priority *</label>
                         <select name="priority" class="form-control" required>
-                            <option value="low">Low</option>
+                            <!-- <option value="low">Low</option>
                             <option value="medium" selected>Medium</option>
-                            <option value="high">High</option>
-                            <option value="urgent">Urgent</option>
+                            <option value="high">High</option> -->
+                            <option value="urgent">Priority</option>
                         </select>
                     </div>
                     
@@ -1726,8 +1726,7 @@ function safe_display($data) {
                         <label class="form-label">Preferred Contact Method *</label>
                         <select name="preferred_contact" class="form-control" required>
                             <option value="email" selected>Email</option>
-                            <option value="sms">SMS</option>
-                            <option value="phone">Phone Call</option>
+                           
                         </select>
                     </div>
                     
@@ -1794,7 +1793,7 @@ function safe_display($data) {
                         
                         <?php if ($view_ticket['status'] !== 'closed' && $view_ticket['status'] !== 'resolved'): ?>
                             <div class="comment-form">
-                                <form method="POST" action="tickets">
+                                <form method="POST" action="tickets.php">
                                     <input type="hidden" name="ticket_id" value="<?php echo $view_ticket['id']; ?>">
                                     <div class="form-group">
                                         <label class="form-label">Add a Comment</label>
