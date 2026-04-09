@@ -19,6 +19,27 @@ try {
     $current_admin = [];
 }
 
+// Define available roles
+$available_roles = [
+    'guild_president' => 'Guild President',
+    'vice_guild_academic' => 'Vice Guild President - Academic',
+    'vice_guild_finance' => 'Vice Guild President - Finance',
+    'general_secretary' => 'General Secretary',
+    'minister_sports' => 'Minister of Sports',
+    'minister_environment' => 'Minister of Environment',
+    'minister_public_relations' => 'Minister of Public Relations',
+    'minister_health' => 'Minister of Health',
+    'minister_culture' => 'Minister of Culture',
+    'minister_gender' => 'Minister of Gender',
+    'president_representative_board' => 'President - Rep Board',
+    'vice_president_representative_board' => 'Vice President - Rep Board',
+    'secretary_representative_board' => 'Secretary - Rep Board',
+    'president_arbitration' => 'President - Arbitration',
+    'vice_president_arbitration' => 'Vice President - Arbitration',
+    'advisor_arbitration' => 'Advisor - Arbitration',
+    'secretary_arbitration' => 'Secretary - Arbitration'
+];
+
 // Handle Excel Import
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'import_excel') {
     if (isset($_FILES['excel_file']) && $_FILES['excel_file']['error'] === UPLOAD_ERR_OK) {
@@ -83,26 +104,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     continue;
                                 }
                                 
-                                // Check if student exists
-                                $student_stmt = $pdo->prepare("SELECT id, full_name, reg_number, phone, department_id, program_id, academic_year FROM users WHERE email = ? AND role = 'student' AND status = 'active' AND deleted_at IS NULL");
-                                $student_stmt->execute([$email]);
-                                $student = $student_stmt->fetch(PDO::FETCH_ASSOC);
+                                // Check if user exists (can be student or already has any role)
+                                $user_stmt = $pdo->prepare("SELECT id, full_name, reg_number, phone, department_id, program_id, academic_year, role FROM users WHERE email = ? AND status = 'active' AND deleted_at IS NULL");
+                                $user_stmt->execute([$email]);
+                                $user = $user_stmt->fetch(PDO::FETCH_ASSOC);
                                 
-                                if (!$student) {
+                                if (!$user) {
                                     $not_student_count++;
-                                    $errors[] = "Row $row_count: Email '$email' is not registered as a student. Please add the student first.";
+                                    $errors[] = "Row $row_count: Email '$email' is not registered. Please add the user first.";
                                     continue;
                                 }
                                 
                                 // Check if already a committee member
-                                $check_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE email = ?");
-                                $check_stmt->execute([$email]);
+                                $check_stmt = $pdo->prepare("SELECT id FROM committee_members WHERE user_id = ?");
+                                $check_stmt->execute([$user['id']]);
                                 if ($check_stmt->fetch()) {
                                     $duplicate_count++;
                                     continue;
                                 }
                                 
                                 try {
+                                    // Start transaction
+                                    $pdo->beginTransaction();
+                                    
+                                    // Update user role
+                                    $update_user_stmt = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+                                    $update_user_stmt->execute([$role, $user['id']]);
+                                    
+                                    // Insert into committee_members
                                     $stmt = $pdo->prepare("
                                         INSERT INTO committee_members (
                                             user_id, name, reg_number, role, role_order, 
@@ -113,29 +142,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                     ");
                                     
                                     $stmt->execute([
-                                        $student['id'],
-                                        $student['full_name'],
-                                        $student['reg_number'],
+                                        $user['id'],
+                                        $user['full_name'],
+                                        $user['reg_number'],
                                         $role,
                                         isset($row_lower['role_order']) && is_numeric($row_lower['role_order']) ? (int)$row_lower['role_order'] : 0,
-                                        $student['department_id'],
-                                        $student['program_id'],
-                                        $student['academic_year'],
+                                        $user['department_id'],
+                                        $user['program_id'],
+                                        $user['academic_year'],
                                         $email,
-                                        $student['phone'],
+                                        $user['phone'],
                                         !empty($row_lower['bio']) ? $row_lower['bio'] : null,
                                         !empty($row_lower['portfolio_description']) ? $row_lower['portfolio_description'] : null,
                                         isset($row_lower['status']) && in_array(strtolower($row_lower['status']), ['active', 'inactive']) ? strtolower($row_lower['status']) : 'active',
                                         $user_id
                                     ]);
+                                    
+                                    $pdo->commit();
                                     $success_count++;
                                 } catch (PDOException $e) {
+                                    $pdo->rollBack();
                                     $invalid_count++;
                                     $errors[] = "Row $row_count: " . $e->getMessage();
                                 }
                             }
                             
-                            $message = "Import completed! Success: $success_count, Duplicates: $duplicate_count, Failed: $invalid_count, Not Students: $not_student_count";
+                            $message = "Import completed! Success: $success_count, Duplicates: $duplicate_count, Failed: $invalid_count, Not Found: $not_student_count";
                             if (!empty($errors) && count($errors) <= 5) {
                                 $message .= "<br>Errors: " . implode('<br>', $errors);
                             } elseif (!empty($errors)) {
@@ -215,6 +247,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
             }
             
+            // Start transaction
+            $pdo->beginTransaction();
+            
+            // Update user role from 'student' to committee role
+            $committee_role = $_POST['role'];
+            $update_user_stmt = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+            $update_user_stmt->execute([$committee_role, $student['id']]);
+            
             $stmt = $pdo->prepare("
                 INSERT INTO committee_members (
                     user_id, name, reg_number, role, role_order, 
@@ -230,7 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $student['id'],
                 $student['full_name'],
                 $student['reg_number'],
-                $_POST['role'],
+                $committee_role,
                 $_POST['role_order'] ?? 0,
                 $student['department_id'],
                 $student['program_id'],
@@ -244,12 +284,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $user_id
             ]);
             
-            $message = "Student added to committee successfully!";
+            $pdo->commit();
+            
+            $message = "Student added to committee successfully! User role has been updated.";
             header("Location: committee.php?msg=" . urlencode($message));
             exit();
         } catch (Exception $e) {
+            if (isset($pdo) && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             $error = $e->getMessage();
         } catch (PDOException $e) {
+            if (isset($pdo) && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             $error = "Error adding committee member: " . $e->getMessage();
         }
     }
@@ -259,6 +307,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         try {
             $member_id = $_POST['member_id'];
             $photo_url = null;
+            
+            // Get current committee member data
+            $current_member_stmt = $pdo->prepare("SELECT user_id, role FROM committee_members WHERE id = ?");
+            $current_member_stmt->execute([$member_id]);
+            $current_member = $current_member_stmt->fetch(PDO::FETCH_ASSOC);
+            $user_id_to_update = $current_member['user_id'];
+            $old_role = $current_member['role'];
             
             if (isset($_FILES['photo']) && $_FILES['photo']['error'] === UPLOAD_ERR_OK) {
                 $upload_dir = '../assets/uploads/committee/';
@@ -290,6 +345,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 }
             }
             
+            // Start transaction
+            $pdo->beginTransaction();
+            
             $updateFields = [];
             $params = [];
             
@@ -314,10 +372,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             
+            // Update user role if changed
+            $new_role = $_POST['role'];
+            if ($new_role !== $old_role && $user_id_to_update) {
+                $update_user_stmt = $pdo->prepare("UPDATE users SET role = ? WHERE id = ?");
+                $update_user_stmt->execute([$new_role, $user_id_to_update]);
+            }
+            
+            $pdo->commit();
+            
             $message = "Committee member updated successfully!";
             header("Location: committee.php?msg=" . urlencode($message));
             exit();
         } catch (PDOException $e) {
+            if (isset($pdo) && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             $error = "Error updating committee member: " . $e->getMessage();
         }
     }
@@ -331,15 +401,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $placeholders = implode(',', array_fill(0, count($selected_ids), '?'));
             
             try {
+                $pdo->beginTransaction();
+                
                 if ($bulk_action === 'activate') {
                     $stmt = $pdo->prepare("UPDATE committee_members SET status = 'active' WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
+                    
+                    // Also activate users
+                    $user_ids_stmt = $pdo->prepare("SELECT user_id FROM committee_members WHERE id IN ($placeholders)");
+                    $user_ids_stmt->execute($selected_ids);
+                    $user_ids = $user_ids_stmt->fetchAll(PDO::FETCH_COLUMN);
+                    if (!empty($user_ids)) {
+                        $user_placeholders = implode(',', array_fill(0, count($user_ids), '?'));
+                        $user_stmt = $pdo->prepare("UPDATE users SET status = 'active' WHERE id IN ($user_placeholders)");
+                        $user_stmt->execute($user_ids);
+                    }
+                    
                     $message = count($selected_ids) . " members activated.";
                 } elseif ($bulk_action === 'deactivate') {
                     $stmt = $pdo->prepare("UPDATE committee_members SET status = 'inactive' WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
+                    
+                    // Also deactivate users
+                    $user_ids_stmt = $pdo->prepare("SELECT user_id FROM committee_members WHERE id IN ($placeholders)");
+                    $user_ids_stmt->execute($selected_ids);
+                    $user_ids = $user_ids_stmt->fetchAll(PDO::FETCH_COLUMN);
+                    if (!empty($user_ids)) {
+                        $user_placeholders = implode(',', array_fill(0, count($user_ids), '?'));
+                        $user_stmt = $pdo->prepare("UPDATE users SET status = 'inactive' WHERE id IN ($user_placeholders)");
+                        $user_stmt->execute($user_ids);
+                    }
+                    
                     $message = count($selected_ids) . " members deactivated.";
                 } elseif ($bulk_action === 'delete') {
+                    // Get user_ids to revert their roles back to 'student'
+                    $user_ids_stmt = $pdo->prepare("SELECT user_id FROM committee_members WHERE id IN ($placeholders)");
+                    $user_ids_stmt->execute($selected_ids);
+                    $user_ids = $user_ids_stmt->fetchAll(PDO::FETCH_COLUMN);
+                    
                     // Delete photos first
                     $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
@@ -353,13 +452,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         }
                     }
                     
+                    // Delete from committee_members
                     $stmt = $pdo->prepare("DELETE FROM committee_members WHERE id IN ($placeholders)");
                     $stmt->execute($selected_ids);
-                    $message = count($selected_ids) . " members deleted.";
+                    
+                    // Revert user roles back to 'student' (only if they were committee members, not admin)
+                    if (!empty($user_ids)) {
+                        $user_placeholders = implode(',', array_fill(0, count($user_ids), '?'));
+                        $revert_stmt = $pdo->prepare("UPDATE users SET role = 'student' WHERE id IN ($user_placeholders) AND role != 'admin'");
+                        $revert_stmt->execute($user_ids);
+                    }
+                    
+                    $message = count($selected_ids) . " members removed from committee and roles reverted to student.";
                 }
+                
+                $pdo->commit();
                 header("Location: committee.php?msg=" . urlencode($message));
                 exit();
             } catch (PDOException $e) {
+                if (isset($pdo) && $pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
                 $error = "Error performing bulk action: " . $e->getMessage();
             }
         } else {
@@ -372,27 +485,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 if (isset($_GET['toggle_status']) && isset($_GET['id'])) {
     $member_id = $_GET['id'];
     try {
-        $stmt = $pdo->prepare("SELECT status FROM committee_members WHERE id = ?");
+        $pdo->beginTransaction();
+        
+        $stmt = $pdo->prepare("SELECT status, user_id FROM committee_members WHERE id = ?");
         $stmt->execute([$member_id]);
-        $current = $stmt->fetchColumn();
-        $new_status = $current === 'active' ? 'inactive' : 'active';
+        $current = $stmt->fetch(PDO::FETCH_ASSOC);
+        $new_status = $current['status'] === 'active' ? 'inactive' : 'active';
+        
         $stmt = $pdo->prepare("UPDATE committee_members SET status = ? WHERE id = ?");
         $stmt->execute([$new_status, $member_id]);
+        
+        // Sync user status
+        if ($current['user_id']) {
+            $user_stmt = $pdo->prepare("UPDATE users SET status = ? WHERE id = ?");
+            $user_stmt->execute([$new_status, $current['user_id']]);
+        }
+        
+        $pdo->commit();
         $message = "Member status updated!";
         header("Location: committee.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
+        if (isset($pdo) && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $error = "Error toggling status";
     }
 }
 
-// Handle Delete
+// Handle Delete - Remove from committee only, revert role to student
 if (isset($_GET['delete']) && isset($_GET['id'])) {
     $member_id = $_GET['id'];
     try {
-        $stmt = $pdo->prepare("SELECT photo_url FROM committee_members WHERE id = ?");
+        $pdo->beginTransaction();
+        
+        // Get user_id and role before deleting
+        $stmt = $pdo->prepare("SELECT user_id, role, photo_url FROM committee_members WHERE id = ?");
         $stmt->execute([$member_id]);
-        $member = $stmt->fetch();
+        $member = $stmt->fetch(PDO::FETCH_ASSOC);
+        
         if (!empty($member['photo_url'])) {
             $photo_path = '../' . $member['photo_url'];
             if (file_exists($photo_path)) {
@@ -400,12 +531,24 @@ if (isset($_GET['delete']) && isset($_GET['id'])) {
             }
         }
         
+        // Delete from committee_members
         $stmt = $pdo->prepare("DELETE FROM committee_members WHERE id = ?");
         $stmt->execute([$member_id]);
-        $message = "Member deleted successfully!";
+        
+        // Revert user role back to 'student' (only if not admin)
+        if ($member['user_id']) {
+            $user_stmt = $pdo->prepare("UPDATE users SET role = 'student' WHERE id = ? AND role != 'admin'");
+            $user_stmt->execute([$member['user_id']]);
+        }
+        
+        $pdo->commit();
+        $message = "Member removed from committee successfully! Role reverted to student.";
         header("Location: committee.php?msg=" . urlencode($message));
         exit();
     } catch (PDOException $e) {
+        if (isset($pdo) && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $error = "Error deleting member";
     }
 }
@@ -424,7 +567,7 @@ if (isset($_GET['get_member']) && isset($_GET['id'])) {
     exit();
 }
 
-// Search student via AJAX - Only returns students not already in committee
+// Search student via AJAX - Only returns students (role = 'student') not already in committee
 if (isset($_GET['search_student']) && isset($_GET['query'])) {
     header('Content-Type: application/json');
     $query = trim($_GET['query']);
@@ -573,27 +716,6 @@ try {
     $departments = [];
 }
 
-// Define available roles
-$available_roles = [
-    'guild_president' => 'Guild President',
-    'vice_guild_academic' => 'Vice Guild President - Academic',
-    'vice_guild_finance' => 'Vice Guild President - Finance',
-    'general_secretary' => 'General Secretary',
-    'minister_sports' => 'Minister of Sports',
-    'minister_environment' => 'Minister of Environment',
-    'minister_public_relations' => 'Minister of Public Relations',
-    'minister_health' => 'Minister of Health',
-    'minister_culture' => 'Minister of Culture',
-    'minister_gender' => 'Minister of Gender',
-    'president_representative_board' => 'President - Rep Board',
-    'vice_president_representative_board' => 'Vice President - Rep Board',
-    'secretary_representative_board' => 'Secretary - Rep Board',
-    'president_arbitration' => 'President - Arbitration',
-    'vice_president_arbitration' => 'Vice President - Arbitration',
-    'advisor_arbitration' => 'Advisor - Arbitration',
-    'secretary_arbitration' => 'Secretary - Arbitration'
-];
-
 // Get message from URL
 if (isset($_GET['msg'])) {
     $message = $_GET['msg'];
@@ -607,7 +729,7 @@ $logo_path = '../assets/images/rp_logo.png';
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Committee Management - Isonga RPSU Admin</title>
     <link rel="icon" type="image/png" href="<?php echo $logo_path; ?>">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -1499,7 +1621,7 @@ $logo_path = '../assets/images/rp_logo.png';
                                             <h3>No committee members found</h3>
                                             <p>Click "Add Member" to add a student to the committee.</p>
                                         </div>
-                                    </td>
+                                                                        </td>
                                 </tr>
                             <?php else: ?>
                                 <?php foreach ($committee_members as $member): ?>
@@ -1520,10 +1642,10 @@ $logo_path = '../assets/images/rp_logo.png';
                                         <td><?php echo htmlspecialchars($member['email'] ?? '-'); ?></td>
                                         <td><?php echo htmlspecialchars($member['phone'] ?? '-'); ?></td>
                                         <td><span class="status-badge <?php echo $member['status']; ?>"><?php echo ucfirst($member['status']); ?></span></td>
-                                        <td>
+                                        <td class="action-buttons">
                                             <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i></button>
                                             <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')"><i class="fas fa-toggle-on"></i></a>
-                                            <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete this member?')"><i class="fas fa-trash"></i></a>
+                                            <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Remove from committee? This will revert the user role to student.')"><i class="fas fa-trash"></i></a>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -1554,11 +1676,17 @@ $logo_path = '../assets/images/rp_logo.png';
                                     <div class="member-actions">
                                         <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal(<?php echo $member['id']; ?>)"><i class="fas fa-edit"></i> Edit</button>
                                         <a href="?toggle_status=1&id=<?php echo $member['id']; ?>" class="btn btn-warning btn-sm" onclick="return confirm('Toggle status?')"><i class="fas fa-toggle-on"></i></a>
-                                        <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Delete?')"><i class="fas fa-trash"></i></a>
+                                        <a href="?delete=1&id=<?php echo $member['id']; ?>" class="btn btn-danger btn-sm" onclick="return confirm('Remove from committee? This will revert the user role to student.')"><i class="fas fa-trash"></i></a>
                                     </div>
                                 </div>
                             </div>
                         <?php endforeach; ?>
+                    <?php else: ?>
+                        <div class="empty-state" style="grid-column: 1/-1;">
+                            <i class="fas fa-user-tie" style="font-size: 3rem; opacity: 0.5;"></i>
+                            <h3>No committee members found</h3>
+                            <p>Click "Add Member" to add a student to the committee.</p>
+                        </div>
                     <?php endif; ?>
                 </div>
             </form>
@@ -1620,24 +1748,26 @@ $logo_path = '../assets/images/rp_logo.png';
                 </div>
                 
                 <div class="form-group">
-                    <label>Role Order</label>
-                    <input type="number" name="role_order" id="role_order" value="0">
+                    <label>Role Order (for display sorting)</label>
+                    <input type="number" name="role_order" id="role_order" value="0" placeholder="Lower numbers appear first">
+                    <small>Optional: Use to control display order (1=President, 2=Vice President, etc.)</small>
                 </div>
                 
                 <div class="form-group">
-                    <label>Bio</label>
-                    <textarea name="bio" id="bio" rows="3"></textarea>
+                    <label>Bio / Profile Description</label>
+                    <textarea name="bio" id="bio" rows="3" placeholder="Brief description of the member's background and responsibilities..."></textarea>
                 </div>
                 
                 <div class="form-group">
                     <label>Portfolio Description</label>
-                    <textarea name="portfolio_description" id="portfolio_description" rows="3"></textarea>
+                    <textarea name="portfolio_description" id="portfolio_description" rows="3" placeholder="Detailed description of their portfolio and duties..."></textarea>
                 </div>
                 
                 <div class="form-group">
                     <label>Profile Photo</label>
                     <input type="file" name="photo" id="photo" accept="image/*" onchange="previewImage(this)">
                     <div id="imagePreview" class="image-preview" style="display: none;"></div>
+                    <small>Recommended: Square image, at least 300x300 pixels. Max size: 5MB</small>
                 </div>
                 
                 <div class="form-group">
@@ -1649,7 +1779,7 @@ $logo_path = '../assets/images/rp_logo.png';
                 </div>
                 
                 <div class="form-actions">
-                    <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary" id="submitBtn" disabled>Add to Committee</button>
                 </div>
             </form>
@@ -1702,7 +1832,7 @@ $logo_path = '../assets/images/rp_logo.png';
                 </div>
 
                 <div class="form-actions">
-                    <button type="button" class="btn" onclick="closeImportModal()">Cancel</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Import Members</button>
                 </div>
             </form>
@@ -1712,6 +1842,7 @@ $logo_path = '../assets/images/rp_logo.png';
     <script>
         let searchTimeout;
         let selectedStudent = null;
+        let currentView = 'table';
         
         // Theme Toggle
         const themeToggle = document.getElementById('themeToggle');
@@ -1727,7 +1858,6 @@ $logo_path = '../assets/images/rp_logo.png';
         });
 
         // View Toggle
-        let currentView = 'table';
         function toggleView(view) {
             const tableView = document.getElementById('tableView');
             const gridView = document.getElementById('gridView');
@@ -1868,7 +1998,6 @@ $logo_path = '../assets/images/rp_logo.png';
                         return;
                     }
                     
-                    // For edit, we use the add modal but with different title and action
                     document.getElementById('modalTitle').textContent = 'Edit Committee Member';
                     document.getElementById('formAction').value = 'edit';
                     document.getElementById('memberId').value = member.id;
@@ -1971,6 +2100,9 @@ $logo_path = '../assets/images/rp_logo.png';
         
         function closeModal() {
             document.getElementById('memberModal').classList.remove('active');
+            // Reset search container visibility for next add
+            const searchContainer = document.querySelector('.search-container');
+            if (searchContainer) searchContainer.style.display = 'block';
         }
         
         function openImportModal() {
@@ -2005,7 +2137,11 @@ $logo_path = '../assets/images/rp_logo.png';
             const checked = document.querySelectorAll('.member-checkbox:checked').length;
             if (!action) { alert('Select an action'); return false; }
             if (checked === 0) { alert('Select members'); return false; }
-            return confirm(`${action} ${checked} member(s)?`);
+            let message = '';
+            if (action === 'activate') message = `Activate ${checked} member(s)?`;
+            else if (action === 'deactivate') message = `Deactivate ${checked} member(s)?`;
+            else if (action === 'delete') message = `Remove ${checked} member(s) from committee? This will revert their roles to student.`;
+            return confirm(message);
         }
         
         function downloadSampleCSV() {
@@ -2049,6 +2185,55 @@ $logo_path = '../assets/images/rp_logo.png';
             modalContent.addEventListener('click', function(e) {
                 e.stopPropagation();
             });
+        });
+        
+        // Add animation to cards
+        const cards = document.querySelectorAll('.stat-card, .member-card');
+        cards.forEach((card, index) => {
+            card.style.opacity = '0';
+            card.style.animation = `fadeInUp 0.3s ease forwards`;
+            card.style.animationDelay = `${index * 0.05}s`;
+        });
+        
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes fadeInUp {
+                from {
+                    opacity: 0;
+                    transform: translateY(10px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        setTimeout(() => {
+            cards.forEach(card => {
+                card.style.opacity = '1';
+            });
+        }, 100);
+        
+        // Form validation before submit
+        document.getElementById('memberForm').addEventListener('submit', function(e) {
+            const action = document.getElementById('formAction').value;
+            const role = document.getElementById('role').value;
+            
+            if (action === 'add' && !selectedStudent) {
+                e.preventDefault();
+                alert('Please select a student to add to the committee.');
+                return false;
+            }
+            
+            if (!role) {
+                e.preventDefault();
+                alert('Please select a committee role.');
+                return false;
+            }
+            
+            return true;
         });
     </script>
 </body>

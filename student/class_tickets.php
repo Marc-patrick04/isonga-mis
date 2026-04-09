@@ -2,6 +2,7 @@
 session_start();
 require_once '../config/database.php';
 
+
 // Check if user is logged in as student and is class rep (PostgreSQL uses true for boolean)
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student' || !($_SESSION['is_class_rep'] ?? false)) {
     header('Location: student_login.php');
@@ -89,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                 $_SESSION['success_message'] = "Your ticket has been submitted successfully! Ticket ID: #$ticket_id. It will be assigned shortly.";
             }
             
-            header('Location: class_tickets');
+            header('Location: class_tickets.php');
             exit();
             
         } catch (PDOException $e) {

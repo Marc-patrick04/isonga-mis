@@ -986,11 +986,7 @@ function safe_display($data) {
                 </div>
             </div>
             <div class="user-menu">
-                <form method="POST" style="margin: 0;">
-                    <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
-                        <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-                    </button>
-                </form>
+               
                 <a href="messages" class="icon-btn" title="Messages" style="position: relative;">
                     <i class="fas fa-envelope"></i>
                     <?php if ($unread_messages > 0): ?>

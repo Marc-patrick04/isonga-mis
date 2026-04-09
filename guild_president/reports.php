@@ -95,7 +95,8 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
     try {
         // Get report data
         $stmt = $pdo->prepare("
-            SELECT r.*, u.full_name, u.role as user_role, rt.name as template_name
+            SELECT r.*, u.full_name, u.role as user_role, u.reg_number, u.email,
+                   rt.name as template_name, rt.description as template_description
             FROM reports r 
             JOIN users u ON r.user_id = u.id 
             LEFT JOIN report_templates rt ON r.template_id = rt.id 
@@ -280,40 +281,383 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Export functions
+// Enhanced PDF Export Function
 function exportReportToPDF($report) {
+    // Decode content if it's JSON
+    $content_data = json_decode($report['content'], true);
+    
+    // Set headers for PDF
     header('Content-Type: application/pdf');
-    header('Content-Disposition: attachment; filename="report_' . $report['id'] . '.pdf"');
+    header('Content-Disposition: attachment; filename="report_' . $report['id'] . '_' . date('Y-m-d') . '.pdf"');
     
-    $content = "Report: " . $report['title'] . "\n";
-    $content .= "Author: " . $report['full_name'] . "\n";
-    $content .= "Date: " . $report['submitted_at'] . "\n\n";
-    $content .= "Content:\n";
+    // Create PDF content with HTML/CSS styling
+    $html = '<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Report #' . $report['id'] . ' - ' . htmlspecialchars($report['title']) . '</title>
+        <style>
+            body {
+                font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                margin: 0;
+                padding: 20px;
+            }
+            .report-container {
+                max-width: 900px;
+                margin: 0 auto;
+                background: white;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 3px solid #0056b3;
+            }
+            .header h1 {
+                color: #0056b3;
+                margin: 0;
+                font-size: 24px;
+            }
+            .header .subtitle {
+                color: #666;
+                font-size: 12px;
+                margin-top: 5px;
+            }
+            .report-info {
+                background: #f5f5f5;
+                padding: 15px;
+                margin-bottom: 20px;
+                border-radius: 5px;
+            }
+            .info-row {
+                margin-bottom: 8px;
+                font-size: 13px;
+            }
+            .info-label {
+                font-weight: bold;
+                display: inline-block;
+                width: 150px;
+            }
+            .section {
+                margin-bottom: 25px;
+                page-break-inside: avoid;
+            }
+            .section-title {
+                background: #0056b3;
+                color: white;
+                padding: 8px 12px;
+                margin: 0 0 10px 0;
+                font-size: 16px;
+                border-radius: 4px;
+            }
+            .content-block {
+                padding: 10px;
+                background: #fafafa;
+                border-left: 3px solid #0056b3;
+                margin-bottom: 15px;
+            }
+            .field-label {
+                font-weight: bold;
+                color: #0056b3;
+                margin-bottom: 5px;
+                font-size: 13px;
+            }
+            .field-value {
+                margin-bottom: 15px;
+                padding: 8px;
+                background: white;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-size: 13px;
+            }
+            .status-badge {
+                display: inline-block;
+                padding: 3px 10px;
+                border-radius: 15px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            .status-submitted { background: #fff3cd; color: #856404; }
+            .status-reviewed { background: #cce5ff; color: #004085; }
+            .status-approved { background: #d4edda; color: #155724; }
+            .status-rejected { background: #f8d7da; color: #721c24; }
+            .footer {
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #ddd;
+                text-align: center;
+                font-size: 10px;
+                color: #999;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }
+            th, td {
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: left;
+            }
+            th {
+                background: #f0f0f0;
+                font-weight: bold;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="report-container">
+            <div class="header">
+                <h1>ISONGA RPSU - Committee Report</h1>
+                <div class="subtitle">Rwanda Polytechnic Musanze College Student Union</div>
+            </div>
+            
+            <div class="report-info">
+                <div class="info-row"><span class="info-label">Report ID:</span> #' . $report['id'] . '</div>
+                <div class="info-row"><span class="info-label">Title:</span> ' . htmlspecialchars($report['title']) . '</div>
+                <div class="info-row"><span class="info-label">Report Type:</span> ' . ucfirst($report['report_type']) . '</div>
+                <div class="info-row"><span class="info-label">Status:</span> <span class="status-badge status-' . $report['status'] . '">' . ucfirst($report['status']) . '</span></div>
+                <div class="info-row"><span class="info-label">Submitted By:</span> ' . htmlspecialchars($report['full_name']) . ' (' . htmlspecialchars($report['user_role']) . ')</div>
+                <div class="info-row"><span class="info-label">Registration No:</span> ' . htmlspecialchars($report['reg_number'] ?? 'N/A') . '</div>
+                <div class="info-row"><span class="info-label">Email:</span> ' . htmlspecialchars($report['email'] ?? 'N/A') . '</div>
+                <div class="info-row"><span class="info-label">Submission Date:</span> ' . date('F j, Y g:i A', strtotime($report['submitted_at'])) . '</div>
+                <div class="info-row"><span class="info-label">Report Period:</span> ' . ($report['report_period'] ? date('F Y', strtotime($report['report_period'])) : 'N/A') . '</div>
+                <div class="info-row"><span class="info-label">Template Used:</span> ' . htmlspecialchars($report['template_name'] ?? 'Custom Report') . '</div>
+            </div>';
     
-    $report_content = json_decode($report['content'], true);
-    if (is_array($report_content)) {
-        foreach ($report_content as $key => $value) {
-            $content .= ucfirst(str_replace('_', ' ', $key)) . ": " . $value . "\n";
+    // Add content sections
+    if (is_array($content_data) && !empty($content_data)) {
+        foreach ($content_data as $key => $value) {
+            $label = ucfirst(str_replace('_', ' ', $key));
+            $display_value = is_array($value) ? json_encode($value, JSON_PRETTY_PRINT) : $value;
+            $html .= '
+            <div class="section">
+                <h3 class="section-title">' . htmlspecialchars($label) . '</h3>
+                <div class="content-block">
+                    <div class="field-value">' . nl2br(htmlspecialchars($display_value)) . '</div>
+                </div>
+            </div>';
         }
     } else {
-        $content .= $report['content'];
+        $html .= '
+            <div class="section">
+                <h3 class="section-title">Report Content</h3>
+                <div class="content-block">
+                    <div class="field-value">' . nl2br(htmlspecialchars($report['content'])) . '</div>
+                </div>
+            </div>';
     }
     
-    echo $content;
+    // Add feedback if exists
+    if (!empty($report['feedback'])) {
+        $html .= '
+            <div class="section">
+                <h3 class="section-title">Reviewer Feedback</h3>
+                <div class="content-block">
+                    <div class="field-value">' . nl2br(htmlspecialchars($report['feedback'])) . '</div>
+                </div>
+            </div>';
+        
+        if (!empty($report['reviewer_name'])) {
+            $html .= '
+            <div class="report-info">
+                <div class="info-row"><span class="info-label">Reviewed By:</span> ' . htmlspecialchars($report['reviewer_name']) . '</div>
+                <div class="info-row"><span class="info-label">Reviewed At:</span> ' . date('F j, Y g:i A', strtotime($report['reviewed_at'])) . '</div>
+            </div>';
+        }
+    }
+    
+    $html .= '
+            <div class="footer">
+                <p>This is an official report generated by Isonga RPSU Management System</p>
+                <p>Generated on: ' . date('F j, Y g:i A') . '</p>
+            </div>
+        </div>
+    </body>
+    </html>';
+    
+    echo $html;
 }
 
+// Enhanced Word Export Function
 function exportReportToWord($report) {
-    header('Content-Type: application/vnd.ms-word');
-    header('Content-Disposition: attachment; filename="report_' . $report['id'] . '.doc"');
+    // Decode content if it's JSON
+    $content_data = json_decode($report['content'], true);
     
-    echo "<html>";
-    echo "<body>";
-    echo "<h1>" . htmlspecialchars($report['title']) . "</h1>";
-    echo "<p><strong>Author:</strong> " . htmlspecialchars($report['full_name']) . "</p>";
-    echo "<p><strong>Date:</strong> " . htmlspecialchars($report['submitted_at']) . "</p>";
-    echo "<div>" . nl2br(htmlspecialchars($report['content'])) . "</div>";
-    echo "</body>";
-    echo "</html>";
+    // Set headers for Word document
+    header('Content-Type: application/msword');
+    header('Content-Disposition: attachment; filename="report_' . $report['id'] . '_' . date('Y-m-d') . '.doc"');
+    header('Cache-Control: max-age=0');
+    
+    // Create Word HTML content
+    $html = '<!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Report #' . $report['id'] . ' - ' . htmlspecialchars($report['title']) . '</title>
+        <style>
+            body {
+                font-family: "Calibri", "Times New Roman", Arial, sans-serif;
+                line-height: 1.5;
+                margin: 1in;
+                color: #000;
+            }
+            h1 {
+                color: #0056b3;
+                font-size: 24pt;
+                margin-bottom: 10px;
+            }
+            h2 {
+                color: #0056b3;
+                font-size: 18pt;
+                margin-top: 20px;
+                margin-bottom: 10px;
+                border-bottom: 2px solid #0056b3;
+                padding-bottom: 5px;
+            }
+            h3 {
+                font-size: 14pt;
+                margin-top: 15px;
+                margin-bottom: 8px;
+                color: #333;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .subtitle {
+                color: #666;
+                font-size: 11pt;
+            }
+            .info-table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 15px 0;
+                background: #f5f5f5;
+            }
+            .info-table td {
+                padding: 8px;
+                border: 1px solid #ddd;
+            }
+            .info-label {
+                font-weight: bold;
+                width: 180px;
+                background: #e0e0e0;
+            }
+            .section {
+                margin: 20px 0;
+            }
+            .section-title {
+                background: #0056b3;
+                color: white;
+                padding: 6px 12px;
+                margin: 15px 0 10px 0;
+                font-size: 14pt;
+            }
+            .content-box {
+                margin: 10px 0;
+                padding: 10px;
+                border-left: 3px solid #0056b3;
+                background: #fafafa;
+            }
+            .status-badge {
+                display: inline-block;
+                padding: 3px 10px;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            .status-submitted { background: #fff3cd; }
+            .status-reviewed { background: #cce5ff; }
+            .status-approved { background: #d4edda; }
+            .footer {
+                margin-top: 40px;
+                text-align: center;
+                font-size: 9pt;
+                color: #999;
+                border-top: 1px solid #ddd;
+                padding-top: 15px;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 10px 0;
+            }
+            th, td {
+                border: 1px solid #ddd;
+                padding: 6px;
+            }
+            th {
+                background: #f0f0f0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>ISONGA RPSU</h1>
+            <div class="subtitle">Rwanda Polytechnic Musanze College Student Union</div>
+            <div class="subtitle"><strong>Committee Report</strong></div>
+        </div>
+        
+        <table class="info-table">
+            <tr><td class="info-label">Report ID:</td><td>#' . $report['id'] . '</td></tr>
+            <tr><td class="info-label">Title:</td><td>' . htmlspecialchars($report['title']) . '</td></tr>
+            <tr><td class="info-label">Report Type:</td><td>' . ucfirst($report['report_type']) . '</td></tr>
+            <tr><td class="info-label">Status:</td><td><span class="status-badge status-' . $report['status'] . '">' . ucfirst($report['status']) . '</span></td></tr>
+            <tr><td class="info-label">Submitted By:</td><td>' . htmlspecialchars($report['full_name']) . ' (' . htmlspecialchars($report['user_role']) . ')</td></tr>
+            <tr><td class="info-label">Registration Number:</td><td>' . htmlspecialchars($report['reg_number'] ?? 'N/A') . '</td></tr>
+            <tr><td class="info-label">Email:</td><td>' . htmlspecialchars($report['email'] ?? 'N/A') . '</td></tr>
+            <tr><td class="info-label">Submission Date:</td><td>' . date('F j, Y g:i A', strtotime($report['submitted_at'])) . '</td></tr>
+            <tr><td class="info-label">Report Period:</td><td>' . ($report['report_period'] ? date('F Y', strtotime($report['report_period'])) : 'N/A') . '</td></tr>
+            <tr><td class="info-label">Template:</td><td>' . htmlspecialchars($report['template_name'] ?? 'Custom Report') . '</td></tr>
+        </table>';
+    
+    // Add content sections
+    if (is_array($content_data) && !empty($content_data)) {
+        foreach ($content_data as $key => $value) {
+            $label = ucfirst(str_replace('_', ' ', $key));
+            $display_value = is_array($value) ? json_encode($value, JSON_PRETTY_PRINT) : $value;
+            $html .= '
+        <div class="section">
+            <h3 class="section-title">' . htmlspecialchars($label) . '</h3>
+            <div class="content-box">' . nl2br(htmlspecialchars($display_value)) . '</div>
+        </div>';
+        }
+    } else {
+        $html .= '
+        <div class="section">
+            <h3 class="section-title">Report Content</h3>
+            <div class="content-box">' . nl2br(htmlspecialchars($report['content'])) . '</div>
+        </div>';
+    }
+    
+    // Add feedback if exists
+    if (!empty($report['feedback'])) {
+        $html .= '
+        <div class="section">
+            <h3 class="section-title">Reviewer Feedback</h3>
+            <div class="content-box">' . nl2br(htmlspecialchars($report['feedback'])) . '</div>
+        </div>';
+        
+        if (!empty($report['reviewer_name'])) {
+            $html .= '
+        <table class="info-table">
+            <tr><td class="info-label">Reviewed By:</td><td>' . htmlspecialchars($report['reviewer_name']) . '</td></tr>
+            <tr><td class="info-label">Reviewed At:</td><td>' . date('F j, Y g:i A', strtotime($report['reviewed_at'])) . '</td></tr>
+        </table>';
+        }
+    }
+    
+    $html .= '
+        <div class="footer">
+            <p>This is an official report generated by Isonga RPSU Management System</p>
+            <p>Generated on: ' . date('F j, Y g:i A') . '</p>
+        </div>
+    </body>
+    </html>';
+    
+    echo $html;
 }
 
 // Helper function to get pending count for stats
@@ -1364,13 +1708,13 @@ function getReviewedCount($stats) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php">
+                    <a href="dashboard.php" >
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets.php">
+                    <a href="tickets.php" >
                         <i class="fas fa-ticket-alt"></i>
                         <span>All Tickets</span>
                         <?php if ($open_tickets > 0): ?>
@@ -1379,7 +1723,7 @@ function getReviewedCount($stats) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="reports.php" class="active">
+                    <a href="reports.php" >
                         <i class="fas fa-file-alt"></i>
                         <span>Committee Reports</span>
                         <?php if ($pending_reports > 0): ?>
@@ -1398,6 +1742,12 @@ function getReviewedCount($stats) {
                 </li>
                 <li class="menu-item">
                     <a href="committee.php">
+                        <i class="fas fa-users"></i>
+                        <span>Committee Performance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="manage_committee.php">
                         <i class="fas fa-users"></i>
                         <span>Committee Management</span>
                     </a>
@@ -1430,6 +1780,12 @@ function getReviewedCount($stats) {
                     <a href="finance.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Finance</span>
+                    </a>
+                </li>
+                 <li class="menu-item">
+                    <a href="reports.php" class="active">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Reports</span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1578,9 +1934,7 @@ function getReviewedCount($stats) {
                                                     </button>
                                                 <?php endif; ?>
                                                 <div class="export-options">
-                                                    <a href="reports.php?export=pdf&id=<?php echo $report['id']; ?>" class="btn btn-danger" target="_blank">
-                                                        <i class="fas fa-file-pdf"></i> PDF
-                                                    </a>
+                                                   
                                                     <a href="reports.php?export=word&id=<?php echo $report['id']; ?>" class="btn btn-success" target="_blank">
                                                         <i class="fas fa-file-word"></i> Word
                                                     </a>

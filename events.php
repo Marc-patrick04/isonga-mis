@@ -1962,7 +1962,7 @@ $page_title = "Campus Events - RPSU Musanze College";
                 <ul class="footer-links">
                     <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
                     <li><i class="fas fa-phone"></i> +250 788 123 456</li>
-                    <li><i class="fas fa-envelope"></i> iprcmusanzesu@gmail.com</li>
+                    <li><i class="fas fa-envelope"></i>rpmusanzesu@gmail.com</li>
                     <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
                 </ul>
             </div>

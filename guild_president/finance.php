@@ -1187,19 +1187,97 @@ function getStatusClass($status) {
     </header>
 
     <div class="dashboard-container">
+        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
-            <button class="sidebar-toggle" id="sidebarToggle"><i class="fas fa-chevron-left"></i></button>
+            <button class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </button>
             <ul class="sidebar-menu">
-                <li class="menu-item"><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
-                <li class="menu-item"><a href="tickets.php"><i class="fas fa-ticket-alt"></i><span>All Tickets</span><?php if ($open_tickets > 0): ?><span class="menu-badge"><?php echo $open_tickets; ?></span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="reports.php"><i class="fas fa-file-alt"></i><span>Committee Reports</span><?php if ($pending_reports > 0): ?><span class="menu-badge"><?php echo $pending_reports; ?></span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="documents.php"><i class="fas fa-file-contract"></i><span>Documents</span><?php if ($pending_docs > 0): ?><span class="menu-badge"><?php echo $pending_docs; ?></span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="committee.php"><i class="fas fa-users"></i><span>Committee Management</span></a></li>
-                <li class="menu-item"><a href="students.php"><i class="fas fa-user-graduate"></i><span>Student Management</span><?php if ($new_students > 0): ?><span class="menu-badge"><?php echo $new_students; ?> new</span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="messages.php"><i class="fas fa-comments"></i><span>Messages</span><?php if ($unread_messages > 0): ?><span class="menu-badge"><?php echo $unread_messages; ?></span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="meetings.php"><i class="fas fa-calendar-alt"></i><span>Meetings</span></a></li>
-                <li class="menu-item"><a href="finance.php" class="active"><i class="fas fa-money-bill-wave"></i><span>Finance</span><?php if (($financial_stats['pending_approvals'] ?? 0) > 0): ?><span class="menu-badge"><?php echo $financial_stats['pending_approvals']; ?></span><?php endif; ?></a></li>
-                <li class="menu-item"><a href="profile.php"><i class="fas fa-user-cog"></i><span>Profile & Settings</span></a></li>
+                <li class="menu-item">
+                    <a href="dashboard.php" >
+                        <i class="fas fa-tachometer-alt"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="tickets.php">
+                        <i class="fas fa-ticket-alt"></i>
+                        <span>All Tickets</span>
+                        <?php if ($open_tickets > 0): ?>
+                            <span class="menu-badge"><?php echo $open_tickets; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-file-alt"></i>
+                        <span>Committee Reports</span>
+                        <?php if ($pending_reports > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_reports; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="documents.php">
+                        <i class="fas fa-file-contract"></i>
+                        <span>Documents</span>
+                        <?php if ($pending_docs > 0): ?>
+                            <span class="menu-badge"><?php echo $pending_docs; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="committee.php">
+                        <i class="fas fa-users"></i>
+                        <span>Committee Performance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="manage_committee.php">
+                        <i class="fas fa-users"></i>
+                        <span>Committee Management</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="students.php" >
+                        <i class="fas fa-user-graduate"></i>
+                        <span>Student Management</span>
+                       
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="messages.php" >
+                        <i class="fas fa-comments"></i>
+                        <span>Messages</span>
+                        <?php if ($unread_messages > 0): ?>
+                            <span class="menu-badge"><?php echo $unread_messages; ?></span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="meetings.php">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Meetings</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="finance.php"  class="active">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Finance</span>
+                    </a>
+                </li>
+                 <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Reports</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="profile.php">
+                        <i class="fas fa-user-cog"></i>
+                        <span>Profile & Settings</span>
+                    </a>
+                </li>
             </ul>
         </nav>
 

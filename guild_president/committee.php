@@ -1554,13 +1554,13 @@ if (!empty($performance_data)) {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php">
+                    <a href="dashboard.php" >
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets.php">
+                    <a href="tickets.php" >
                         <i class="fas fa-ticket-alt"></i>
                         <span>All Tickets</span>
                         <?php if ($open_tickets > 0): ?>
@@ -1578,7 +1578,7 @@ if (!empty($performance_data)) {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="documents.php">
+                    <a href="documents.php" >
                         <i class="fas fa-file-contract"></i>
                         <span>Documents</span>
                         <?php if ($pending_docs > 0): ?>
@@ -1588,6 +1588,12 @@ if (!empty($performance_data)) {
                 </li>
                 <li class="menu-item">
                     <a href="committee.php" class="active">
+                        <i class="fas fa-users"></i>
+                        <span>Committee Performance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="manage_committee.php">
                         <i class="fas fa-users"></i>
                         <span>Committee Management</span>
                     </a>
@@ -1620,6 +1626,12 @@ if (!empty($performance_data)) {
                     <a href="finance.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Finance</span>
+                    </a>
+                </li>
+                 <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Reports</span>
                     </a>
                 </li>
                 <li class="menu-item">
@@ -1669,10 +1681,7 @@ if (!empty($performance_data)) {
                         <div class="stat-number"><?php echo count($committee_roles); ?></div>
                         <div class="stat-label">Available Roles</div>
                     </div>
-                    <div class="stat-card warning">
-                        <div class="stat-number"><?php echo $avg_performance; ?>%</div>
-                        <div class="stat-label">Average Performance</div>
-                    </div>
+                   
                 </div>
 
                 <!-- Tabs -->

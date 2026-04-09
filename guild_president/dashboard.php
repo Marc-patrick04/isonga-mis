@@ -1250,6 +1250,12 @@ try {
                 <li class="menu-item">
                     <a href="committee.php">
                         <i class="fas fa-users"></i>
+                        <span>Committee Performance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="manage_committee.php">
+                        <i class="fas fa-users"></i>
                         <span>Committee Management</span>
                     </a>
                 </li>

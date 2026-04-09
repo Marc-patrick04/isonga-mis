@@ -1252,13 +1252,13 @@ try {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php">
+                    <a href="dashboard.php" >
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="tickets.php">
+                    <a href="tickets.php" >
                         <i class="fas fa-ticket-alt"></i>
                         <span>All Tickets</span>
                         <?php if ($open_tickets > 0): ?>
@@ -1267,7 +1267,7 @@ try {
                     </a>
                 </li>
                 <li class="menu-item">
-                    <a href="reports.php">
+                    <a href="reports.php" >
                         <i class="fas fa-file-alt"></i>
                         <span>Committee Reports</span>
                         <?php if ($pending_reports > 0): ?>
@@ -1286,6 +1286,12 @@ try {
                 </li>
                 <li class="menu-item">
                     <a href="committee.php">
+                        <i class="fas fa-users"></i>
+                        <span>Committee Performance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="manage_committee.php">
                         <i class="fas fa-users"></i>
                         <span>Committee Management</span>
                     </a>
@@ -1318,6 +1324,12 @@ try {
                     <a href="finance.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Finance</span>
+                    </a>
+                </li>
+                 <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Reports</span>
                     </a>
                 </li>
                 <li class="menu-item">

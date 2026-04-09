@@ -140,63 +140,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
             // Commit transaction
             $pdo->commit();
             
-            // 1. Send confirmation email to student
+            // Get base URL for email links
+            $base_url = (isset($_SERVER['HTTPS']) ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
+            $base_url .= str_replace('student/financial_aid.php', '', $_SERVER['SCRIPT_NAME']);
+            
+            // 1. Send confirmation email to student - MATCHING TICKET CSS STYLE
             $email_sent = false;
             $email_message = "";
             
-            if (!empty($student_email)) {
+            if (!empty($student_email) && function_exists('sendEmail')) {
                 $subject = "Financial Aid Request Received - #$request_id";
-                $body = '
-                <!DOCTYPE html>
+                $body = '<!DOCTYPE html>
                 <html>
                 <head>
-                    <style>
-                        body { font-family: Arial, sans-serif; line-height: 1.6; }
-                        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                        .header { background: #28a745; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-                        .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
-                        .details { background: #f8f9fa; padding: 15px; margin: 15px 0; border-left: 4px solid #28a745; }
-                        .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
-                    </style>
+                    <meta charset="UTF-8">
+                    <title>Financial Aid Request Confirmation</title>
                 </head>
                 <body>
-                    <div class="container">
-                        <div class="header"><h2>✅ Financial Aid Request Received</h2></div>
-                        <div class="content">
-                            <p>Dear ' . htmlspecialchars($student_name) . ',</p>
-                            <p>Thank you for submitting your financial aid request.</p>
-                            <div class="details">
-                                <p><strong>Request ID:</strong> #' . $request_id . '</p>
-                                <p><strong>Amount:</strong> RWF ' . number_format($amount_requested, 2) . '</p>
-                                <p><strong>Urgency:</strong> ' . ucfirst($urgency_level) . '</p>
-                                <p><strong>Submission Date:</strong> ' . date('F j, Y') . '</p>
-                            </div>
-                            <p>Our team will review your request and get back to you within 3-5 business days.</p>
-                            <p><a href="http://localhost/isonga-mis/student/financial_aid">View your request</a></p>
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
+                        
+                        <h2 style="color: #003b95;">Financial Aid Request Received</h2>
+                        <p>Dear <strong>' . htmlspecialchars($student_name) . '</strong>,</p>
+                        <p>Thank you for submitting your financial aid request. Your request has been received and will be reviewed shortly.</p>
+                        <div style="background: #f7f7f7; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                            <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                            <p><strong>Title:</strong> ' . htmlspecialchars($request_title) . '</p>
+                            <p><strong>Amount Requested:</strong> RWF ' . number_format($amount_requested, 2) . '</p>
+                            <p><strong>Urgency Level:</strong> ' . ucfirst($urgency_level) . '</p>
+                            <p><strong>Submission Date:</strong> ' . date('F j, Y g:i A') . '</p>
                         </div>
-                        <div class="footer"><p>Isonga - RPSU Management System</p></div>
+                        <p>Our financial aid team will review your request and get back to you within 3-5 business days.</p>
+                        <p><a href="' . $base_url . 'student/financial_aid.php" style="background: #003b95; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Your Request</a></p>
+                        <hr style="margin: 20px 0;">
+                        <p style="color: #666; font-size: 12px;">This is an automated message from Isonga RPSU Management System.</p>
                     </div>
                 </body>
                 </html>';
                 
-                if (function_exists('sendEmail')) {
-                    $email_result = sendEmail($student_email, $subject, $body);
-                    if ($email_result['success']) {
-                        $email_sent = true;
-                        $email_message = " A confirmation email has been sent to $student_email";
-                    } else {
-                        error_log("Failed to send email to student: " . ($email_result['message'] ?? 'Unknown error'));
-                        $email_message = " However, we couldn't send the confirmation email.";
-                    }
+                $email_result = sendEmail($student_email, $subject, $body);
+                if ($email_result['success']) {
+                    $email_sent = true;
+                    $email_message = " A confirmation email has been sent to $student_email";
                 } else {
-                    error_log("sendEmail function not available");
-                    $email_message = " Email notification not available.";
+                    error_log("Failed to send email to student: " . ($email_result['message'] ?? 'Unknown error'));
+                    $email_message = " However, we couldn't send the confirmation email.";
                 }
             } else {
                 $email_message = " Please update your email address in your profile to receive notifications.";
             }
             
-            // 2. Send notification to finance officers
+            // 2. Send notification to finance officers - MATCHING TICKET CSS STYLE
             try {
                 $finance_stmt = $pdo->prepare("
                     SELECT id, email, full_name 
@@ -209,45 +202,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
                 if (!empty($finance_officers)) {
                     $urgency_colors = [
                         'low' => '#28a745',
-                        'medium' => '#ffc107',
+                        'medium' => '#f59e0b',
                         'high' => '#fd7e14',
                         'emergency' => '#dc3545'
                     ];
                     $color = $urgency_colors[$urgency_level] ?? '#6c757d';
                     
-                    $subject = "⚠️ URGENT: New Student Aid Request #$request_id";
-                    $body = '
-                    <!DOCTYPE html>
+                    $subject = "New Financial Aid Request #$request_id - Isonga RPSU";
+                    $body = '<!DOCTYPE html>
                     <html>
                     <head>
-                        <style>
-                            body { font-family: Arial, sans-serif; line-height: 1.6; }
-                            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                            .header { background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-                            .content { padding: 20px; background: #fff; border: 1px solid #ddd; }
-                            .alert { background: #fff3cd; border-left: 4px solid ' . $color . '; padding: 15px; margin: 15px 0; }
-                            .urgency-badge { display: inline-block; padding: 3px 8px; background: ' . $color . '; color: white; border-radius: 3px; font-size: 12px; font-weight: bold; }
-                            .footer { padding: 15px; text-align: center; font-size: 12px; color: #6c757d; }
-                            .btn { display: inline-block; padding: 10px 20px; background: #0056b3; color: white; text-decoration: none; border-radius: 5px; margin-top: 10px; }
-                        </style>
+                        <meta charset="UTF-8">
+                        <title>New Financial Aid Request</title>
                     </head>
                     <body>
-                        <div class="container">
-                            <div class="header"><h2>🚨 New Student Aid Request</h2></div>
-                            <div class="content">
-                                <p>Dear Finance Officer,</p>
-                                <div class="alert">
-                                    <p><strong>Request ID:</strong> #' . $request_id . '</p>
-                                    <p><strong>Student:</strong> ' . htmlspecialchars($student_name) . ' (' . htmlspecialchars($reg_number) . ')</p>
-                                    <p><strong>Amount:</strong> <strong style="color: #dc3545;">RWF ' . number_format($amount_requested, 2) . '</strong></p>
-                                    <p><strong>Urgency Level:</strong> <span class="urgency-badge">' . strtoupper($urgency_level) . '</span></p>
-                                    <p><strong>Purpose:</strong> ' . htmlspecialchars(substr($purpose, 0, 200)) . '</p>
-                                    <p><strong>Submitted:</strong> ' . date('F j, Y g:i a') . '</p>
-                                </div>
-                                <p><a href="http://localhost/isonga-mis/admin/student_aid?view=' . $request_id . '" class="btn">🔍 Review Request</a></p>
-                                <p>Please review this request and take appropriate action.</p>
+                        <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
+                           
+                            <h2 style="color: #003b95;">New Financial Aid Request</h2>
+                            <p>Dear Finance Officer,</p>
+                            <p>A new financial aid request has been submitted and requires your attention.</p>
+                            <div style="background: #f7f7f7; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                                <p><strong>Request ID:</strong> #' . $request_id . '</p>
+                                <p><strong>Student:</strong> ' . htmlspecialchars($student_name) . ' (' . htmlspecialchars($reg_number) . ')</p>
+                                <p><strong>Request Title:</strong> ' . htmlspecialchars($request_title) . '</p>
+                                <p><strong>Amount Requested:</strong> <strong style="color: #dc3545;">RWF ' . number_format($amount_requested, 2) . '</strong></p>
+                                <p><strong>Urgency Level:</strong> <span style="display: inline-block; padding: 3px 8px; background: ' . $color . '; color: white; border-radius: 3px; font-size: 12px; font-weight: bold;">' . strtoupper($urgency_level) . '</span></p>
+                                <p><strong>Purpose:</strong> ' . nl2br(htmlspecialchars($purpose)) . '</p>
+                                <p><strong>Submitted:</strong> ' . date('F j, Y g:i A') . '</p>
                             </div>
-                            <div class="footer"><p>Isonga - RPSU Management System</p></div>
+                            <p><a href="' . $base_url . 'admin/student_aid.php?view=' . $request_id . '" style="background: #003b95; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Review Request</a></p>
+                            <hr style="margin: 20px 0;">
+                            <p style="color: #666; font-size: 12px;">This is an automated message from Isonga RPSU Management System.</p>
                         </div>
                     </body>
                     </html>';
@@ -274,7 +259,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
             try {
                 $notify_stmt = $pdo->prepare("
                     INSERT INTO system_notifications (user_id, notification_type, title, message, related_id, related_table, created_at, expires_at)
-                    SELECT id, 'urgent', 'New Student Aid Request', 
+                    SELECT id, 'urgent', 'New Financial Aid Request', 
                     CONCAT('Student ', ?, ' has submitted a new financial aid request (ID: #', ?, ') for RWF ', ?),
                     ?, 'student_financial_aid', NOW(), NOW() + INTERVAL '30 days'
                     FROM users 
@@ -291,7 +276,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_financial_aid'
             }
             
             $_SESSION['success_message'] = "✅ Financial aid request submitted successfully! Request ID: #$request_id." . $email_message . $finance_message;
-            header('Location: financial_aid');
+            header('Location: financial_aid.php');
             exit();
             
         } catch (PDOException $e) {
@@ -1363,11 +1348,7 @@ function safe_display($data) {
                 </div>
             </div>
             <div class="user-menu">
-                <form method="POST" style="margin: 0;">
-                    <button type="submit" name="toggle_theme" class="icon-btn" title="Toggle Theme">
-                        <i class="fas fa-<?php echo $theme === 'light' ? 'moon' : 'sun'; ?>"></i>
-                    </button>
-                </form>
+               
                 <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                     <i class="fas fa-envelope"></i>
                     <?php if ($unread_messages > 0): ?>

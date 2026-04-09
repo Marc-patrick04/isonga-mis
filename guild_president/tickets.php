@@ -1373,7 +1373,7 @@ try {
             </button>
             <ul class="sidebar-menu">
                 <li class="menu-item">
-                    <a href="dashboard.php">
+                    <a href="dashboard.php" >
                         <i class="fas fa-tachometer-alt"></i>
                         <span>Dashboard</span>
                     </a>
@@ -1408,6 +1408,12 @@ try {
                 <li class="menu-item">
                     <a href="committee.php">
                         <i class="fas fa-users"></i>
+                        <span>Committee Performance</span>
+                    </a>
+                </li>
+                <li class="menu-item">
+                    <a href="manage_committee.php">
+                        <i class="fas fa-users"></i>
                         <span>Committee Management</span>
                     </a>
                 </li>
@@ -1439,6 +1445,12 @@ try {
                     <a href="finance.php">
                         <i class="fas fa-money-bill-wave"></i>
                         <span>Finance</span>
+                    </a>
+                </li>
+                 <li class="menu-item">
+                    <a href="reports.php">
+                        <i class="fas fa-money-bill-wave"></i>
+                        <span>Reports</span>
                     </a>
                 </li>
                 <li class="menu-item">
