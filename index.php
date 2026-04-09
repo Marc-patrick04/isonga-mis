@@ -1975,7 +1975,7 @@ foreach ($stat_queries as $key => $query) {
                             <i class="fas fa-user-graduate"></i> Student
                         </a>
                         <a href="auth/login.php" class="login-btn btn-committee">
-                            <i class="fas fa-users"></i> Committee
+                            <i class="fas fa-users"></i> Committeee
                         </a>
                     </div>
                 </div>
