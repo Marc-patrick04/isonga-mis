@@ -1,4 +1,5 @@
 <?php
+
 session_start();
 require_once 'config/database.php';
 
@@ -108,6 +109,20 @@ foreach ($stat_queries as $key => $query) {
 $hero_background = 'assets/images/college.jpg';
 if (!empty($hero_map['hero_background']['image_url'])) {
     $hero_background = getImageUrl($hero_map['hero_background']['image_url']);
+}
+// DEBUG: Check what's in your database
+if (isset($_GET['debug_paths'])) {
+    echo "<pre style='background:#fff; color:#000; padding:20px; margin:20px; position:fixed; top:0; left:0; z-index:99999;'>";
+    echo "=== HERO ITEMS ===\n";
+    foreach ($hero_items as $item) {
+        echo "Title: " . $item['title'] . "\n";
+        echo "Raw image_url: " . ($item['image_url'] ?? 'EMPTY') . "\n";
+        echo "Processed URL: " . getImageUrl($item['image_url'] ?? '') . "\n";
+        echo "File exists check: " . (file_exists($_SERVER['DOCUMENT_ROOT'] . '/' . ltrim(getImageUrl($item['image_url'] ?? ''), '/')) ? 'YES' : 'NO') . "\n";
+        echo "---\n";
+    }
+    echo "</pre>";
+    exit;
 }
 ?>
 <!DOCTYPE html>

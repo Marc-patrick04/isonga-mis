@@ -35,7 +35,7 @@ try {
     error_log("Templates query error: " . $e->getMessage());
 }
 
-// Get submitted reports
+// Get my submitted reports
 try {
     $stmt = $pdo->prepare("
         SELECT r.*, rt.name as template_name, rt.report_type,
@@ -50,7 +50,64 @@ try {
     $submitted_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $submitted_reports = [];
-    error_log("Reports query error: " . $e->getMessage());
+    error_log("My reports query error: " . $e->getMessage());
+}
+
+// Get committee reports (reports submitted by other committee members)
+try {
+    $stmt = $pdo->prepare("
+        SELECT 
+            r.id,
+            r.title,
+            r.template_id,
+            r.user_id,
+            r.report_type,
+            r.report_period,
+            r.activity_date,
+            r.content,
+            r.status,
+            r.submitted_at,
+            r.created_at,
+            r.reviewed_by,
+            r.reviewed_at,
+            r.feedback,
+            rt.name as template_name,
+            u.full_name as author_name,
+            u.role as author_role,
+            reviewer.full_name as reviewer_name
+        FROM reports r 
+        LEFT JOIN report_templates rt ON r.template_id = rt.id
+        LEFT JOIN users u ON r.user_id = u.id
+        LEFT JOIN users reviewer ON r.reviewed_by = reviewer.id
+        WHERE r.user_id != ? 
+        AND u.role IN ('minister_environment', 'minister_health', 'minister_sports', 
+                       'minister_public_relations', 'minister_culture', 'minister_gender',
+                       'president_arbitration', 'vice_president_arbitration')
+        ORDER BY r.created_at DESC
+    ");
+    $stmt->execute([$user_id]);
+    $committee_reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $committee_reports = [];
+    error_log("Committee reports query error: " . $e->getMessage());
+}
+
+// Get all reports for overview
+try {
+    $stmt = $pdo->prepare("
+        SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted,
+            SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed,
+            SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+        FROM reports 
+        WHERE user_id != ?
+    ");
+    $stmt->execute([$user_id]);
+    $committee_stats = $stmt->fetch(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    $committee_stats = ['total' => 0, 'submitted' => 0, 'reviewed' => 0, 'approved' => 0, 'rejected' => 0];
 }
 
 // Handle form submissions
@@ -84,10 +141,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             
             try {
-                // Create report
                 $stmt = $pdo->prepare("
                     INSERT INTO reports (title, template_id, user_id, report_type, report_period, activity_date, content, status, submitted_at, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 ");
                 
                 $stmt->execute([
@@ -146,6 +202,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
     
+    // Handle review/approve report
+    if (isset($_POST['action']) && $_POST['action'] === 'review_report') {
+        $report_id = $_POST['report_id'];
+        $review_status = $_POST['review_status'] ?? 'reviewed';
+        $feedback = $_POST['feedback'] ?? '';
+        
+        try {
+            $stmt = $pdo->prepare("
+                UPDATE reports 
+                SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, feedback = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ");
+            $stmt->execute([$review_status, $user_id, $feedback, $report_id]);
+            
+            $_SESSION['success_message'] = "Report " . ($review_status === 'approved' ? 'approved' : 'reviewed') . " successfully!";
+            header("Location: reports.php");
+            exit();
+            
+        } catch (PDOException $e) {
+            $_SESSION['error_message'] = "Error reviewing report: " . $e->getMessage();
+            error_log("Report review error: " . $e->getMessage());
+        }
+    }
+    
     // Handle edit report
     if (isset($_POST['action']) && $_POST['action'] === 'edit_report') {
         $report_id = $_POST['report_id'];
@@ -154,7 +234,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $activity_date = $_POST['activity_date'] ?? null;
         
         try {
-            // Get template fields
             $stmt = $pdo->prepare("SELECT template_id FROM reports WHERE id = ?");
             $stmt->execute([$report_id]);
             $report = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -177,7 +256,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 $stmt = $pdo->prepare("
                     UPDATE reports 
-                    SET title = ?, report_period = ?, activity_date = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+                    SET title = ?, report_period = ?, activity_date = ?, content = ?::jsonb, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 ");
                 $stmt->execute([$title, $report_period, $activity_date, json_encode($content_data), $report_id]);
@@ -199,35 +278,36 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
     
     try {
         $stmt = $pdo->prepare("
-            SELECT r.*, rt.name as template_name
+            SELECT r.*, rt.name as template_name, u.full_name as author_name
             FROM reports r 
             LEFT JOIN report_templates rt ON r.template_id = rt.id
-            WHERE r.id = ? AND r.user_id = ?
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE r.id = ?
         ");
-        $stmt->execute([$report_id, $user_id]);
+        $stmt->execute([$report_id]);
         $report = $stmt->fetch(PDO::FETCH_ASSOC);
         
         if ($report) {
-            // Generate CSV export
             header('Content-Type: text/csv');
-            header('Content-Disposition: attachment; filename="general_secretary_report_' . $report_id . '_' . date('Y-m-d') . '.csv"');
+            header('Content-Disposition: attachment; filename="report_' . $report_id . '_' . date('Y-m-d') . '.csv"');
             
             $output = fopen('php://output', 'w');
             
-            // CSV header
-            fputcsv($output, ['General Secretary Report - ' . $report['title']]);
+            fputcsv($output, ['Report Export - ' . $report['title']]);
             fputcsv($output, []);
+            fputcsv($output, ['Author:', $report['author_name']]);
             fputcsv($output, ['Template:', $report['template_name']]);
             fputcsv($output, ['Report Type:', $report['report_type']]);
             fputcsv($output, ['Status:', $report['status']]);
             fputcsv($output, ['Submitted:', $report['submitted_at']]);
             fputcsv($output, []);
             
-            // Main report content
             $content = json_decode($report['content'], true);
-            foreach ($content as $key => $value) {
-                $label = ucwords(str_replace('_', ' ', $key));
-                fputcsv($output, [$label . ':', $value]);
+            if (is_array($content)) {
+                foreach ($content as $key => $value) {
+                    $label = ucwords(str_replace('_', ' ', $key));
+                    fputcsv($output, [$label . ':', $value]);
+                }
             }
             
             fclose($output);
@@ -240,7 +320,7 @@ if (isset($_GET['export']) && isset($_GET['id'])) {
     }
 }
 
-// Get report statistics
+// Get report statistics for my reports
 try {
     $stmt = $pdo->prepare("
         SELECT 
@@ -248,7 +328,7 @@ try {
             SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as submitted_reports,
             SUM(CASE WHEN status = 'reviewed' THEN 1 ELSE 0 END) as reviewed_reports,
             SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_reports,
-            SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) as draft_reports
+            SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected_reports
         FROM reports 
         WHERE user_id = ?
     ");
@@ -260,7 +340,7 @@ try {
         'submitted_reports' => 0,
         'reviewed_reports' => 0,
         'approved_reports' => 0,
-        'draft_reports' => 0
+        'rejected_reports' => 0
     ];
 }
 
@@ -274,48 +354,13 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Secretariat Activities Summary',
-                        'required' => true,
-                        'description' => 'Summary of key secretariat activities conducted during the month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Student Registrations',
-                        'required' => true,
-                        'description' => 'Number of new student registrations and summary'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Committee Coordination',
-                        'required' => true,
-                        'description' => 'Coordination activities with various committees'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Document Processing',
-                        'required' => true,
-                        'description' => 'Documents processed, issued, and pending'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Meeting Minutes Status',
-                        'required' => true,
-                        'description' => 'Status of meeting minutes preparation and approval'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Challenges Faced',
-                        'required' => false,
-                        'description' => 'Challenges encountered during the month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Next Month Plans',
-                        'required' => true,
-                        'description' => 'Planned activities for the coming month'
-                    ]
+                    ['type' => 'textarea', 'title' => 'Secretariat Activities Summary', 'required' => true, 'description' => 'Summary of key secretariat activities conducted during the month'],
+                    ['type' => 'textarea', 'title' => 'Student Registrations', 'required' => true, 'description' => 'Number of new student registrations and summary'],
+                    ['type' => 'textarea', 'title' => 'Committee Coordination', 'required' => true, 'description' => 'Coordination activities with various committees'],
+                    ['type' => 'textarea', 'title' => 'Document Processing', 'required' => true, 'description' => 'Documents processed, issued, and pending'],
+                    ['type' => 'textarea', 'title' => 'Meeting Minutes Status', 'required' => true, 'description' => 'Status of meeting minutes preparation and approval'],
+                    ['type' => 'textarea', 'title' => 'Challenges Faced', 'required' => false, 'description' => 'Challenges encountered during the month'],
+                    ['type' => 'textarea', 'title' => 'Next Month Plans', 'required' => true, 'description' => 'Planned activities for the coming month']
                 ]
             ])
         ],
@@ -326,42 +371,12 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'number',
-                        'title' => 'Total Students Registered',
-                        'required' => true,
-                        'description' => 'Total number of students registered'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'New Students This Month',
-                        'required' => true,
-                        'description' => 'Number of new student registrations this month'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Student Records Updates',
-                        'required' => true,
-                        'description' => 'Updates made to student records'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Student Complaints Handled',
-                        'required' => true,
-                        'description' => 'Student complaints received and resolved'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Academic Records Management',
-                        'required' => true,
-                        'description' => 'Management of academic records and transcripts'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Student Welfare Activities',
-                        'required' => false,
-                        'description' => 'Activities related to student welfare'
-                    ]
+                    ['type' => 'number', 'title' => 'Total Students Registered', 'required' => true, 'description' => 'Total number of students registered'],
+                    ['type' => 'number', 'title' => 'New Students This Month', 'required' => true, 'description' => 'Number of new student registrations this month'],
+                    ['type' => 'textarea', 'title' => 'Student Records Updates', 'required' => true, 'description' => 'Updates made to student records'],
+                    ['type' => 'textarea', 'title' => 'Student Complaints Handled', 'required' => true, 'description' => 'Student complaints received and resolved'],
+                    ['type' => 'textarea', 'title' => 'Academic Records Management', 'required' => true, 'description' => 'Management of academic records and transcripts'],
+                    ['type' => 'textarea', 'title' => 'Student Welfare Activities', 'required' => false, 'description' => 'Activities related to student welfare']
                 ]
             ])
         ],
@@ -372,42 +387,12 @@ try {
             'report_type' => 'activity',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'number',
-                        'title' => 'Meetings Held',
-                        'required' => true,
-                        'description' => 'Number of committee meetings held'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Average Attendance Rate',
-                        'required' => true,
-                        'description' => 'Average attendance percentage across meetings'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Minutes Prepared',
-                        'required' => true,
-                        'description' => 'Meeting minutes prepared and submitted'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Minutes Pending',
-                        'required' => true,
-                        'description' => 'Meeting minutes pending approval'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Key Decisions Made',
-                        'required' => true,
-                        'description' => 'Key decisions from committee meetings'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Action Items Tracking',
-                        'required' => true,
-                        'description' => 'Status of action items from meetings'
-                    ]
+                    ['type' => 'number', 'title' => 'Meetings Held', 'required' => true, 'description' => 'Number of committee meetings held'],
+                    ['type' => 'number', 'title' => 'Average Attendance Rate', 'required' => true, 'description' => 'Average attendance percentage across meetings'],
+                    ['type' => 'textarea', 'title' => 'Minutes Prepared', 'required' => true, 'description' => 'Meeting minutes prepared and submitted'],
+                    ['type' => 'textarea', 'title' => 'Minutes Pending', 'required' => true, 'description' => 'Meeting minutes pending approval'],
+                    ['type' => 'textarea', 'title' => 'Key Decisions Made', 'required' => true, 'description' => 'Key decisions from committee meetings'],
+                    ['type' => 'textarea', 'title' => 'Action Items Tracking', 'required' => true, 'description' => 'Status of action items from meetings']
                 ]
             ])
         ],
@@ -418,42 +403,12 @@ try {
             'report_type' => 'monthly',
             'fields' => json_encode([
                 'sections' => [
-                    [
-                        'type' => 'number',
-                        'title' => 'Documents Processed',
-                        'required' => true,
-                        'description' => 'Total documents processed this period'
-                    ],
-                    [
-                        'type' => 'number',
-                        'title' => 'Documents Pending',
-                        'required' => true,
-                        'description' => 'Documents pending processing'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Document Types Summary',
-                        'required' => true,
-                        'description' => 'Breakdown of document types processed'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Official Correspondence',
-                        'required' => true,
-                        'description' => 'Official letters and correspondence handled'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Record Keeping Updates',
-                        'required' => true,
-                        'description' => 'Updates to official records and archives'
-                    ],
-                    [
-                        'type' => 'textarea',
-                        'title' => 'Digital Document Management',
-                        'required' => false,
-                        'description' => 'Digital document system updates'
-                    ]
+                    ['type' => 'number', 'title' => 'Documents Processed', 'required' => true, 'description' => 'Total documents processed this period'],
+                    ['type' => 'number', 'title' => 'Documents Pending', 'required' => true, 'description' => 'Documents pending processing'],
+                    ['type' => 'textarea', 'title' => 'Document Types Summary', 'required' => true, 'description' => 'Breakdown of document types processed'],
+                    ['type' => 'textarea', 'title' => 'Official Correspondence', 'required' => true, 'description' => 'Official letters and correspondence handled'],
+                    ['type' => 'textarea', 'title' => 'Record Keeping Updates', 'required' => true, 'description' => 'Updates to official records and archives'],
+                    ['type' => 'textarea', 'title' => 'Digital Document Management', 'required' => false, 'description' => 'Digital document system updates']
                 ]
             ])
         ]
@@ -466,7 +421,7 @@ try {
         if (!$check_stmt->fetch()) {
             $insert_stmt = $pdo->prepare("
                 INSERT INTO report_templates (name, description, role_specific, report_type, fields, is_active, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?::jsonb, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ");
             $insert_stmt->execute([
                 $template_data['name'],
@@ -604,7 +559,6 @@ try {
             transition: var(--transition);
         }
 
-        /* Header */
         .header {
             background: var(--white);
             box-shadow: var(--shadow-sm);
@@ -745,13 +699,11 @@ try {
             box-shadow: var(--shadow-sm);
         }
 
-        /* Dashboard Container */
         .dashboard-container {
             display: flex;
             min-height: calc(100vh - 73px);
         }
 
-        /* Sidebar */
         .sidebar {
             width: var(--sidebar-width);
             background: var(--white);
@@ -841,7 +793,6 @@ try {
             margin-left: auto;
         }
 
-        /* Main Content */
         .main-content {
             flex: 1;
             padding: 1.5rem;
@@ -854,7 +805,6 @@ try {
             margin-left: var(--sidebar-collapsed-width);
         }
 
-        /* Page Header */
         .page-header {
             margin-bottom: 1.5rem;
         }
@@ -871,7 +821,6 @@ try {
             font-size: 0.9rem;
         }
 
-        /* Stats Grid */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -956,20 +905,52 @@ try {
             font-weight: 500;
         }
 
-        /* Content Grid */
-        .content-grid {
-            display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 1.5rem;
+        .tabs-container {
+            background: var(--white);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            overflow: hidden;
         }
 
-        @media (max-width: 992px) {
-            .content-grid {
-                grid-template-columns: 1fr;
-            }
+        .tabs {
+            display: flex;
+            background: var(--white);
+            border-bottom: 1px solid var(--medium-gray);
+            overflow-x: auto;
         }
 
-        /* Cards */
+        .tab {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--dark-gray);
+            transition: var(--transition);
+            border-bottom: 2px solid transparent;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        .tab.active {
+            color: var(--primary-blue);
+            border-bottom-color: var(--primary-blue);
+        }
+
+        .tab:hover {
+            color: var(--primary-blue);
+            background: var(--light-blue);
+        }
+
+        .content-section {
+            display: none;
+            padding: 1.25rem;
+        }
+
+        .content-section.active {
+            display: block;
+        }
+
         .card {
             background: var(--white);
             border-radius: var(--border-radius);
@@ -1017,44 +998,6 @@ try {
             padding: 1.25rem;
         }
 
-        /* Tabs */
-        .tabs {
-            display: flex;
-            background: var(--white);
-            border-radius: var(--border-radius) var(--border-radius) 0 0;
-            border-bottom: 1px solid var(--medium-gray);
-            margin-bottom: 0;
-        }
-
-        .tab {
-            padding: 1rem 1.5rem;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-weight: 500;
-            color: var(--dark-gray);
-            border-bottom: 3px solid transparent;
-            transition: var(--transition);
-        }
-
-        .tab:hover {
-            color: var(--primary-blue);
-        }
-
-        .tab.active {
-            color: var(--primary-blue);
-            border-bottom-color: var(--primary-blue);
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Template Grid */
         .template-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -1141,7 +1084,6 @@ try {
             font-weight: 600;
         }
 
-        /* Form Styles */
         .form-group {
             margin-bottom: 1.5rem;
         }
@@ -1191,7 +1133,6 @@ try {
             padding-right: 2.5rem;
         }
 
-        /* Buttons */
         .btn {
             display: inline-flex;
             align-items: center;
@@ -1226,14 +1167,22 @@ try {
             background: var(--light-blue);
         }
 
-        .btn-danger {
-            background: var(--danger);
+        .btn-success {
+            background: var(--success);
             color: white;
         }
 
-        .btn-danger:hover {
-            background: #c82333;
-            transform: translateY(-1px);
+        .btn-success:hover {
+            background: #218838;
+        }
+
+        .btn-warning {
+            background: var(--warning);
+            color: var(--text-dark);
+        }
+
+        .btn-warning:hover {
+            background: #e0a800;
         }
 
         .btn-sm {
@@ -1241,7 +1190,6 @@ try {
             font-size: 0.75rem;
         }
 
-        /* Status Badges */
         .status-badge {
             padding: 0.25rem 0.5rem;
             border-radius: 20px;
@@ -1252,20 +1200,24 @@ try {
 
         .status-submitted {
             background: #fff3cd;
-            color: var(--warning);
+            color: #856404;
         }
 
         .status-reviewed {
             background: #cce7ff;
-            color: var(--info);
+            color: #004085;
         }
 
         .status-approved {
             background: #d4edda;
-            color: var(--success);
+            color: #155724;
         }
 
-        /* Table */
+        .status-rejected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
         .table-responsive {
             overflow-x: auto;
         }
@@ -1289,7 +1241,10 @@ try {
             font-size: 0.75rem;
         }
 
-        /* File Upload */
+        .table tbody tr:hover {
+            background: var(--light-blue);
+        }
+
         .file-upload {
             border: 2px dashed var(--medium-gray);
             border-radius: var(--border-radius);
@@ -1332,7 +1287,6 @@ try {
             padding: 0.25rem;
         }
 
-        /* Alert */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: var(--border-radius);
@@ -1355,7 +1309,12 @@ try {
             border-left-color: var(--danger);
         }
 
-        /* Modal */
+        .alert-info {
+            background: #cce7ff;
+            color: #004085;
+            border-left-color: var(--info);
+        }
+
         .modal {
             display: none;
             position: fixed;
@@ -1417,7 +1376,10 @@ try {
             gap: 0.75rem;
         }
 
-        /* Overlay for mobile */
+        .text-muted {
+            color: var(--dark-gray);
+        }
+
         .overlay {
             display: none;
             position: fixed;
@@ -1431,7 +1393,6 @@ try {
             display: block;
         }
 
-        /* Responsive */
         @media (max-width: 992px) {
             .sidebar {
                 transform: translateX(-100%);
@@ -1473,6 +1434,14 @@ try {
                 background: var(--primary-blue);
                 color: white;
             }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .template-grid {
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            }
         }
 
         @media (max-width: 768px) {
@@ -1497,12 +1466,26 @@ try {
                 grid-template-columns: repeat(2, 1fr);
             }
 
+            .stat-number {
+                font-size: 1.1rem;
+            }
+
             .template-grid {
                 grid-template-columns: 1fr;
             }
 
-            .stat-number {
-                font-size: 1.1rem;
+            .tabs {
+                flex-direction: column;
+            }
+
+            .tab {
+                border-left: 2px solid transparent;
+                border-bottom: none;
+            }
+
+            .tab.active {
+                border-left-color: var(--primary-blue);
+                border-bottom-color: transparent;
             }
         }
 
@@ -1540,28 +1523,12 @@ try {
             .page-title {
                 font-size: 1.2rem;
             }
-
-            .tabs {
-                flex-direction: column;
-            }
-
-            .tab {
-                border-bottom: none;
-                border-left: 3px solid transparent;
-            }
-
-            .tab.active {
-                border-left-color: var(--primary-blue);
-                border-bottom: none;
-            }
         }
     </style>
 </head>
 <body>
-    <!-- Overlay for mobile -->
     <div class="overlay" id="mobileOverlay"></div>
     
-    <!-- Header -->
     <header class="header">
         <div class="nav-container">
             <div class="logo-section">
@@ -1598,9 +1565,7 @@ try {
         </div>
     </header>
 
-    <!-- Dashboard Container -->
     <div class="dashboard-container">
-        <!-- Sidebar -->
         <nav class="sidebar" id="sidebar">
             <button class="sidebar-toggle" id="sidebarToggle">
                 <i class="fas fa-chevron-left"></i>
@@ -1678,14 +1643,12 @@ try {
             </ul>
         </nav>
 
-        <!-- Main Content -->
         <main class="main-content" id="mainContent">
             <div class="page-header">
                 <h1 class="page-title">Reports Management</h1>
-                <p class="page-description">Create, manage, and track your reports</p>
+                <p class="page-description">Create and manage your reports, review committee submissions</p>
             </div>
 
-            <!-- Display Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i> <?php echo $_SESSION['success_message']; ?>
@@ -1700,7 +1663,7 @@ try {
                 <?php unset($_SESSION['error_message']); ?>
             <?php endif; ?>
 
-            <!-- Report Statistics -->
+            <!-- Statistics Row -->
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-icon">
@@ -1708,7 +1671,7 @@ try {
                     </div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $report_stats['total_reports']; ?></div>
-                        <div class="stat-label">Total Reports</div>
+                        <div class="stat-label">My Reports</div>
                     </div>
                 </div>
                 <div class="stat-card warning">
@@ -1717,25 +1680,25 @@ try {
                     </div>
                     <div class="stat-content">
                         <div class="stat-number"><?php echo $report_stats['submitted_reports']; ?></div>
-                        <div class="stat-label">Submitted</div>
-                    </div>
-                </div>
-                <div class="stat-card success">
-                    <div class="stat-icon">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['approved_reports']; ?></div>
-                        <div class="stat-label">Approved</div>
+                        <div class="stat-label">My Pending</div>
                     </div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon">
-                        <i class="fas fa-pen"></i>
+                        <i class="fas fa-users"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo $report_stats['draft_reports']; ?></div>
-                        <div class="stat-label">Drafts</div>
+                        <div class="stat-number"><?php echo $committee_stats['total']; ?></div>
+                        <div class="stat-label">Committee Reports</div>
+                    </div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-icon">
+                        <i class="fas fa-hourglass-half"></i>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number"><?php echo $committee_stats['submitted']; ?></div>
+                        <div class="stat-label">Awaiting Review</div>
                     </div>
                 </div>
             </div>
@@ -1745,11 +1708,6 @@ try {
                 <div class="card">
                     <div class="card-header">
                         <h3>Edit Report: <?php echo htmlspecialchars($current_report['title']); ?></h3>
-                        <div>
-                            <span class="status-badge status-<?php echo $current_report['status']; ?>">
-                                <?php echo ucfirst($current_report['status']); ?>
-                            </span>
-                        </div>
                     </div>
                     <div class="card-body">
                         <form method="POST" action="reports.php" enctype="multipart/form-data">
@@ -1813,178 +1771,302 @@ try {
                 </div>
 
             <?php else: ?>
-                <!-- Main Reports Interface -->
-                <div class="tabs">
-                    <button class="tab active" data-tab="create">Create New Report</button>
-                    <button class="tab" data-tab="submitted">My Reports (<?php echo count($submitted_reports); ?>)</button>
-                </div>
-
-                <!-- Create Report Tab -->
-                <div class="tab-content active" id="create-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>Create New Report</h3>
-                        </div>
-                        <div class="card-body">
-                            <?php if (empty($templates)): ?>
-                                <div class="alert alert-danger">
-                                    <i class="fas fa-exclamation-triangle"></i> No report templates available at the moment.
-                                </div>
-                            <?php else: ?>
-                                <div class="template-grid" id="templateGrid">
-                                    <?php foreach ($templates as $template): ?>
-                                        <div class="template-card" data-template-id="<?php echo $template['id']; ?>">
-                                            <div class="template-check">
-                                                <i class="fas fa-check"></i>
-                                            </div>
-                                            <div class="template-icon">
-                                                <i class="fas fa-<?php 
-                                                    echo $template['report_type'] === 'activity' ? 'tasks' : 
-                                                         ($template['report_type'] === 'monthly' ? 'calendar-alt' : 'file-alt'); 
-                                                ?>"></i>
-                                            </div>
-                                            <h4 class="template-title"><?php echo htmlspecialchars($template['name']); ?></h4>
-                                            <p class="template-description"><?php echo htmlspecialchars($template['description'] ?? 'No description available'); ?></p>
-                                            <div class="template-type"><?php echo ucfirst($template['report_type']); ?> Report</div>
-                                        </div>
-                                    <?php endforeach; ?>
-                                </div>
-
-                                <!-- Report Form (Initially Hidden) -->
-                                <form id="reportForm" method="POST" enctype="multipart/form-data" style="display: none; margin-top: 2rem;">
-                                    <input type="hidden" name="action" value="create_report">
-                                    <input type="hidden" name="template_id" id="selectedTemplateId">
-                                    
-                                    <div class="form-group">
-                                        <label class="form-label" for="title">Report Title *</label>
-                                        <input type="text" class="form-control" id="title" name="title" required>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label" for="report_type">Report Type</label>
-                                        <select class="form-control form-select" id="report_type" name="report_type">
-                                            <option value="monthly">Monthly Report</option>
-                                            <option value="activity">Activity Report</option>
-                                            <option value="team">Team Report</option>
-                                        </select>
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label" for="report_period">Report Period</label>
-                                        <input type="month" class="form-control" id="report_period" name="report_period">
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label" for="activity_date">Activity Date</label>
-                                        <input type="date" class="form-control" id="activity_date" name="activity_date">
-                                    </div>
-
-                                    <div id="templateFields">
-                                        <!-- Dynamic fields will be inserted here based on template -->
-                                    </div>
-
-                                    <div class="form-group">
-                                        <label class="form-label">Attachments (Optional)</label>
-                                        <div class="file-upload" onclick="document.getElementById('report_files').click()">
-                                            <i class="fas fa-cloud-upload-alt"></i>
-                                            <p>Click to upload files or drag and drop</p>
-                                            <small class="form-text">Maximum file size: 10MB. Supported formats: PDF, DOC, DOCX, JPG, PNG</small>
-                                            <input type="file" class="file-input" id="report_files" name="report_files[]" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onchange="handleFileSelect(this)" style="display: none;">
-                                        </div>
-                                        <div class="file-list" id="fileList"></div>
-                                    </div>
-
-                                    <div class="form-group" style="margin-top: 2rem;">
-                                        <button type="submit" class="btn btn-primary">
-                                            <i class="fas fa-paper-plane"></i> Submit Report
-                                        </button>
-                                        <button type="button" class="btn btn-outline" onclick="resetForm()">
-                                            <i class="fas fa-times"></i> Cancel
-                                        </button>
-                                    </div>
-                                </form>
-                            <?php endif; ?>
-                        </div>
+                <!-- Tabs -->
+                <div class="tabs-container">
+                    <div class="tabs">
+                        <button class="tab active" onclick="showTab('create')">
+                            <i class="fas fa-plus-circle"></i> Create Report
+                        </button>
+                        <button class="tab" onclick="showTab('my')">
+                            <i class="fas fa-file-alt"></i> My Reports (<?php echo count($submitted_reports); ?>)
+                        </button>
+                        <button class="tab" onclick="showTab('committee')">
+                            <i class="fas fa-users"></i> Committee Reports (<?php echo count($committee_reports); ?>)
+                        </button>
                     </div>
-                </div>
 
-                <!-- Submitted Reports Tab -->
-                <div class="tab-content" id="submitted-tab">
-                    <div class="card">
-                        <div class="card-header">
-                            <h3>My Reports</h3>
-                            <div class="card-header-actions">
-                                <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
+                    <!-- Create Report Tab -->
+                    <div id="create-tab" class="content-section active">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Create New Report</h3>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($templates)): ?>
+                                    <div class="alert alert-danger">
+                                        <i class="fas fa-exclamation-triangle"></i> No report templates available.
+                                    </div>
+                                <?php else: ?>
+                                    <div class="template-grid" id="templateGrid">
+                                        <?php foreach ($templates as $template): ?>
+                                            <div class="template-card" data-template-id="<?php echo $template['id']; ?>">
+                                                <div class="template-check">
+                                                    <i class="fas fa-check"></i>
+                                                </div>
+                                                <div class="template-icon">
+                                                    <i class="fas fa-<?php 
+                                                        echo $template['report_type'] === 'activity' ? 'tasks' : 
+                                                             ($template['report_type'] === 'monthly' ? 'calendar-alt' : 'file-alt'); 
+                                                    ?>"></i>
+                                                </div>
+                                                <h4 class="template-title"><?php echo htmlspecialchars($template['name']); ?></h4>
+                                                <p class="template-description"><?php echo htmlspecialchars($template['description'] ?? 'No description available'); ?></p>
+                                                <div class="template-type"><?php echo ucfirst($template['report_type']); ?> Report</div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+
+                                    <form id="reportForm" method="POST" enctype="multipart/form-data" style="display: none; margin-top: 2rem;">
+                                        <input type="hidden" name="action" value="create_report">
+                                        <input type="hidden" name="template_id" id="selectedTemplateId">
+                                        
+                                        <div class="form-group">
+                                            <label class="form-label" for="title">Report Title *</label>
+                                            <input type="text" class="form-control" id="title" name="title" required>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label class="form-label" for="report_type">Report Type</label>
+                                            <select class="form-control form-select" id="report_type" name="report_type">
+                                                <option value="monthly">Monthly Report</option>
+                                                <option value="activity">Activity Report</option>
+                                                <option value="team">Team Report</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label class="form-label" for="report_period">Report Period</label>
+                                            <input type="month" class="form-control" id="report_period" name="report_period">
+                                        </div>
+
+                                        <div class="form-group">
+                                            <label class="form-label" for="activity_date">Activity Date</label>
+                                            <input type="date" class="form-control" id="activity_date" name="activity_date">
+                                        </div>
+
+                                        <div id="templateFields"></div>
+
+                                        <div class="form-group">
+                                            <label class="form-label">Attachments (Optional)</label>
+                                            <div class="file-upload" onclick="document.getElementById('report_files').click()">
+                                                <i class="fas fa-cloud-upload-alt"></i>
+                                                <p>Click to upload files</p>
+                                                <small class="form-text">Max 10MB. PDF, DOC, DOCX, JPG, PNG</small>
+                                                <input type="file" class="file-input" id="report_files" name="report_files[]" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onchange="handleFileSelect(this)" style="display: none;">
+                                            </div>
+                                            <div class="file-list" id="fileList"></div>
+                                        </div>
+
+                                        <div class="form-group" style="margin-top: 2rem;">
+                                            <button type="submit" class="btn btn-primary">
+                                                <i class="fas fa-paper-plane"></i> Submit Report
+                                            </button>
+                                            <button type="button" class="btn btn-outline" onclick="resetForm()">
+                                                <i class="fas fa-times"></i> Cancel
+                                            </button>
+                                        </div>
+                                    </form>
+                                <?php endif; ?>
                             </div>
                         </div>
-                        <div class="card-body">
-                            <?php if (empty($submitted_reports)): ?>
-                                <div class="alert alert-info">
-                                    <i class="fas fa-info-circle"></i> No reports submitted yet. Click "Create New Report" to get started.
+                    </div>
+
+                    <!-- My Reports Tab -->
+                    <div id="my-tab" class="content-section">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>My Reports</h3>
+                                <div class="card-header-actions">
+                                    <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
                                 </div>
-                            <?php else: ?>
-                                <div class="table-responsive">
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Title</th>
-                                                <th>Template</th>
-                                                <th>Type</th>
-                                                <th>Status</th>
-                                                <th>Submitted</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            <?php foreach ($submitted_reports as $report): ?>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($submitted_reports)): ?>
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle"></i> No reports submitted yet.
+                                    </div>
+                                <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table">
+                                            <thead>
                                                 <tr>
-                                                    <td>
-                                                        <strong><?php echo htmlspecialchars($report['title']); ?></strong>
-                                                        <?php if ($report['report_period']): ?>
-                                                            <br><small class="text-muted"><?php echo date('F Y', strtotime($report['report_period'])); ?></small>
-                                                        <?php endif; ?>
-                                                    </td
-                                                    <td><?php echo htmlspecialchars($report['template_name'] ?? 'Custom'); ?></td
-                                                    <td>
-                                                        <span class="template-type"><?php echo ucfirst($report['report_type']); ?></span>
-                                                    </td
-                                                    <td>
-                                                        <span class="status-badge status-<?php echo $report['status']; ?>">
-                                                            <?php echo ucfirst($report['status']); ?>
-                                                        </span>
-                                                        <?php if ($report['reviewer_name']): ?>
-                                                            <br><small>by <?php echo htmlspecialchars($report['reviewer_name']); ?></small>
-                                                        <?php endif; ?>
-                                                    </td
-                                                    <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td
-                                                    <td>
-                                                        <div style="display: flex; gap: 0.25rem;">
-                                                            <a href="reports.php?export=1&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Export">
-                                                                <i class="fas fa-download"></i>
-                                                            </a>
-                                                            <?php if ($report['status'] === 'draft'): ?>
-                                                                <a href="reports.php?action=edit&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Edit">
-                                                                    <i class="fas fa-edit"></i>
-                                                                </a>
-                                                            <?php endif; ?>
-                                                            <button class="btn btn-outline btn-sm" onclick="viewReport(<?php echo $report['id']; ?>)" title="View">
-                                                                <i class="fas fa-eye"></i>
-                                                            </button>
-                                                        </div>
-                                                    </td
+                                                    <th>Title</th>
+                                                    <th>Template</th>
+                                                    <th>Type</th>
+                                                    <th>Period/Date</th>
+                                                    <th>Status</th>
+                                                    <th>Submitted</th>
+                                                    <th>Actions</th>
                                                 </tr>
-                                            <?php endforeach; ?>
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($submitted_reports as $report): ?>
+                                                    <tr>
+                                                        <td><strong><?php echo htmlspecialchars($report['title']); ?></strong></td
+                                                        <td><?php echo htmlspecialchars($report['template_name'] ?? 'Custom'); ?></td
+                                                        <td><span class="template-type"><?php echo ucfirst($report['report_type']); ?></span></td
+                                                        <td>
+                                                            <?php 
+                                                            if ($report['report_period']) {
+                                                                echo date('F Y', strtotime($report['report_period'] . '-01'));
+                                                            } elseif ($report['activity_date']) {
+                                                                echo date('M j, Y', strtotime($report['activity_date']));
+                                                            } else {
+                                                                echo '—';
+                                                            }
+                                                            ?>
+                                                        </td
+                                                        <td>
+                                                            <span class="status-badge status-<?php echo $report['status']; ?>">
+                                                                <?php echo ucfirst($report['status']); ?>
+                                                            </span>
+                                                        </td
+                                                        <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td
+                                                        <td>
+                                                            <div style="display: flex; gap: 0.25rem;">
+                                                                <a href="reports.php?export=1&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Export">
+                                                                    <i class="fas fa-download"></i>
+                                                                </a>
+                                                                <?php if ($report['status'] === 'submitted'): ?>
+                                                                    <a href="reports.php?action=edit&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Edit">
+                                                                        <i class="fas fa-edit"></i>
+                                                                    </a>
+                                                                <?php endif; ?>
+                                                                <button class="btn btn-outline btn-sm" onclick="viewReport(<?php echo $report['id']; ?>)" title="View">
+                                                                    <i class="fas fa-eye"></i>
+                                                                </button>
+                                                            </div>
+                                                        </td
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Committee Reports Tab (for review) -->
+                    <div id="committee-tab" class="content-section">
+                        <div class="card">
+                            <div class="card-header">
+                                <h3>Committee Reports - Pending Review</h3>
+                                <div class="card-header-actions">
+                                    <button class="card-header-btn" title="Refresh" onclick="window.location.reload()">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
                                 </div>
-                            <?php endif; ?>
+                            </div>
+                            <div class="card-body">
+                                <?php if (empty($committee_reports)): ?>
+                                    <div class="alert alert-info">
+                                        <i class="fas fa-info-circle"></i> No committee reports submitted yet.
+                                    </div>
+                                <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Author</th>
+                                                    <th>Role</th>
+                                                    <th>Title</th>
+                                                    <th>Template</th>
+                                                    <th>Period/Date</th>
+                                                    <th>Status</th>
+                                                    <th>Submitted</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($committee_reports as $report): ?>
+                                                    <tr>
+                                                        <td>
+                                                            <strong><?php echo htmlspecialchars($report['author_name'] ?? 'Unknown'); ?></strong>
+                                                            <br><small class="text-muted"><?php echo ucfirst(str_replace('_', ' ', $report['author_role'] ?? '')); ?></small>
+                                                        </td
+                                                        <td><?php echo ucfirst(str_replace('_', ' ', $report['author_role'] ?? '')); ?></td
+                                                        <td><?php echo htmlspecialchars($report['title']); ?></td
+                                                        <td><?php echo htmlspecialchars($report['template_name'] ?? 'Custom'); ?></td
+                                                        <td>
+                                                            <?php 
+                                                            if ($report['report_period']) {
+                                                                echo date('F Y', strtotime($report['report_period'] . '-01'));
+                                                            } elseif ($report['activity_date']) {
+                                                                echo date('M j, Y', strtotime($report['activity_date']));
+                                                            } else {
+                                                                echo '—';
+                                                            }
+                                                            ?>
+                                                        </td
+                                                        <td>
+                                                            <span class="status-badge status-<?php echo $report['status']; ?>">
+                                                                <?php echo ucfirst($report['status']); ?>
+                                                            </span>
+                                                        </td
+                                                        <td><?php echo date('M j, Y', strtotime($report['submitted_at'])); ?></td
+                                                        <td>
+                                                            <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
+                                                                <a href="reports.php?export=1&id=<?php echo $report['id']; ?>" class="btn btn-outline btn-sm" title="Export">
+                                                                    <i class="fas fa-download"></i>
+                                                                </a>
+                                                                <button class="btn btn-outline btn-sm" onclick="viewReport(<?php echo $report['id']; ?>)" title="View">
+                                                                    <i class="fas fa-eye"></i>
+                                                                </button>
+                                                                <?php if ($report['status'] === 'submitted'): ?>
+                                                                    <button class="btn btn-success btn-sm" onclick="openReviewModal(<?php echo $report['id']; ?>, '<?php echo htmlspecialchars($report['title']); ?>')" title="Review">
+                                                                        <i class="fas fa-check-circle"></i> Review
+                                                                    </button>
+                                                                <?php endif; ?>
+                                                            </div>
+                                                        </td
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
             <?php endif; ?>
         </main>
+    </div>
+
+    <!-- Review Modal -->
+    <div id="reviewModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Review Report</h3>
+                <button class="modal-close" onclick="closeReviewModal()">&times;</button>
+            </div>
+            <form method="POST" action="reports.php">
+                <input type="hidden" name="action" value="review_report">
+                <input type="hidden" name="report_id" id="reviewReportId">
+                <div class="modal-body">
+                    <p><strong>Report:</strong> <span id="reviewReportTitle"></span></p>
+                    <div class="form-group">
+                        <label class="form-label">Review Status</label>
+                        <select class="form-control" name="review_status" required>
+                            <option value="reviewed">Mark as Reviewed</option>
+                            <option value="approved">Approve</option>
+                            <option value="rejected">Reject</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Feedback / Comments</label>
+                        <textarea class="form-control" name="feedback" rows="4" placeholder="Provide feedback to the committee member..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline" onclick="closeReviewModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Submit Review</button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <!-- Report View Modal -->
@@ -1994,9 +2076,7 @@ try {
                 <h3 class="modal-title">Report Details</h3>
                 <button class="modal-close" onclick="closeModal()">&times;</button>
             </div>
-            <div class="modal-body" id="modalContent">
-                <!-- Content will be loaded here -->
-            </div>
+            <div class="modal-body" id="modalContent"></div>
         </div>
     </div>
 
@@ -2036,9 +2116,7 @@ try {
             mobileMenuToggle.addEventListener('click', () => {
                 const isOpen = sidebar.classList.toggle('mobile-open');
                 mobileOverlay.classList.toggle('active', isOpen);
-                mobileMenuToggle.innerHTML = isOpen
-                    ? '<i class="fas fa-times"></i>'
-                    : '<i class="fas fa-bars"></i>';
+                mobileMenuToggle.innerHTML = isOpen ? '<i class="fas fa-times"></i>' : '<i class="fas fa-bars"></i>';
                 document.body.style.overflow = isOpen ? 'hidden' : '';
             });
         }
@@ -2052,7 +2130,6 @@ try {
             });
         }
 
-        // Close mobile nav on resize to desktop
         window.addEventListener('resize', () => {
             if (window.innerWidth > 992) {
                 sidebar.classList.remove('mobile-open');
@@ -2063,52 +2140,36 @@ try {
         });
 
         // Tab functionality
-        document.addEventListener('DOMContentLoaded', function() {
-            const tabs = document.querySelectorAll('.tab');
-            const tabContents = document.querySelectorAll('.tab-content');
-
-            tabs.forEach(tab => {
-                tab.addEventListener('click', () => {
-                    const tabId = tab.getAttribute('data-tab');
-                    
-                    tabs.forEach(t => t.classList.remove('active'));
-                    tabContents.forEach(content => content.classList.remove('active'));
-                    
-                    tab.classList.add('active');
-                    document.getElementById(`${tabId}-tab`).classList.add('active');
-                });
+        function showTab(tabName) {
+            document.querySelectorAll('.content-section').forEach(tab => {
+                tab.classList.remove('active');
             });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+        }
 
-            // Template selection
-            const templateCards = document.querySelectorAll('.template-card');
-            templateCards.forEach(card => {
-                card.addEventListener('click', function() {
-                    const templateId = this.getAttribute('data-template-id');
-                    selectTemplate(templateId);
-                });
+        // Template selection
+        document.querySelectorAll('.template-card').forEach(card => {
+            card.addEventListener('click', function() {
+                const templateId = this.getAttribute('data-template-id');
+                selectTemplate(templateId);
             });
         });
 
-        // Template selection function
         function selectTemplate(templateId) {
-            // Update UI
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
             });
             document.querySelector(`[data-template-id="${templateId}"]`).classList.add('selected');
-            
-            // Show form
             document.getElementById('reportForm').style.display = 'block';
             document.getElementById('selectedTemplateId').value = templateId;
-            
-            // Scroll to form
             document.getElementById('reportForm').scrollIntoView({ behavior: 'smooth' });
-            
-            // Load template fields
             loadTemplateFields(templateId);
         }
 
-        // Load template fields via AJAX
         async function loadTemplateFields(templateId) {
             try {
                 const response = await fetch(`../api/get_template_fields.php?template_id=${templateId}`);
@@ -2125,33 +2186,16 @@ try {
                         const fieldGroup = document.createElement('div');
                         fieldGroup.className = 'form-group';
                         
-                        let fieldHtml = `
-                            <label class="form-label" for="${fieldId}">${escapeHtml(section.title)} ${section.required ? '*' : ''}</label>
-                        `;
+                        let fieldHtml = `<label class="form-label" for="${fieldId}">${escapeHtml(section.title)} ${section.required ? '*' : ''}</label>`;
                         
                         if (section.type === 'textarea') {
-                            fieldHtml += `
-                                <textarea class="form-control" id="${fieldId}" name="${fieldName}" 
-                                          ${section.required ? 'required' : ''} 
-                                          placeholder="${escapeHtml(section.description || '')}"
-                                          rows="6"></textarea>
-                            `;
+                            fieldHtml += `<textarea class="form-control" id="${fieldId}" name="${fieldName}" ${section.required ? 'required' : ''} placeholder="${escapeHtml(section.description || '')}" rows="6"></textarea>`;
                         } else if (section.type === 'number') {
-                            fieldHtml += `
-                                <input type="number" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''} step="0.01">
-                            `;
+                            fieldHtml += `<input type="number" class="form-control" id="${fieldId}" name="${fieldName}" ${section.required ? 'required' : ''} step="0.01">`;
                         } else if (section.type === 'date') {
-                            fieldHtml += `
-                                <input type="date" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}>
-                            `;
+                            fieldHtml += `<input type="date" class="form-control" id="${fieldId}" name="${fieldName}" ${section.required ? 'required' : ''}>`;
                         } else {
-                            fieldHtml += `
-                                <input type="text" class="form-control" id="${fieldId}" name="${fieldName}" 
-                                       ${section.required ? 'required' : ''}
-                                       placeholder="${escapeHtml(section.description || '')}">
-                            `;
+                            fieldHtml += `<input type="text" class="form-control" id="${fieldId}" name="${fieldName}" ${section.required ? 'required' : ''} placeholder="${escapeHtml(section.description || '')}">`;
                         }
                         
                         if (section.description) {
@@ -2164,15 +2208,10 @@ try {
                 }
             } catch (error) {
                 console.error('Error loading template fields:', error);
-                document.getElementById('templateFields').innerHTML = `
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-circle"></i> Error loading template fields.
-                    </div>
-                `;
+                document.getElementById('templateFields').innerHTML = `<div class="alert alert-danger">Error loading template fields.</div>`;
             }
         }
 
-        // Escape HTML helper
         function escapeHtml(text) {
             if (!text) return '';
             const div = document.createElement('div');
@@ -2180,30 +2219,21 @@ try {
             return div.innerHTML;
         }
 
-        // File handling
         function handleFileSelect(input) {
             const fileList = document.getElementById('fileList');
             fileList.innerHTML = '';
-            
             Array.from(input.files).forEach(file => {
                 const fileItem = document.createElement('div');
                 fileItem.className = 'file-item';
-                fileItem.innerHTML = `
-                    <span class="file-name">${escapeHtml(file.name)}</span>
-                    <button type="button" class="file-remove" onclick="removeFile(this)">
-                        <i class="fas fa-times"></i>
-                    </button>
-                `;
+                fileItem.innerHTML = `<span class="file-name">${escapeHtml(file.name)}</span><button type="button" class="file-remove" onclick="removeFile(this)"><i class="fas fa-times"></i></button>`;
                 fileList.appendChild(fileItem);
             });
         }
 
         function removeFile(button) {
-            const fileItem = button.closest('.file-item');
-            fileItem.remove();
+            button.closest('.file-item').remove();
         }
 
-        // Form reset
         function resetForm() {
             document.querySelectorAll('.template-card').forEach(card => {
                 card.classList.remove('selected');
@@ -2211,67 +2241,45 @@ try {
             document.getElementById('reportForm').style.display = 'none';
             document.getElementById('reportForm').reset();
             document.getElementById('fileList').innerHTML = '';
+            document.getElementById('templateFields').innerHTML = '';
         }
 
-        // View report in modal
         async function viewReport(reportId) {
             try {
                 const response = await fetch(`../api/get_report.php?id=${reportId}`);
                 const report = await response.json();
-                
                 document.querySelector('.modal-title').textContent = report.title;
                 
                 let content = `
-                    <div class="form-group">
-                        <label class="form-label">Template</label>
-                        <div>${escapeHtml(report.template_name || 'Custom')}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Report Type</label>
-                        <div>${escapeHtml(report.report_type)}</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Status</label>
-                        <span class="status-badge status-${report.status}">${report.status}</span>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">Submitted</label>
-                        <div>${new Date(report.submitted_at).toLocaleDateString()}</div>
-                    </div>
+                    <div class="form-group"><label class="form-label">Author</label><div>${escapeHtml(report.author_name || 'Unknown')}</div></div>
+                    <div class="form-group"><label class="form-label">Template</label><div>${escapeHtml(report.template_name || 'Custom')}</div></div>
+                    <div class="form-group"><label class="form-label">Report Type</label><div>${escapeHtml(report.report_type)}</div></div>
+                    <div class="form-group"><label class="form-label">Status</label><span class="status-badge status-${report.status}">${report.status}</span></div>
+                    <div class="form-group"><label class="form-label">Submitted</label><div>${new Date(report.submitted_at).toLocaleDateString()}</div></div>
                 `;
                 
                 if (report.content) {
-                    let reportContent;
-                    if (typeof report.content === 'string') {
-                        reportContent = JSON.parse(report.content);
-                    } else {
-                        reportContent = report.content;
-                    }
-                    
+                    let reportContent = typeof report.content === 'string' ? JSON.parse(report.content) : report.content;
                     if (reportContent && typeof reportContent === 'object') {
                         Object.keys(reportContent).forEach(key => {
                             if (reportContent[key]) {
                                 const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                                content += `
-                                    <div class="form-group">
-                                        <label class="form-label">${escapeHtml(label)}</label>
-                                        <div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${escapeHtml(reportContent[key])}</div>
-                                    </div>
-                                `;
+                                content += `<div class="form-group"><label class="form-label">${escapeHtml(label)}</label><div style="background: var(--light-gray); padding: 1rem; border-radius: var(--border-radius); white-space: pre-wrap;">${escapeHtml(reportContent[key])}</div></div>`;
                             }
                         });
                     }
+                }
+                
+                if (report.feedback) {
+                    content += `<div class="form-group"><label class="form-label">Feedback</label><div style="background: #fff3cd; padding: 1rem; border-radius: var(--border-radius);">${escapeHtml(report.feedback)}</div></div>`;
                 }
                 
                 document.getElementById('modalContent').innerHTML = content;
                 document.getElementById('reportModal').classList.add('show');
             } catch (error) {
                 console.error('Error loading report:', error);
-                document.getElementById('modalContent').innerHTML = `
-                    <div class="alert alert-danger">
-                        <i class="fas fa-exclamation-circle"></i> Error loading report details.
-                    </div>
-                `;
+                document.getElementById('modalContent').innerHTML = `<div class="alert alert-danger">Error loading report details.</div>`;
+                document.getElementById('reportModal').classList.add('show');
             }
         }
 
@@ -2279,26 +2287,33 @@ try {
             document.getElementById('reportModal').classList.remove('show');
         }
 
-        // Close modal when clicking outside
-        const reportModal = document.getElementById('reportModal');
-        if (reportModal) {
-            reportModal.addEventListener('click', function(e) {
-                if (e.target === this) {
-                    closeModal();
-                }
-            });
+        function openReviewModal(reportId, reportTitle) {
+            document.getElementById('reviewReportId').value = reportId;
+            document.getElementById('reviewReportTitle').textContent = reportTitle;
+            document.getElementById('reviewModal').classList.add('show');
         }
 
-        // Escape key to close modal
+        function closeReviewModal() {
+            document.getElementById('reviewModal').classList.remove('show');
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('reportModal');
+            const reviewModal = document.getElementById('reviewModal');
+            if (event.target === modal) closeModal();
+            if (event.target === reviewModal) closeReviewModal();
+        }
+
         document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape' && reportModal && reportModal.classList.contains('show')) {
+            if (e.key === 'Escape') {
                 closeModal();
+                closeReviewModal();
             }
         });
 
         // Add loading animations
         document.addEventListener('DOMContentLoaded', function() {
-            const cards = document.querySelectorAll('.card');
+            const cards = document.querySelectorAll('.card, .stat-card');
             cards.forEach((card, index) => {
                 card.style.animation = `fadeInUp 0.4s ease forwards`;
                 card.style.animationDelay = `${index * 0.05}s`;
@@ -2306,25 +2321,10 @@ try {
             });
             
             const style = document.createElement('style');
-            style.textContent = `
-                @keyframes fadeInUp {
-                    from {
-                        opacity: 0;
-                        transform: translateY(10px);
-                    }
-                    to {
-                        opacity: 1;
-                        transform: translateY(0);
-                    }
-                }
-            `;
+            style.textContent = `@keyframes fadeInUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }`;
             document.head.appendChild(style);
             
-            setTimeout(() => {
-                cards.forEach(card => {
-                    card.style.opacity = '1';
-                });
-            }, 500);
+            setTimeout(() => cards.forEach(card => card.style.opacity = '1'), 500);
         });
     </script>
 </body>
