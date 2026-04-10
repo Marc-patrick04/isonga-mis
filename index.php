@@ -2107,33 +2107,25 @@ foreach ($stat_queries as $key => $query) {
                     $link_items = !empty($hero_map) ? $hero_items : $default_items;
                     
                     foreach ($link_items as $index => $item):
-                        $slug = $item['slug'];
-                        // SIMPLE: Just use the image_url as is, no complex path manipulation
-                        $image_url = !empty($item['image_url']) ? $item['image_url'] : '';
-                        $icon = $item['icon'] ?? 'fa-link';
-                        $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
-                    ?>
-                        <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-                            <div class="link-card-image">
-                                <?php if (!empty($image_url)): ?>
-                                    <img src="<?= htmlspecialchars($image_url) ?>" 
-                                         alt="<?= htmlspecialchars($item['title']) ?>"
-                                         loading="lazy"
-                                         onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'link-card-image-placeholder\' style=\'background: <?= $bg_color ?>;\'><i class=\'fas <?= htmlspecialchars($icon) ?>\'></i></div>'">
-                                <?php else: ?>
-                                    <div class="link-card-image-placeholder" style="background: <?= $bg_color ?>;">
-                                        <i class="fas <?= htmlspecialchars($icon) ?>"></i>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                            <div class="link-icon">
-                                <i class="fas <?= htmlspecialchars($icon) ?>"></i>
-                            </div>
-                            <h3 class="link-title"><?= htmlspecialchars($item['title']) ?></h3>
-                            <p class="link-description"><?= htmlspecialchars($item['description']) ?></p>
-                        </a>
-                    <?php endforeach; ?>
+    $slug = $item['slug'];
+    // USE the getImageUrl function here!
+    $image_url = !empty($item['image_url']) ? getImageUrl($item['image_url']) : '';
+    $icon = $item['icon'] ?? 'fa-link';
+    $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
+?>
+    <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+        <div class="link-card-image">
+            <?php if (!empty($image_url)): ?>
+                <img src="<?= htmlspecialchars($image_url) ?>" 
+                     alt="<?= htmlspecialchars($item['title']) ?>"
+                     loading="lazy"
+                     onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'link-card-image-placeholder\' style=\'background: <?= $bg_color ?>;\'><i class=\'fas <?= htmlspecialchars($icon) ?>\'></i></div>'">
+            <?php else: ?>
+                <div class="link-card-image-placeholder" style="background: <?= $bg_color ?>;">
+                    <i class="fas <?= htmlspecialchars($icon) ?>"></i>
                 </div>
+            <?php endif; ?>
+        </div>
             </div>
         </section>
 
