@@ -1,6 +1,20 @@
 <?php
 session_start();
 require_once '../config/database.php';
+require_once '../config/email_config_base.php';
+
+// Check if email_config exists before requiring
+if (file_exists('../config/email_config.php')) {
+    require_once '../config/email_config.php';
+} else {
+    // Create a fallback email function if file doesn't exist
+    if (!function_exists('sendEmail')) {
+        function sendEmail($to, $subject, $body) {
+            error_log("Email would be sent to: $to - Subject: $subject");
+            return true;
+        }
+    }
+}
 
 // Check if user is logged in and is Minister of Public Relations
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'minister_public_relations') {
@@ -51,22 +65,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 try {
+                    $pdo->beginTransaction();
+                    
                     $stmt = $pdo->prepare("
                         INSERT INTO announcements (title, content, excerpt, author_id, created_at, updated_at)
                         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        RETURNING id
                     ");
                     $stmt->execute([$title, $content, $excerpt, $user_id]);
                     
-                    $announcement_id = $pdo->lastInsertId();
+                    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $announcement_id = $result['id'];
                     
                     // Create conversation for this announcement
                     $conversation_title = "Announcement: " . $title;
                     $stmt = $pdo->prepare("
                         INSERT INTO conversations (title, created_by, conversation_type, created_at, updated_at)
                         VALUES (?, ?, 'announcement', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        RETURNING id
                     ");
                     $stmt->execute([$conversation_title, $user_id]);
-                    $conversation_id = $pdo->lastInsertId();
+                    $conv_result = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $conversation_id = $conv_result['id'];
                     
                     // Add announcement message to conversation
                     $stmt = $pdo->prepare("
@@ -90,10 +110,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmt->execute([$conversation_id, $member['id']]);
                     }
                     
-                    $_SESSION['success_message'] = "Announcement created and shared with committee members successfully!";
+                    $pdo->commit();
+                    
+                    // ============================================
+                    // SEND EMAIL NOTIFICATIONS TO ALL USERS
+                    // ============================================
+                    
+                    // Get base URL for email links
+                    $base_url = (isset($_SERVER['HTTPS']) ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
+                    $base_url .= str_replace('minister_public_relations/announcements.php', '', $_SERVER['SCRIPT_NAME']);
+                    
+                    // Get all active users (students and committee members) with valid emails
+                    $users_stmt = $pdo->prepare("
+                        SELECT id, full_name, email, role 
+                        FROM users 
+                        WHERE status = 'active' 
+                        AND deleted_at IS NULL 
+                        AND email IS NOT NULL 
+                        AND email != ''
+                    ");
+                    $users_stmt->execute();
+                    $all_users = $users_stmt->fetchAll(PDO::FETCH_ASSOC);
+                    
+                    $email_sent_count = 0;
+                    $email_fail_count = 0;
+                    
+                    // Create email content
+                    $email_subject = "📢 New Announcement: " . $title . " - Isonga RPSU";
+                    
+                    $email_body = '<!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>New Announcement</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                            .header { background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%); color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+                            .content { background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px; border: 1px solid #e5e7eb; border-top: none; }
+                            .title { font-size: 24px; margin-bottom: 10px; }
+                            .meta { color: #6b7280; font-size: 12px; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #e5e7eb; }
+                            .message { margin: 20px 0; white-space: pre-wrap; }
+                            .button { display: inline-block; background: #3B82F6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
+                            .footer { text-align: center; padding: 20px; font-size: 12px; color: #6b7280; }
+                            .excerpt { background: #e5e7eb; padding: 15px; border-radius: 8px; margin: 15px 0; font-style: italic; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <div class="header">
+                                <h1 class="title">📢 New Announcement</h1>
+                                <p>Isonga RPSU Student Union</p>
+                            </div>
+                            <div class="content">
+                                <h2>' . htmlspecialchars($title) . '</h2>
+                                <div class="meta">
+                                    Published by: ' . htmlspecialchars($_SESSION['full_name']) . ' (Minister of Public Relations)<br>
+                                    Date: ' . date('F j, Y g:i A') . '
+                                </div>';
+                    
+                    if (!empty($excerpt)) {
+                        $email_body .= '<div class="excerpt">📌 <strong>Summary:</strong><br>' . nl2br(htmlspecialchars($excerpt)) . '</div>';
+                    }
+                    
+                    $email_body .= '<div class="message">' . nl2br(htmlspecialchars($content)) . '</div>
+                                <div style="text-align: center;">
+                                    <a href="' . $base_url . 'announcements.php" class="button">View All Announcements</a>
+                                </div>
+                            </div>
+                            <div class="footer">
+                                <p>This is an automated message from Isonga RPSU Management System.</p>
+                                <p>© ' . date('Y') . ' Isonga RPSU - All Rights Reserved</p>
+                            </div>
+                        </div>
+                    </body>
+                    </html>';
+                    
+                    // Send emails to all users
+                    foreach ($all_users as $user_data) {
+                        if (!empty($user_data['email']) && filter_var($user_data['email'], FILTER_VALIDATE_EMAIL)) {
+                            try {
+                                sendEmail($user_data['email'], $email_subject, $email_body);
+                                $email_sent_count++;
+                                error_log("Announcement email sent to: " . $user_data['email'] . " (Role: " . $user_data['role'] . ")");
+                            } catch (Exception $e) {
+                                $email_fail_count++;
+                                error_log("Failed to send email to: " . $user_data['email'] . " - Error: " . $e->getMessage());
+                            }
+                        }
+                    }
+                    
+                    $_SESSION['success_message'] = "✅ Announcement created and shared with committee members successfully!";
+                    $_SESSION['success_message'] .= "<br>📧 Email notifications sent to $email_sent_count users ($email_fail_count failed).";
                     
                 } catch (PDOException $e) {
+                    if ($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
                     $_SESSION['error_message'] = "Error creating announcement: " . $e->getMessage();
+                    error_log("Announcement creation error: " . $e->getMessage());
                 }
                 break;
                 
@@ -236,8 +352,19 @@ try {
     ");
     $committee_announcements = $stmt->fetch(PDO::FETCH_ASSOC)['committee_announcements'] ?? 0;
     
+    // Get total active users count for email info
+    $stmt = $pdo->query("
+        SELECT COUNT(*) as total_users 
+        FROM users 
+        WHERE status = 'active' 
+        AND deleted_at IS NULL 
+        AND email IS NOT NULL 
+        AND email != ''
+    ");
+    $total_users = $stmt->fetch(PDO::FETCH_ASSOC)['total_users'] ?? 0;
+    
 } catch (PDOException $e) {
-    $total_announcements = $my_announcements = $recent_announcements = $committee_announcements = 0;
+    $total_announcements = $my_announcements = $recent_announcements = $committee_announcements = $total_users = 0;
 }
 
 // Check if we're viewing/editing a specific announcement
@@ -289,6 +416,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             --success: #28a745;
             --warning: #ffc107;
             --danger: #dc3545;
+            --info: #17a2b8;
             --gradient-primary: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
             --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
             --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -657,6 +785,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             color: white;
         }
 
+        .btn-info {
+            background: var(--info);
+            color: white;
+        }
+
         /* Stats Grid */
         .stats-grid {
             display: grid;
@@ -694,6 +827,10 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             border-left-color: var(--danger);
         }
 
+        .stat-card.info {
+            border-left-color: var(--info);
+        }
+
         .stat-icon {
             width: 45px;
             height: 45px;
@@ -723,6 +860,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         .stat-card.danger .stat-icon {
             background: #f8d7da;
             color: var(--danger);
+        }
+
+        .stat-card.info .stat-icon {
+            background: #d1ecf1;
+            color: var(--info);
         }
 
         .stat-content {
@@ -952,6 +1094,45 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             border-left-color: var(--danger);
         }
 
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left-color: var(--info);
+        }
+
+        /* Email Info Banner */
+        .email-info-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: var(--border-radius);
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .email-info-banner i {
+            font-size: 2rem;
+            opacity: 0.8;
+        }
+
+        .email-info-content {
+            flex: 1;
+        }
+
+        .email-info-content h4 {
+            margin-bottom: 0.25rem;
+            font-size: 1rem;
+        }
+
+        .email-info-content p {
+            font-size: 0.8rem;
+            opacity: 0.9;
+        }
+
         /* Animations */
         @keyframes fadeInUp {
             from {
@@ -1064,6 +1245,11 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             .stat-number {
                 font-size: 1.1rem;
             }
+            
+            .email-info-banner {
+                flex-direction: column;
+                text-align: center;
+            }
         }
 
         @media (max-width: 480px) {
@@ -1126,9 +1312,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
             </div>
             <div class="user-menu">
                 <div class="header-actions">
-                    <!-- <button class="icon-btn" id="themeToggle" title="Toggle Dark Mode">
-                        <i class="fas fa-moon"></i>
-                    </button> -->
                     <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;">
                         <i class="fas fa-envelope"></i>
                         <?php if ($unread_messages > 0): ?>
@@ -1137,13 +1320,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     </a>
                 </div>
                 <div class="user-info">
-                    <!-- <div class="user-avatar">
-                        <?php if (!empty($user['avatar_url'])): ?>
-                            <img src="../<?php echo htmlspecialchars($user['avatar_url']); ?>" alt="Profile">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($user['full_name'] ?? 'U', 0, 1)); ?>
-                        <?php endif; ?>
-                    </div> -->
                     <div class="user-details">
                         <div class="user-name"><?php echo htmlspecialchars($_SESSION['full_name']); ?></div>
                         <div class="user-role">Minister of Public Relations</div>
@@ -1248,10 +1424,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
         <!-- Main Content -->
         <main class="main-content" id="mainContent">
             <div class="dashboard-header">
-                <!-- <div class="welcome-section">
-                    <h1>Announcements Management</h1>
-                    <p>Create and manage official announcements for the student community</p>
-                </div> -->
                 <div class="header-actions">
                     <?php if ($edit_announcement): ?>
                         <a href="announcements.php" class="btn btn-secondary">
@@ -1264,6 +1436,18 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     <?php endif; ?>
                 </div>
             </div>
+
+            <!-- Email Notification Info Banner -->
+            <?php if (!$edit_announcement): ?>
+            <div class="email-info-banner">
+                <i class="fas fa-envelope-open-text"></i>
+                <div class="email-info-content">
+                    <h4><i class="fas fa-bullhorn"></i> Email Notifications Enabled</h4>
+                    <p>When you publish a new announcement, all <?php echo number_format($total_users); ?> active users (students and committee members) will receive an email notification automatically.</p>
+                </div>
+                <i class="fas fa-check-circle" style="font-size: 2rem;"></i>
+            </div>
+            <?php endif; ?>
 
             <!-- Alert Messages -->
             <?php if (isset($_SESSION['success_message'])): ?>
@@ -1309,13 +1493,13 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                         <div class="stat-label">Recent (7 days)</div>
                     </div>
                 </div>
-                <div class="stat-card danger">
+                <div class="stat-card info">
                     <div class="stat-icon">
-                        <i class="fas fa-users"></i>
+                        <i class="fas fa-envelope"></i>
                     </div>
                     <div class="stat-content">
-                        <div class="stat-number"><?php echo number_format($committee_announcements); ?></div>
-                        <div class="stat-label">Committee Announcements</div>
+                        <div class="stat-number"><?php echo number_format($total_users); ?></div>
+                        <div class="stat-label">Will Receive Emails</div>
                     </div>
                 </div>
             </div>
@@ -1336,11 +1520,13 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                             <div class="form-group">
                                 <label class="form-label">Excerpt (Optional)</label>
                                 <textarea name="excerpt" class="form-textarea" placeholder="Brief summary of the announcement (will be auto-generated if empty)" maxlength="500"></textarea>
+                                <small style="color: var(--dark-gray); margin-top: 0.25rem;">This will be used as a preview in email notifications.</small>
                             </div>
                             
                             <div class="form-group">
                                 <label class="form-label">Announcement Content *</label>
                                 <textarea name="content" class="form-textarea" placeholder="Enter the full announcement content" required></textarea>
+                                <small style="color: var(--dark-gray); margin-top: 0.25rem;">This will be included in the email notification to all users.</small>
                             </div>
                         </div>
                         
@@ -1349,7 +1535,7 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                                 <i class="fas fa-times"></i> Cancel
                             </button>
                             <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-paper-plane"></i> Publish Announcement
+                                <i class="fas fa-paper-plane"></i> Publish Announcement & Send Emails
                             </button>
                         </div>
                     </form>
@@ -1494,23 +1680,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
     </div>
 
     <script>
-        // Dark Mode Toggle
-        // const themeToggle = document.getElementById('themeToggle');
-        // const body = document.body;
-
-        // const savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-        // if (savedTheme === 'dark') {
-        //     body.classList.add('dark-mode');
-        //     themeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-        // }
-
-        // themeToggle.addEventListener('click', () => {
-        //     body.classList.toggle('dark-mode');
-        //     const isDark = body.classList.contains('dark-mode');
-        //     localStorage.setItem('theme', isDark ? 'dark' : 'light');
-        //     themeToggle.innerHTML = isDark ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
-        // });
-
         // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
@@ -1626,45 +1795,6 @@ if (isset($_GET['edit']) && is_numeric($_GET['edit'])) {
                     }
                 });
             });
-        });
-
-        // Auto-save draft (optional feature)
-        let autoSaveTimer;
-        document.addEventListener('DOMContentLoaded', function() {
-            const titleInput = document.querySelector('input[name="title"]');
-            const contentTextarea = document.querySelector('textarea[name="content"]');
-            const excerptTextarea = document.querySelector('textarea[name="excerpt"]');
-            
-            if (titleInput && contentTextarea && !document.querySelector('#editAnnouncementForm')) {
-                [titleInput, contentTextarea, excerptTextarea].forEach(element => {
-                    if (element) {
-                        element.addEventListener('input', function() {
-                            clearTimeout(autoSaveTimer);
-                            autoSaveTimer = setTimeout(() => {
-                                // Save to localStorage as draft
-                                const draft = {
-                                    title: titleInput.value,
-                                    content: contentTextarea.value,
-                                    excerpt: excerptTextarea ? excerptTextarea.value : ''
-                                };
-                                localStorage.setItem('announcement_draft', JSON.stringify(draft));
-                                console.log('Draft auto-saved');
-                            }, 2000);
-                        });
-                    }
-                });
-                
-                // Load draft on page load
-                const draft = localStorage.getItem('announcement_draft');
-                if (draft) {
-                    const draftData = JSON.parse(draft);
-                    titleInput.value = draftData.title || '';
-                    contentTextarea.value = draftData.content || '';
-                    if (excerptTextarea) {
-                        excerptTextarea.value = draftData.excerpt || '';
-                    }
-                }
-            }
         });
 
         // Auto-close alerts after 5 seconds

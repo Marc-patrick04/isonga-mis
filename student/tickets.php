@@ -18,7 +18,7 @@ if (file_exists('email_config.php')) {
 
 // Check if user is logged in as student
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
-    header('Location: student_login');
+    header('Location: student_login.php');
     exit();
 }
 
