@@ -83,7 +83,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
     } elseif (empty($category_id)) {
         $error_message = "Please select a category.";
     } else {
+        $ticket_id = null;
+        $assignee = null;
+        $category_name = '';
+        
         try {
+            // Start transaction
             $pdo->beginTransaction();
             
             // First, get student details from users table
@@ -105,6 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                     academic_year, category_id, subject, description, priority, 
                     preferred_contact, status, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NOW())
+                RETURNING id
             ");
             
             $stmt->execute([
@@ -122,7 +128,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                 $preferred_contact
             ]);
             
-            $ticket_id = $pdo->lastInsertId();
+            // Get the ticket ID (PostgreSQL way)
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            $ticket_id = $result['id'];
             
             // Get category name for email
             $category_stmt = $pdo->prepare("SELECT name, assigned_role FROM issue_categories WHERE id = ?");
@@ -184,8 +192,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                 $assignStmt->execute([$ticket_id, $assigned_to, $student_id]);
             }
             
+            // Commit the transaction BEFORE sending emails
             $pdo->commit();
             
+            // ============================================
+            // EMAIL SENDING - OUTSIDE TRANSACTION
+            // ============================================
             // Get base URL for email links
             $base_url = (isset($_SERVER['HTTPS']) ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
             $base_url .= str_replace('student/tickets.php', '', $_SERVER['SCRIPT_NAME']);
@@ -196,7 +208,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                     $student_subject = "Ticket #$ticket_id: Support Request Received - Isonga RPSU";
                     $student_body = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ticket Confirmation</title></head><body>
                     <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
-                       
                         <h2 style="color: #003b95;">Ticket #' . $ticket_id . ' Received</h2>
                         <p>Dear <strong>' . htmlspecialchars($student_name) . '</strong>,</p>
                         <p>Thank you for submitting your support request. Your ticket has been created and will be processed shortly.</p>
@@ -213,7 +224,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                     sendEmail($student_email, $student_subject, $student_body);
                     error_log("Student email sent to: $student_email for ticket #$ticket_id");
                 } catch (Exception $e) {
-                    error_log("Student email sending failed: " . $e->getMessage());
+                    error_log("Student email sending failed (non-critical): " . $e->getMessage());
                 }
             }
             
@@ -223,7 +234,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                     $staff_subject = "New Support Ticket Assigned - #$ticket_id - Isonga RPSU";
                     $staff_body = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>New Ticket Assignment</title></head><body>
                     <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
-                       
                         <h2 style="color: #003b95;">New Ticket Assigned: #' . $ticket_id . '</h2>
                         <p>Dear <strong>' . htmlspecialchars($assignee['full_name']) . '</strong>,</p>
                         <p>A new support ticket has been automatically assigned to you.</p>
@@ -243,13 +253,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
                     sendEmail($assignee['email'], $staff_subject, $staff_body);
                     error_log("Staff email sent to: {$assignee['email']} for ticket #$ticket_id");
                 } catch (Exception $e) {
-                    error_log("Staff email sending failed: " . $e->getMessage());
+                    error_log("Staff email sending failed (non-critical): " . $e->getMessage());
                 }
             } else {
                 error_log("No assignee found for ticket #$ticket_id. Category: $category_name, Role: $assigned_role");
                 
                 // Try to send to general admin email as fallback
-                $admin_email = "admin@isonga.rw"; // Change this to your admin email
+                $admin_email = "admin@isonga.rw";
                 if (!empty($admin_email) && function_exists('sendEmail')) {
                     try {
                         $admin_subject = "New Ticket #$ticket_id - No Assignee Found";
@@ -277,11 +287,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_ticket'])) {
             exit();
             
         } catch (Exception $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             error_log("Ticket submission error: " . $e->getMessage());
             $error_message = "Failed to submit ticket: " . $e->getMessage();
         } catch (PDOException $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             error_log("Database error in ticket submission: " . $e->getMessage());
             $error_message = "Database error: " . $e->getMessage();
         }
@@ -318,17 +332,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_comment'])) {
             
             $pdo->commit();
             
-            // Get base URL
+            // Send email notification OUTSIDE transaction
             $base_url = (isset($_SERVER['HTTPS']) ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'];
             $base_url .= str_replace('student/tickets.php', '', $_SERVER['SCRIPT_NAME']);
             
-            // Send email notification to assigned staff
             if (!empty($ticket_info['assigned_to_email']) && function_exists('sendEmail')) {
                 try {
                     $staff_subject = "New Comment on Ticket #$ticket_id - Isonga RPSU";
                     $staff_body = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>New Comment</title></head><body>
                     <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial, sans-serif;">
-                        
                         <h2 style="color: #003b95;">New Comment on Ticket #' . $ticket_id . '</h2>
                         <p>Dear <strong>' . htmlspecialchars($ticket_info['assigned_to_name']) . '</strong>,</p>
                         <p><strong>' . htmlspecialchars($student_name) . '</strong> added a new comment on ticket #' . $ticket_id . ':</p>
@@ -349,7 +361,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_comment'])) {
             exit();
             
         } catch (PDOException $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             error_log("Failed to add comment: " . $e->getMessage());
             $error_message = "Failed to add comment: " . $e->getMessage();
         }
@@ -362,7 +376,8 @@ $category_filter = isset($_GET['category']) ? $_GET['category'] : 'all';
 $search_query = isset($_GET['search']) ? $_GET['search'] : '';
 $view_ticket_id = isset($_GET['view']) ? $_GET['view'] : null;
 
-// Build query for tickets - FIXED PostgreSQL date difference
+// Build query for tickets - PostgreSQL compatible
+// Build query for tickets - PostgreSQL compatible
 $query = "
     SELECT t.*, ic.name as category_name, 
            u.full_name as assigned_to_name, t.status as ticket_status,
@@ -398,7 +413,8 @@ $tickets_stmt = $pdo->prepare($query);
 $tickets_stmt->execute($params);
 $tickets = $tickets_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get specific ticket for viewing - FIXED PostgreSQL date difference
+// Get specific ticket for viewing
+// Get specific ticket for viewing
 $view_ticket = null;
 $ticket_comments = [];
 if ($view_ticket_id) {
@@ -471,7 +487,6 @@ if ($view_ticket && isset($view_ticket['days_old'])) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" href="../assets/images/logo.png">
     <style>
-        /* [Keep all your existing CSS styles - they remain the same as in the previous working version] */
         :root {
             --primary-blue: #3B82F6;
             --secondary-blue: #60A5FA;
@@ -666,8 +681,7 @@ if ($view_ticket && isset($view_ticket['days_old'])) {
                 <div class="brand-text"><h1>Isonga RPSU</h1></div>
             </div>
             <div class="user-menu">
-            
-                <a href="messages" class="icon-btn" title="Messages" style="position: relative;"><i class="fas fa-envelope"></i><?php if ($unread_messages > 0): ?><span class="notification-badge"><?php echo $unread_messages; ?></span><?php endif; ?></a>
+                <a href="messages.php" class="icon-btn" title="Messages" style="position: relative;"><i class="fas fa-envelope"></i><?php if ($unread_messages > 0): ?><span class="notification-badge"><?php echo $unread_messages; ?></span><?php endif; ?></a>
                 <div class="user-info"><div class="user-avatar"><?php echo strtoupper(substr($student_name, 0, 1)); ?></div><div class="user-details"><div class="user-name"><?php echo safe_display(explode(' ', $student_name)[0]); ?></div><div class="user-role">Student</div></div></div>
                 <a href="../auth/logout.php" class="logout-btn" onclick="return confirm('Are you sure you want to logout?')"><i class="fas fa-sign-out-alt"></i> Logout</a>
             </div>
@@ -707,7 +721,7 @@ if ($view_ticket && isset($view_ticket['days_old'])) {
             </div>
 
             <?php if (empty($student_email)): ?>
-                <div class="alert alert-info"><i class="fas fa-envelope"></i><div>Please <a href="profile" style="color: var(--primary-blue);">update your email address</a> to receive ticket notifications.</div></div>
+                <div class="alert alert-info"><i class="fas fa-envelope"></i><div>Please <a href="profile.php" style="color: var(--primary-blue);">update your email address</a> to receive ticket notifications.</div></div>
             <?php endif; ?>
 
             <?php if (isset($_SESSION['success_message'])): ?>
@@ -766,7 +780,9 @@ if ($view_ticket && isset($view_ticket['days_old'])) {
                 <?php else: ?>
                     <div class="table-container">
                         <table class="tickets-table">
-                            <thead><tr><th>ID</th><th>Subject</th><th>Category</th><th>Status</th><th>Priority</th><th>Assigned To</th><th>Created</th><th>Actions</th></tr></thead>
+                            <thead>
+                                <tr><th>ID</th><th>Subject</th><th>Category</th><th>Status</th><th>Priority</th><th>Assigned To</th><th>Created</th><th>Actions</th></tr>
+                            </thead>
                             <tbody>
                                 <?php foreach ($tickets as $ticket): ?>
                                     <tr>
@@ -798,8 +814,23 @@ if ($view_ticket && isset($view_ticket['days_old'])) {
                     <div class="form-group"><label class="form-label">Issue Category *</label><select name="category_id" class="form-control" required><option value="">Select a category</option><?php foreach ($categories as $category): ?><option value="<?php echo $category['id']; ?>"><?php echo safe_display($category['name']); ?></option><?php endforeach; ?></select></div>
                     <div class="form-group"><label class="form-label">Subject *</label><input type="text" name="subject" class="form-control" placeholder="Brief description of your issue" required></div>
                     <div class="form-group"><label class="form-label">Description *</label><textarea name="description" class="form-control" placeholder="Please provide detailed information about your issue..." rows="5" required></textarea></div>
-                    <div class="form-group"><label class="form-label">Priority *</label><select name="priority" class="form-control" required><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></div>
-                    <div class="form-group"><label class="form-label">Preferred Contact Method *</label><select name="preferred_contact" class="form-control" required><option value="email" selected>Email</option><option value="sms">SMS</option><option value="phone">Phone</option></select></div>
+                    <div class="form-group">
+                        <label class="form-label">Priority *</label>
+                        <select name="priority" class="form-control" required>
+                            <!-- <option value="low">Low</option> -->
+                            <option value="medium" selected>Priority</option>
+                            <!-- <option value="high">High</option>
+                            <option value="urgent">Urgent</option> -->
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Preferred Contact Method *</label>
+                        <select name="preferred_contact" class="form-control" required>
+                            <option value="email" selected>Email</option>
+                            <!-- <option value="sms">SMS</option>
+                            <option value="phone">Phone</option> -->
+                        </select>
+                    </div>
                     <div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeNewTicketModal()">Cancel</button><button type="submit" name="submit_ticket" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Submit Ticket</button></div>
                 </form>
             </div>
