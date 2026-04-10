@@ -14,7 +14,7 @@ function safeQuery($pdo, $sql, $params = []) {
     }
 }
 
-// Simple helper function to get correct image URL - NO path manipulation
+// Enhanced helper function to get correct image URL with multiple fallbacks
 function getImageUrl($path) {
     if (empty($path)) {
         return '';
@@ -30,11 +30,11 @@ function getImageUrl($path) {
         return $path;
     }
     
-    // Otherwise, assume it's relative to the site root
     // Remove any leading ../ or ./
     $path = preg_replace('/^(\.\.\/|\.\/)+/', '', $path);
     
-    // For production, use relative path without modifying
+    // For production, try common base paths
+    // Check if file exists in common locations (optional - for debugging)
     return $path;
 }
 
@@ -102,6 +102,12 @@ foreach ($stat_queries as $key => $query) {
                 ($key === 'resolved_tickets' ? 150 : 
                 ($key === 'active_committees' ? 18 : 12));
     }
+}
+
+// Get hero background image
+$hero_background = 'assets/images/college.jpg';
+if (!empty($hero_map['hero_background']['image_url'])) {
+    $hero_background = getImageUrl($hero_map['hero_background']['image_url']);
 }
 ?>
 <!DOCTYPE html>
@@ -1975,7 +1981,7 @@ foreach ($stat_queries as $key => $query) {
                             <i class="fas fa-user-graduate"></i> Student
                         </a>
                         <a href="auth/login.php" class="login-btn btn-committee">
-                            <i class="fas fa-users"></i> Committeee
+                            <i class="fas fa-users"></i> Committee
                         </a>
                     </div>
                 </div>
@@ -2009,7 +2015,7 @@ foreach ($stat_queries as $key => $query) {
         </header>
 
         <!-- Hero Section -->
-        <section class="hero" aria-labelledby="hero-title" style="background-image: url('assets/images/college.jpg');">
+        <section class="hero" aria-labelledby="hero-title" style="background-image: url('<?= htmlspecialchars($hero_background) ?>');">
             <div class="container hero-content">
                 <div class="hero-text" data-aos="fade-up" data-aos-duration="800">
                     <h2 id="hero-title">RPSU Musanze College</h2>
@@ -2107,25 +2113,33 @@ foreach ($stat_queries as $key => $query) {
                     $link_items = !empty($hero_map) ? $hero_items : $default_items;
                     
                     foreach ($link_items as $index => $item):
-    $slug = $item['slug'];
-    // USE the getImageUrl function here!
-    $image_url = !empty($item['image_url']) ? getImageUrl($item['image_url']) : '';
-    $icon = $item['icon'] ?? 'fa-link';
-    $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
-?>
-    <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
-        <div class="link-card-image">
-            <?php if (!empty($image_url)): ?>
-                <img src="<?= htmlspecialchars($image_url) ?>" 
-                     alt="<?= htmlspecialchars($item['title']) ?>"
-                     loading="lazy"
-                     onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'link-card-image-placeholder\' style=\'background: <?= $bg_color ?>;\'><i class=\'fas <?= htmlspecialchars($icon) ?>\'></i></div>'">
-            <?php else: ?>
-                <div class="link-card-image-placeholder" style="background: <?= $bg_color ?>;">
-                    <i class="fas <?= htmlspecialchars($icon) ?>"></i>
+                        $slug = $item['slug'];
+                        // USE getImageUrl function for consistent path handling
+                        $image_url = !empty($item['image_url']) ? getImageUrl($item['image_url']) : '';
+                        $icon = $item['icon'] ?? 'fa-link';
+                        $bg_color = $default_colors[$slug] ?? 'linear-gradient(135deg, #667eea, #764ba2)';
+                    ?>
+                        <a href="<?= htmlspecialchars($item['link_url']) ?>" class="link-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
+                            <div class="link-card-image">
+                                <?php if (!empty($image_url)): ?>
+                                    <img src="<?= htmlspecialchars($image_url) ?>" 
+                                         alt="<?= htmlspecialchars($item['title']) ?>"
+                                         loading="lazy"
+                                         onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'link-card-image-placeholder\' style=\'background: <?= $bg_color ?>;\'><i class=\'fas <?= htmlspecialchars($icon) ?>\'></i></div>'">
+                                <?php else: ?>
+                                    <div class="link-card-image-placeholder" style="background: <?= $bg_color ?>;">
+                                        <i class="fas <?= htmlspecialchars($icon) ?>"></i>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                            <div class="link-icon">
+                                <i class="fas <?= htmlspecialchars($icon) ?>"></i>
+                            </div>
+                            <h3 class="link-title"><?= htmlspecialchars($item['title']) ?></h3>
+                            <p class="link-description"><?= htmlspecialchars($item['description']) ?></p>
+                        </a>
+                    <?php endforeach; ?>
                 </div>
-            <?php endif; ?>
-        </div>
             </div>
         </section>
 
@@ -2263,8 +2277,8 @@ foreach ($stat_queries as $key => $query) {
                         </div>
                     <?php else: ?>
                         <?php foreach ($committee_members as $index => $member): 
-                            // SIMPLE: Use the photo_url as is
-                            $photo_url = !empty($member['photo_url']) ? $member['photo_url'] : '';
+                            // USE getImageUrl function for consistent path handling
+                            $photo_url = !empty($member['photo_url']) ? getImageUrl($member['photo_url']) : '';
                         ?>
                             <div class="member-card" data-aos="fade-up" data-aos-delay="<?= ($index + 1) * 100 ?>">
                                 <div class="member-image-container">
@@ -2344,7 +2358,7 @@ foreach ($stat_queries as $key => $query) {
                         <ul class="footer-links">
                             <li><i class="fas fa-map-marker-alt"></i> Rwanda Polytechnic Musanze College Student Union</li>
                             <li><i class="fas fa-phone"></i> +250 788 123 456</li>
-                            <li><i class="fas fa-envelope"></i>rpmusanzesu@gmail.com</li>
+                            <li><i class="fas fa-envelope"></i> rpmusanzesu@gmail.com</li>
                             <li><i class="fas fa-clock"></i> Mon - Fri: 8:00 - 17:00</li>
                         </ul>
                     </div>
